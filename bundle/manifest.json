@@ -1,0 +1,28 @@
+{
+  "capabilities": [
+    "storage",
+    "net",
+    "octos.turn.start",
+    "octos.turn.interrupt"
+  ],
+  "compute": {
+    "instruction_budget": 16000000,
+    "memory_bytes": 33554432
+  },
+  "id": "cfaw-news-agent",
+  "integrity": {
+    "bundle_blake3": "268e32c5aa3a3e9c5610183fae4989dab6eece4db5863bb68331d5b42e578188"
+  },
+  "name": "CFAW News Agent",
+  "network": {
+    "hosts": [
+      "www.apple.com",
+      "blogs.nvidia.com"
+    ]
+  },
+  "schema": 1,
+  "storage": {
+    "max_bytes": 2097152
+  },
+  "version": "0.1.0"
+}

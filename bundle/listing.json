@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "subtitle": "美股与全球科技新闻研究 · 本地开发版",
+  "description": "阅读 Apple Newsroom 与 NVIDIA 官方博客 RSS，保留来源与时间，通过 Rinx Octos 请求条件性影响分析，并保存本地关注。Linux card-host 可运行；Rinx 登录后验收和真实模型回答待完成。演示事件明确标注为虚构。此包仅供本地导入，未发布；privacy_policy_url 为保留域名占位，不是在线隐私政策。隐私说明见仓库 docs/data-sources.md。",
+  "category": "news",
+  "keywords": [
+    "news",
+    "research",
+    "technology"
+  ],
+  "screenshots": [
+    "screenshots/01-news.png",
+    "screenshots/02-detail.png",
+    "screenshots/03-watch.png",
+    "screenshots/04-agent-unavailable.png",
+    "screenshots/05-wide.png"
+  ],
+  "icon": "assets/icon.svg",
+  "platforms": [
+    "linux"
+  ],
+  "publisher": {
+    "name": "CFAW（未发布本地开发包）",
+    "support": "本地开发支持：参阅本仓库 README.md 与 tests/acceptance.md",
+    "privacy_policy_url": "https://example.invalid/cfaw-news-agent/privacy-not-published"
+  },
+  "release_notes": "0.1.0 MVP；真实模型调用与 Rinx 完整导入流程尚待人工验收。",
+  "age_rating": "all"
+}

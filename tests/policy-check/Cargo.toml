@@ -1,0 +1,8 @@
+[package]
+name = "cfaw-target-policy-check"
+version = "0.1.0"
+edition = "2021"
+publish = false
+[workspace]
+[dependencies]
+octosense-app-policy = { git = "https://github.com/OctoSense-org/OctoSense-App-Hub", rev = "e8601b80ce104db2e48208094714bdcffdce6b5a" }
