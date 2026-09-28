@@ -1,0 +1,23 @@
+# Local credentials and publisher signing keys
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Build output and local runtime state
+.dev/
+target/
+build/
+.local-state/
+*.log
+
+# Editor and OS files
+.idea/
+.DS_Store
+*~
+
+# Python tooling caches
+__pycache__/
+*.pyc
