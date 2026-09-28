@@ -1,23 +1,43 @@
-# Local credentials and publisher signing keys
+# Credentials and publisher signing keys (examples may be shared)
 .env
 .env.*
 !.env.example
 *.pem
 *.key
+*.p12
+*.pfx
+*.keystore
 secrets/
 
-# Build output and local runtime state
-.dev/
+# Local dependency checkouts, build output and app/test state
+/.dev/
+/build/
+/dist/
 target/
-build/
 .local-state/
+.test-state/
 *.log
+
+# Python environments, bytecode and tool caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 
 # Editor and OS files
 .idea/
+.vscode/
 .DS_Store
+Thumbs.db
+*.swp
+*.swo
 *~
 
-# Python tooling caches
-__pycache__/
-*.pyc
+# Keep Cargo.lock, dev-dependencies.lock.json, tests/fixtures/ and
+# bundle/screenshots/ in Git: they are reproducibility and acceptance assets.
