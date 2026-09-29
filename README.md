@@ -3,6 +3,8 @@
 使用官方 OctoSense News 的 Makepad / Splash 页面，在 Rinx 中运行。唯一入口是 `bundle/main.splash`。保留来源标签、搜索、新闻卡片、摘要阅读和本地收藏，界面沿用官方英文文案。
 
 
+队友首次参与请先阅读 [队友上手与开发分工](docs/TEAM_GUIDE.md)：运行环境、Octos 配置、各目录职责和日常联调步骤。
+
 ## 产品方向与当前状态
 
 目标是一个接入单个新闻 Agent 的 OctoScript 应用：跟踪用户关注的新闻，呈现重要变化，并依据新闻证据提供日程建议。前端采用 Makepad，首页采用 Threads 式紧凑信息流，一页连续展示多条新闻。
@@ -29,7 +31,7 @@
 
 ## 目录结构
 
-目录只用于稳定的职责分组，具体功能优先用文件区分。当前保留 13 个末级目录，空目录用 `.gitkeep` 纳入 Git；目录与接口文档不代表功能已实现。
+目录只用于稳定的职责分组，具体功能优先用文件区分。`src/` 与 `tests/` 当前共保留 13 个末级目录，空目录用 `.gitkeep` 纳入 Git；目录与接口文档不代表功能已实现。
 
 ```text
 cfaw-news-agent/
@@ -38,6 +40,8 @@ cfaw-news-agent/
 ├── dev-dependencies.lock.json     # 工具与宿主版本
 ├── LICENSE / NOTICE
 ├── .gitignore
+├── docs/
+│   └── TEAM_GUIDE.md              # 队友上手、目录分工与联调
 ├── src/
 │   ├── app/                       # 启动、导航、三层连接
 │   ├── contracts/                 # 三层共享的数据结构与接口
@@ -101,7 +105,7 @@ Agent 的两个开发者可以分别侧重流程与宿主适配、提示词与�
 - **宿主负责**模型配置、凭据、服务连接、运行时生命周期与工具审批。独立 Rinx 使用配套 Octos 可执行文件；OctoSense 模块模式使用 Shell 注入的 app-peer 服务，不给每个应用另起内核。
 - **版本成套固定**：Rinx `68afcf79`、`octosense-app-peers` `35d9d121`、Octos `a6ea8505`。完整提交与来源见 `dev-dependencies.lock.json` 的 `host_runtime_dependencies`；这些是宿主依赖，不是打入新闻应用 ZIP 的依赖。
 
-当前固定 Rinx 的接口如下（已核对宿主源码，尚未在本应用联调）：
+当前固定 Rinx 的接口如下（已核对宿主源码；开发者已反馈本应用的连通性测试成功，history 和超时中断仍未完成实测）：
 
 | 服务 | 参数 | 用途 |
 | --- | --- | --- |
@@ -133,7 +137,7 @@ cd ../demo-workspace/vendor/Rinx
 cargo run --locked --release --features agent_chat
 ```
 
-该命令按照[固定版本的官方 README](https://github.com/hagency-org/Rinx/blob/68afcf796d303aaf646eeb832d65c450a56c92b5/README.md#build-and-run)的构建方式启动，增加 `--release` 用于演示；首次运行会编译和下载依赖。本次未执行宿主编译，也未在该检出的默认 `target/debug` 或 `target/release` 目录发现 `rinx` 二进制。Rust 工具链由宿主的 `rust-toolchain.toml` 固定为 `1.98.0`。
+该命令按照[固定版本的官方 README](https://github.com/hagency-org/Rinx/blob/68afcf796d303aaf646eeb832d65c450a56c92b5/README.md#build-and-run)的构建方式启动，增加 `--release` 用于演示；首次运行会编译和下载依赖。当前开发机已发现配套的 `target/release/rinx` 与 `target/release/octos`；构建完成后可直接运行 `./target/release/rinx`，其他机器仍需自行准备。Rust 工具链由宿主的 `rust-toolchain.toml` 固定为 `1.98.0`。
 
 Linux 需要图形会话和原生构建依赖。Debian/Ubuntu 可按照[固定版本的 Linux 构建说明](https://github.com/hagency-org/Rinx/blob/68afcf796d303aaf646eeb832d65c450a56c92b5/docs/robrix-upstream-readme.md#building--running-robrix-on-desktop)准备：
 
@@ -142,7 +146,7 @@ sudo apt-get update
 sudo apt-get install libssl-dev cmake llvm clang libclang-dev libsqlite3-dev pkg-config binfmt-support libxcursor-dev libx11-dev libasound2-dev libpulse-dev libwayland-dev libxkbcommon-dev
 ```
 
-其他机器可从官方仓库克隆并检出上述提交，再使用同样的构建命令；检出位置不同时替换相对路径。`agent_chat` 是官方构建示例启用的宿主功能，本新闻应用不依赖其协作服务，也不需要模型或 API key。
+其他机器可从官方仓库克隆并检出上述提交，再使用同样的构建命令；检出位置不同时替换相对路径。`agent_chat` 是官方构建示例启用的宿主功能，本新闻应用不依赖其协作服务；新闻浏览无需模型配置，Test Octos 需要配置可用的模型。
 
 ### 为后续 Agent 联调准备 Octos
 
@@ -156,9 +160,9 @@ cargo run --locked --release --features agent_chat
 
 宿主脚本构建匹配版本的 Octos 并放到 Rinx 旁边，检查其版本与宿主 Cargo.lock 一致；本项目的 `scripts/package.py` 不承担这一步。OctoSense 模块模式使用 Shell 提供的服务，不运行这套独立宿主打包步骤。
 
-测试本地运行时，通过宿主界面的提供方、模型、可选 Base URL 和密钥字段完成配置，再点击 **Use this device**；密钥仅交给宿主。`agent_chat` 构建特性不等同于 mini-app 的 `octos.*` 权限。以上准备也不会让当前应用自动具备分析能力。
+测试本地运行时，通过宿主界面的提供方、模型、可选 Base URL 和密钥字段完成配置，再点击 **Use this device**；密钥仅交给宿主。`agent_chat` 构建特性不等同于 mini-app 的 `octos.*` 权限。以上准备也不会让当前应用自动具备新闻分析能力。保存后密钥输入框会清空；当前宿主在 Provider、Model 保留而密钥为空时再次保存会清除原密钥，修改配置时请重新填写完整信息。
 
-目前只完成源文件与版本核对，未执行上述构建或真实推理。联调时至少验证：服务可用、真实分析返回、取消、服务不可用、非法结果及旧响应丢弃；随后再验证新闻变化与日程确认闭环。
+开发者已于 2026-09-29 反馈本机 Test Octos 连通成功；尚未完成完整业务验收。后续联调至少验证：服务可用、真实分析返回、取消、服务不可用、非法结果及旧响应丢弃；随后再验证新闻变化与日程确认闭环。
 
 ### 2. 打包当前应用
 
@@ -206,4 +210,4 @@ Rinx 导入的是 `bundle/` 文件夹，不是 ZIP。分享 `build/cfaw-news.zip
 
 `The assistant is off` 表示宿主未启用助手，回到设置选择上述一种方式。模型鉴权、网络及其他失败会在按钮下显示真实错误。Matrix 的 `m.secret_storage.default_key` / `moments.preferences` 账户数据 404 并非 Octos 调用错误；应依据按钮反馈继续诊断。
 
-已在参考 card-host 的 430×860 原生窗口验证按钮点击及无服务时的错误反馈；该宿主没有 Octos 服务。截图抓取超时，尚未完成像素级视觉验收；成功回复与超时中断路径仍待在真实 Rinx / Octos 上验证。打包成功不代表推理成功。
+已在参考 card-host 的 430×860 原生窗口验证按钮点击及无服务时的错误反馈；该宿主没有 Octos 服务。截图抓取超时，尚未完成像素级视觉验收；开发者随后反馈真实 Rinx / Octos 连通测试成功；超时中断与完整业务流程仍待验证。该反馈不是完整 UI 或 App Hub 验收记录。
