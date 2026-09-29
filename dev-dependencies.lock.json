@@ -2,12 +2,12 @@
   "schema": 1,
   "repositories": [
     {
-      "name": "Rinx-CFAW",
+      "name": "Rinx",
       "commit": "68afcf796d303aaf646eeb832d65c450a56c92b5",
-      "origin": "git@github.com:zhiguang127/Rinx-CFAW.git",
-      "dirty": true,
+      "origin": "https://github.com/hagency-org/Rinx.git",
+      "dirty": false,
       "purpose": "target host",
-      "relative_checkout": "../Rinx-CFAW"
+      "relative_checkout": "../demo-workspace/vendor/Rinx"
     },
     {
       "name": "OctoSense-App-Hub",
@@ -27,13 +27,13 @@
   "toolchain": {
     "python": "3.14.4",
     "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)"
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "rinx_rust_channel": "1.98.0"
   },
   "binary_sha256": {
-    "hub": "b2a450aa6f34ddd123e1df8a4402910b29a0d36cf87ba4a606488f7eac2f37d2",
-    "rinx-existing": "883a8aa947a3778bffb845a405e560748f602564b058459548533cf644ef025e"
+    "hub": "b2a450aa6f34ddd123e1df8a4402910b29a0d36cf87ba4a606488f7eac2f37d2"
   },
-  "target_worktree_note": "Existing src/miniapps/ui.rs modifications; untouched. Prior official News adapter UI acceptance used this local host; not a pristine official build.",
+  "target_worktree_note": "Official Rinx checkout is clean at the recorded commit. Source and dependency pins verified; this app has not yet passed UI acceptance on a clean official build. No official Rinx binary digest is recorded. Historical acceptance on a modified local host does not apply to this target.",
   "application_source": {
     "repository": "https://github.com/OctoSense-org/OctoSense.git",
     "commit": "d1596d739e187c689ada4b59093ca8086c23bbbe",
