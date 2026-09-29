@@ -40,5 +40,35 @@
     "path": "apps/news/bundle/main.splash",
     "sha256": "cfbe681dd2c0cf24c738e941ff4f916ac161a7333f33029f37e5f1aeaa0503c7",
     "adaptation": "Rinx callbacks/timeouts, empty states, feed-summary reader; official Makepad layout retained"
+  },
+  "host_runtime_dependencies": {
+    "managed_by": "Rinx",
+    "app_peers": {
+      "package": "octosense-app-peers",
+      "origin": "https://github.com/OctoSense-org/OctoSense.git",
+      "commit": "35d9d1218e1b8b165977a4f019fdea9f2675dc90",
+      "verified_against": [
+        "Cargo.toml",
+        "Cargo.lock"
+      ]
+    },
+    "octos": {
+      "package": "octos-cli",
+      "version": "2.0.3-rc.13",
+      "origin": "https://github.com/octos-org/octos.git",
+      "commit": "a6ea8505170735f191a12bb47629a6728415d417",
+      "default_features": false,
+      "features": [
+        "api",
+        "git",
+        "ast"
+      ],
+      "verified_against": [
+        "Cargo.lock",
+        "packaging/octos.lock.json"
+      ],
+      "desktop_packaging_script": "tools/package-octos.py"
+    },
+    "note": "Paths are relative to the recorded Rinx checkout. Cargo and the host packaging helper manage these sources; no separate app-owned kernel checkout is required. Pins verified from source only; runtime build and inference remain unverified."
   }
 }

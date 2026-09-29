@@ -7,7 +7,7 @@
 
 目标是一个接入单个新闻 Agent 的 OctoScript 应用：跟踪用户关注的新闻，呈现重要变化，并依据新闻证据提供日程建议。前端采用 Makepad，首页采用 Threads 式紧凑信息流，一页连续展示多条新闻。
 
-当前运行代码仍在 `bundle/main.splash`。本次只建立开发目录骨架，未迁移业务逻辑，也未实现 Agent、混合检索、日程或后台推送。`src/` 暂按职责分组，后续依据真实运行位置和宿主接口确定实现文件的语言、后缀及加载方式；尚未建立 `src/` 到运行包的组装流程。
+当前运行代码仍在 `bundle/main.splash`。开发目录与 Octos 接入约定已建立，已在运行入口增加 Octos 连通性测试按钮；业务 Agent、混合检索、日程或后台推送尚未实现。`src/` 暂按职责分组，后续依据真实运行位置和宿主接口确定实现文件的语言、后缀及加载方式；尚未建立 `src/` 到运行包的组装流程。
 
 ### 已确认的界面设计
 
@@ -22,14 +22,14 @@
 | 层次 | 人数 | 职责 |
 | --- | --- | --- |
 | 前端层 | 1 人 | Makepad 页面、公共组件、交互与状态展示 |
-| Agent 层 | 2 人 | 共同开发同一个 Agent，负责上下文、任务编排、分析、核验与变化识别 |
+| Agent 层 | 2 人 | 共同开发同一个 Agent，负责 Octos 适配、上下文、任务编排、分析与核验 |
 | 数据接入与检索层 | 1 人 | 新闻接入、规范化、去重、混合检索与持久化 |
 
 `app/` 和 `contracts/` 是三层共同维护的集成边界。人员数量不决定 Agent 数量；Agent 内部的多个步骤也不代表多个智能体。
 
 ## 目录结构
 
-目录只用于稳定的职责分组，具体功能优先用文件区分。当前保留 11 个末级目录，用 `.gitkeep` 纳入 Git；这些目录仍是开发骨架，不代表功能已实现。
+目录只用于稳定的职责分组，具体功能优先用文件区分。当前保留 13 个末级目录，空目录用 `.gitkeep` 纳入 Git；目录与接口文档不代表功能已实现。
 
 ```text
 cfaw-news-agent/
@@ -45,6 +45,9 @@ cfaw-news-agent/
 │   │   ├── pages/                 # 动态、详情、跟踪、日程、收藏
 │   │   └── components/            # 新闻条目、Agent 提示、建议卡片
 │   ├── agent/                     # 单 Agent：2 人共同开发
+│   │   ├── runtime/               # Octos 宿主适配、任务生命周期
+│   │   ├── prompts/               # 新闻分析与日程建议提示词
+│   │   └── results/               # 结果解析、证据核验、变化识别
 │   └── data/                      # 数据与检索：1 人
 │       ├── ingestion/             # 新闻源、请求、解析、去重
 │       ├── retrieval/             # 查询、关键词/语义召回、融合排序
@@ -66,7 +69,7 @@ cfaw-news-agent/
 维护时遵循以下约定：
 
 - 一个页面、一个组件或一项小职责优先对应一个文件，不再为 `feed`、`news_post`、`workflow` 等单独建目录。
-- `agent/` 内用文件区分流程、宿主调用、提示词和结果核验；两个人协作不需要两套目录或两个 Agent。
+- `agent/runtime/` 只做应用侧适配，不实现 Octos 内核；提示词与结果核验分别放在 `prompts/`、`results/`。两个人共同维护同一个 Agent。
 - `contracts/` 初期用少量文件集中定义新闻、关注、日程及分析结果，避免接口定义散落各层。
 - 某组实现需要多个相关文件、在同一目录中难以查找时，再增加子目录。语言和文件后缀在运行方式确定后选择。
 - 添加真实实现后移除对应 `.gitkeep`；不预建空代码文件。
@@ -89,6 +92,29 @@ cfaw-news-agent/
 6. **共享接口先对齐。** 修改 `contracts/`、`app/`、manifest 或打包流程时，由相关负责人共同核对字段、错误状态和调用关系。各层通过固定样例验证后再联调。
 
 Agent 的两个开发者可以分别侧重流程与宿主适配、提示词与结果核验，具体分工按任务确定，不拆成两个运行时 Agent。
+
+## Octos 接入边界
+
+目标调用关系：`Makepad UI → app → agent/runtime → Rinx octos.* 服务 → 宿主管理的 Octos`。数据层先提供候选证据，Agent 适配层组织上下文并提交分析，结果经应用核验后展示。数据层代码不会因放入 bundle 就自动成为 Octos 工具。
+
+- **应用负责**关注、新闻证据、日程、提示词、结果核验和用户决策记录；Octos 承担 Agent 推理执行。
+- **宿主负责**模型配置、凭据、服务连接、运行时生命周期与工具审批。独立 Rinx 使用配套 Octos 可执行文件；OctoSense 模块模式使用 Shell 注入的 app-peer 服务，不给每个应用另起内核。
+- **版本成套固定**：Rinx `68afcf79`、`octosense-app-peers` `35d9d121`、Octos `a6ea8505`。完整提交与来源见 `dev-dependencies.lock.json` 的 `host_runtime_dependencies`；这些是宿主依赖，不是打入新闻应用 ZIP 的依赖。
+
+当前固定 Rinx 的接口如下（已核对宿主源码，尚未在本应用联调）：
+
+| 服务 | 参数 | 用途 |
+| --- | --- | --- |
+| `octos.session.open` | `{}` | 打开应用作用域上下文 |
+| `octos.turn.start` | `{"text":"..."}` | 提交分析，text 非空且不超过 32768 字节 |
+| `octos.turn.interrupt` | `{}` | 中断当前分析 |
+| `octos.session.history` | `{}` | 按需读取上下文历史 |
+
+`turn.start` 的返回包含 `turn_id` 和 `text`；业务 JSON 需要从文本中解析并核验，不是宿主保证的结构化结果。应用请求与结果约定见 [analysis.md](src/contracts/analysis.md)。适配层应串行管理当前分析，并处理取消、超时、迟到响应和解析失败。
+
+当前 manifest 已声明测试按钮使用的 `octos.session.open`、`octos.turn.start`、`octos.turn.interrupt` 权限；未申请 history 权限。该版本 Rinx 拒绝 bundle 的 `agent` 配置，不应通过增加 Agent 描述文件绕过宿主服务。`session.history` 也不能替代应用自己的日程与决策存储。
+
+落地顺序：真实宿主调用与取消 → 新闻证据分析及核验 → 用户确认日程建议 → 验证后台触发与通知支持。App Hub 安装路径仍需在实际 Shell 上单独验证，Rinx 本地成功不代表上架后的服务已可用。
 
 ## 当前运行与演示
 
@@ -118,6 +144,22 @@ sudo apt-get install libssl-dev cmake llvm clang libclang-dev libsqlite3-dev pkg
 
 其他机器可从官方仓库克隆并检出上述提交，再使用同样的构建命令；检出位置不同时替换相对路径。`agent_chat` 是官方构建示例启用的宿主功能，本新闻应用不依赖其协作服务，也不需要模型或 API key。
 
+### 为后续 Agent 联调准备 Octos
+
+当前新闻浏览无需模型配置。要准备独立 Rinx 的本地 Agent 运行环境，在 Rinx 检出目录执行以下命令（参考其 [Octos 打包说明](https://github.com/hagency-org/Rinx/blob/68afcf796d303aaf646eeb832d65c450a56c92b5/packaging/README-octos.md)）：
+
+```bash
+cargo build --locked --release --features agent_chat
+python3 tools/package-octos.py desktop --app-binary target/release/rinx
+cargo run --locked --release --features agent_chat
+```
+
+宿主脚本构建匹配版本的 Octos 并放到 Rinx 旁边，检查其版本与宿主 Cargo.lock 一致；本项目的 `scripts/package.py` 不承担这一步。OctoSense 模块模式使用 Shell 提供的服务，不运行这套独立宿主打包步骤。
+
+测试本地运行时，通过宿主界面的提供方、模型、可选 Base URL 和密钥字段完成配置，再点击 **Use this device**；密钥仅交给宿主。`agent_chat` 构建特性不等同于 mini-app 的 `octos.*` 权限。以上准备也不会让当前应用自动具备分析能力。
+
+目前只完成源文件与版本核对，未执行上述构建或真实推理。联调时至少验证：服务可用、真实分析返回、取消、服务不可用、非法结果及旧响应丢弃；随后再验证新闻变化与日程确认闭环。
+
 ### 2. 打包当前应用
 
 在本项目根目录执行：
@@ -133,8 +175,8 @@ realpath bundle
 
 1. 在 Rinx 中登录 Matrix 账号，服务器须支持宿主要求的原生 Sliding Sync。账号凭据只在 Rinx 登录界面输入。
 2. 打开 **Mini apps**（桌面导航中的入口；窄屏布局可在 Discover / 发现中找到），点击 **Import an app**。
-3. 将 `realpath bundle` 的输出填入 **OctoSense bundle folder**，Room 留空。当前应用无需配置导入页中的助手提供方、模型或密钥。
-4. 点击 **Review bundle**，核对 `CFAW News`、ID `dev.cfaw.news`、`storage` / `net` / `images` 权限，以及 `hn.algolia.com`、`www.techmeme.com`、`news.google.com` 三个请求域名。
+3. 将 `realpath bundle` 的输出填入 **OctoSense bundle folder**，Room 留空。仅浏览新闻无需模型；使用 Test Octos 前按上面的说明选择并配置助手。
+4. 点击 **Review bundle**，核对 `CFAW News`、ID `dev.cfaw.news`、`storage` / `net` / `images` 和三个 `octos.*` 权限，以及 `hn.algolia.com`、`www.techmeme.com`、`news.google.com` 三个请求域名。
 5. 点击 **Run**。Rinx 使用审核后的应用快照；修改源文件后需重新打包，并退出应用重新 **Review bundle → Run**。
 
 Rinx 导入的是 `bundle/` 文件夹，不是 ZIP。分享 `build/cfaw-news.zip` 后，接收方先解压，再选择其中的 `bundle/`。
@@ -149,6 +191,19 @@ Rinx 导入的是 `bundle/` 文件夹，不是 ZIP。分享 `build/cfaw-news.zip
 4. 点击 **Save**，返回 **Saved** 标签查看收藏，再进入阅读页取消收藏。
 5. 点击 **Refresh** 展示重新请求。来源失败时如实展示失败或旧缓存，不替换为虚构新闻。
 
-当前可演示的是新闻浏览、搜索、摘要阅读和收藏。新信息流设计、持续关注分析和日程建议仍属于后续开发范围；应用内刷新也不等同于后台推送。
+当前可演示新闻浏览、搜索、摘要阅读、收藏，以及下述 Octos 连通性探测。新信息流设计、持续关注分析和日程建议仍属于后续开发范围；应用内刷新也不等同于后台推送。
 
 当前包仅用于本地开发导入。包摘要、App Hub 准入检查和真实官方 Rinx UI 验收分别验证不同事项，不能互相替代。
+
+### 5. 在新闻 App 内测试 Octos
+
+1. **连接已有的 Octos 服务**：在 Rinx 的 **Import an app** 中填写 **Octos server URL**（Octos 服务的 `http://` 或 `https://` 基地址，不是模型 Base URL；宿主自动拼接 `/api/ui-protocol/ws` 并切换 WebSocket 协议）、**Octos profile** 和 **Octos access token**，点击 **Connect Octos**。使用服务实际配置的地址、profile 和 token，不猜端口，也不要把模型 API key 当成 Octos token。
+2. **或者由 Rinx 管理本地 Octos**：完成上述配套内核准备，填写模型配置并点击 **Use this device**。已有独立后台进程不代表 Rinx 自动连接了它；两种方式选一种。Shell 托管模式在 Shell 的 AI 设置中配置。
+3. 选择本项目 `bundle/` 的绝对路径，重新 **Review bundle → Run**；运行中的旧快照不会自动获得新代码或权限。切换助手后也重新打开应用。
+4. 在新闻首页点击 **Test Octos**。状态依次显示打开上下文、等待模型，然后显示 `Octos replied: ...` 和实际返回文本（请求模型回复 `OCTOS_OK`）。仅打开上下文不算完成验证。
+
+按钮只发送固定测试语句，不发送新闻或日程。它通过 `host.request("octos.session.open", {}, callback)` 和 `host.request("octos.turn.start", {text: ...}, callback)` 调用宿主，宿主再转发到所选 Octos；应用内不填写服务地址或凭据。重复点击不会并发发起测试。90 秒未完成会请求中断，迟到结果会被忽略；未确认中断时需关闭再打开应用。
+
+`The assistant is off` 表示宿主未启用助手，回到设置选择上述一种方式。模型鉴权、网络及其他失败会在按钮下显示真实错误。Matrix 的 `m.secret_storage.default_key` / `moments.preferences` 账户数据 404 并非 Octos 调用错误；应依据按钮反馈继续诊断。
+
+已在参考 card-host 的 430×860 原生窗口验证按钮点击及无服务时的错误反馈；该宿主没有 Octos 服务。截图抓取超时，尚未完成像素级视觉验收；成功回复与超时中断路径仍待在真实 Rinx / Octos 上验证。打包成功不代表推理成功。

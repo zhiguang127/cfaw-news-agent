@@ -1,5 +1,5 @@
 // Derived from OctoSense apps/news, commit d1596d739e187c689ada4b59093ca8086c23bbbe.
-// CFAW modifications: Rinx callback requests/timeouts, empty-state rendering and feed-summary reader.
+// CFAW modifications: Rinx callbacks/timeouts, feed-summary reader and Octos connectivity probe.
 // Licensed under Apache-2.0; see repository LICENSE and NOTICE.
 let sources = [
     {id: "hn" label: "Hacker News" kind: "hn" url: "https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=30"}
@@ -21,6 +21,66 @@ let query = ""
 let busy = false
 let updated = 0
 let reading = nil
+let octos_testing = false
+let octos_timeout_seconds = 90
+
+// Uses the assistant selected in Rinx, never a model endpoint or app-owned key.
+fn test_octos(){
+    if octos_testing { return }
+    if !host.has("octos.session.open") || !host.has("octos.turn.start") || !host.has("octos.turn.interrupt") {
+        ui.octos_status.set_text("Octos permissions missing. Review the updated bundle and run it again.")
+        return
+    }
+    octos_testing = true
+    ui.octos_status.set_text("Opening Octos context...")
+    let done = false
+    let timer = start_timeout(octos_timeout_seconds, || {
+        if done { return }
+        done = true
+        ui.octos_status.set_text("Octos timed out after 90 seconds. Stopping request...")
+        let stopping = true
+        let stop_timer_id = start_timeout(10, || {
+            if stopping {
+                ui.octos_status.set_text("Octos timed out; stop was not acknowledged. Close and reopen this app before retrying.")
+            }
+        })
+        host.request("octos.turn.interrupt", {}, fn(stopped){
+            if !stopping { return }
+            stopping = false
+            stop_timer(stop_timer_id)
+            if stopped.is_ok {
+                octos_testing = false
+                ui.octos_status.set_text("Octos timed out; request stopped. Check the host/model connection, then retry.")
+            } else {
+                ui.octos_status.set_text("Octos timed out; close and reopen this app. Stop error: " + stopped.error)
+            }
+        })
+    })
+    host.request("octos.session.open", {}, fn(opened){
+        if done { return }
+        if !opened.is_ok {
+            done = true
+            stop_timer(timer)
+            octos_testing = false
+            ui.octos_status.set_text("Octos context failed: " + opened.error)
+            return
+        }
+        ui.octos_status.set_text("Context opened. Waiting for a real model reply...")
+        host.request("octos.turn.start", {text: "Connectivity test. Do not use tools. Reply with only OCTOS_OK."}, fn(reply){
+            if done { return }
+            done = true
+            stop_timer(timer)
+            octos_testing = false
+            if !reply.is_ok {
+                ui.octos_status.set_text("Octos model request failed: " + reply.error)
+            } else if reply.data == nil || reply.data.text == nil || reply.data.text == "" {
+                ui.octos_status.set_text("Octos returned no model text; connectivity is not confirmed.")
+            } else {
+                ui.octos_status.set_text("Octos replied: " + reply.data.text)
+            }
+        })
+    })
+}
 // Where stories come from: the host's `news` service when this shell offers
 // it (it fetches on a timer and keeps the stories, so News opens from its
 // cache), else this script's own fetch, as in shells without the service.
@@ -412,6 +472,13 @@ HostedView{width: Fill height: Fill
                 }
             }
             status := Label{width: Fill padding: Inset{left: 18 right: 18 bottom: 6} text: "" draw_text.color: secondary draw_text.text_style.font_size: 11}
+            View{width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 bottom: 8} spacing: 4
+                BarButton{text: "Test Octos" on_click: || test_octos()}
+                ScrollYView{width: Fill height: 58 flow: Down
+                    octos_status := Label{width: Fill text: "Not tested. Select an assistant in Rinx, then click Test Octos."
+                        draw_text.color: ink draw_text.text_style.font_size: 12}
+                }
+            }
             list := ScrollYView{width: Fill height: Fill flow: Down spacing: 10 padding: Inset{left: 12 right: 12 bottom: 24}
                 on_render: || {
                     let rows = visible_rows()

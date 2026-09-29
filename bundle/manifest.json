@@ -2,7 +2,10 @@
   "capabilities": [
     "storage",
     "net",
-    "images"
+    "images",
+    "octos.session.open",
+    "octos.turn.start",
+    "octos.turn.interrupt"
   ],
   "compute": {
     "instruction_budget": 16000000,
@@ -10,7 +13,7 @@
   },
   "id": "dev.cfaw.news",
   "integrity": {
-    "bundle_blake3": "dba455b6b6b31f3e3fd1b7c32c0412d552c62f0a50d06e6b8af2a20f7539c47d"
+    "bundle_blake3": "b1aaa4d5d293ae916c2cd95a8b2939f440460b7e97c6cde325bec8e3a5eeb739"
   },
   "name": "CFAW News",
   "network": {

@@ -38,7 +38,7 @@ Support revising or withdrawing earlier suggestions when evidence changes. Avoid
 | Area | Responsibility |
 | --- | --- |
 | `src/frontend/` | Makepad views, components, styling, interactions, and visible states |
-| `src/agent/` | Execution flow, host integration, prompts, analysis, validation, and change detection |
+| `src/agent/` | Execution flow, Octos host integration, prompts, analysis, validation, and change detection |
 | `src/data/` | News ingestion, normalization, hybrid retrieval, and persistence |
 | `src/app/` | Initialization, navigation, and connecting the three layers |
 | `src/contracts/` | Shared data shapes, interface expectations, errors, and state transitions |
@@ -50,6 +50,15 @@ Support revising or withdrawing earlier suggestions when evidence changes. Avoid
 - Keep architecture and setup explanations in README. Update shared contracts with their callers when changing an interface.
 
 The UI requests operations and renders results. Retrieval returns candidate evidence; the Agent decides its significance. Storage persists records without deciding what the UI should show. Application integration handles user actions and connects these responsibilities.
+
+## Octos integration
+
+- Run application Agent reasoning through host-managed Octos services. Keep the application adapter in `agent/runtime/`, prompts in `agent/prompts/`, and result parsing and validation in `agent/results/`. Do not implement a second kernel or assume each app owns a kernel process.
+- Let the host own model configuration, credentials, runtime lifecycle, and tool approvals. Keep domain records and user-confirmed schedule changes in the application.
+- Derive bridge and kernel versions from the pinned host dependency and packaging locks. Update them together when upgrading the host; do not independently select the latest kernel.
+- Verify service names, payloads, limits, events, and availability against the target host. Add capabilities only for implemented calls. Application context schemas are not automatically host API parameters, and model text is not a validated domain result.
+- Keep task correlation and cancellation in the adapter; reject stale completions before updating domain state. Do not assume local retrieval code is automatically exposed as an Octos tool.
+- Distinguish standalone host runtime packaging from Shell-provided services and app bundle packaging. Verify each intended distribution path separately.
 
 ## UI direction
 
