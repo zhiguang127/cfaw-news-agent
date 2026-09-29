@@ -10,44 +10,12 @@
       "relative_checkout": "../Rinx-CFAW"
     },
     {
-      "name": "OctoScript-App-Design-Flow",
-      "commit": "ec0fa223f29800fdf02ee54311c4e309b9ca913d",
-      "origin": "git@github.com:OctoSense-org/OctoScript-App-Design-Flow.git",
-      "dirty": false,
-      "purpose": "reference tools/runtime",
-      "relative_checkout": "../demo-workspace/vendor/OctoScript-App-Design-Flow"
-    },
-    {
       "name": "OctoSense-App-Hub",
       "commit": "a72989ff2e4d51562693d05210b68e11f3bf3fcd",
       "origin": "git@github.com:OctoSense-org/OctoSense-App-Hub.git",
       "dirty": false,
-      "purpose": "reference tools/runtime",
+      "purpose": "local bundle digest tool (hub stamp)",
       "relative_checkout": "../demo-workspace/vendor/OctoSense-App-Hub"
-    },
-    {
-      "name": "makepad",
-      "commit": "975c5630e01b0f3f3ae16cafd2e0fce3c9a5f7d9",
-      "origin": "git@github.com:OctoSense-org/makepad.git",
-      "dirty": false,
-      "purpose": "reference tools/runtime",
-      "relative_checkout": "../demo-workspace/vendor/makepad"
-    },
-    {
-      "name": "octoscript",
-      "commit": "68f6a9df55692b5d8ef8873a12721e279a3f40d6",
-      "origin": "git@github.com:OctoSense-org/Octoscript.git",
-      "dirty": false,
-      "purpose": "reference tools/runtime",
-      "relative_checkout": "../demo-workspace/vendor/octoscript"
-    },
-    {
-      "name": "octoscript-makepad",
-      "commit": "65d30a091eee284ed45afe5b8502835563fb56f7",
-      "origin": "git@github.com:OctoSense-org/Octoscript-Makepad.git",
-      "dirty": false,
-      "purpose": "reference tools/runtime",
-      "relative_checkout": "../demo-workspace/vendor/octoscript-makepad"
     }
   ],
   "note": "Version record only; never updates shared checkouts.",
@@ -59,13 +27,18 @@
   "toolchain": {
     "python": "3.14.4",
     "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
-    "platform": "Linux x86_64; Xvfb + Mesa for screenshots/UI tests"
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)"
   },
   "binary_sha256": {
-    "card-host": "26362de429e08ea2469d93d20af7b5b92080d8be090aa7e5f3c706fd44ded4ae",
     "hub": "b2a450aa6f34ddd123e1df8a4402910b29a0d36cf87ba4a606488f7eac2f37d2",
     "rinx-existing": "883a8aa947a3778bffb845a405e560748f602564b058459548533cf644ef025e"
   },
-  "target_worktree_note": "Existing src/miniapps/ui.rs Hub custom-widget visibility changes; untouched. Existing binary was only used for isolated login-page probe, not successful app import."
+  "target_worktree_note": "Existing src/miniapps/ui.rs modifications; untouched. Prior official News adapter UI acceptance used this local host; not a pristine official build.",
+  "application_source": {
+    "repository": "https://github.com/OctoSense-org/OctoSense.git",
+    "commit": "d1596d739e187c689ada4b59093ca8086c23bbbe",
+    "path": "apps/news/bundle/main.splash",
+    "sha256": "cfbe681dd2c0cf24c738e941ff4f916ac161a7333f33029f37e5f1aeaa0503c7",
+    "adaptation": "Rinx callbacks/timeouts, empty states, feed-summary reader; official Makepad layout retained"
+  }
 }

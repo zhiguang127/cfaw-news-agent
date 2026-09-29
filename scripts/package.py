@@ -1,14 +1,39 @@
 #!/usr/bin/env python3
-"""Create a deterministic local-import archive after the official gate passes."""
-import subprocess,zipfile
+"""Stamp and package the unsigned Rinx local-import bundle; not a Hub publish gate."""
+import argparse
+import json
+import os
 from pathlib import Path
-root=Path(__file__).resolve().parents[1]
-subprocess.run([str(root/'scripts/check-bundle.sh')],check=True,cwd=root)
-out=root/'build/cfaw-news-agent-0.1.0.zip';out.parent.mkdir(exist_ok=True)
-with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
-    for p in sorted((root/'bundle').rglob('*')):
-        if p.is_file():
-            info=zipfile.ZipInfo(str(Path('cfaw-news-agent')/p.relative_to(root/'bundle')),date_time=(2026,9,28,0,0,0))
-            info.compress_type=zipfile.ZIP_DEFLATED;info.external_attr=0o100644 << 16
-            z.writestr(info,p.read_bytes())
-print(out)
+import subprocess
+import zipfile
+
+root = Path(__file__).resolve().parents[1]
+bundle = root / 'bundle'
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--output', type=Path, help='ZIP destination (default: build/cfaw-news.zip)')
+args = parser.parse_args()
+manifest = json.loads((bundle / 'manifest.json').read_text())
+if manifest.get('publisher_signature') or manifest.get('integrity', {}).get('signature'):
+    raise SystemExit('Refusing to restamp a signed bundle')
+if not (bundle / 'main.splash').is_file():
+    raise SystemExit('Missing bundle/main.splash')
+lock = json.loads((root / 'dev-dependencies.lock.json').read_text())
+repo = next(item for item in lock['repositories'] if item['name'] == 'OctoSense-App-Hub')
+hub = Path(os.environ.get('OCTO_HUB', str(root / repo['relative_checkout'] / 'target/release/hub'))).expanduser()
+if not hub.is_file():
+    raise SystemExit('Hub tool not found; set OCTO_HUB to the pinned hub executable')
+output = (args.output or root / 'build/cfaw-news.zip').resolve()
+if output == bundle or bundle in output.parents:
+    raise SystemExit('ZIP output must be outside bundle/')
+files = sorted(bundle.rglob('*'))
+if any(path.is_symlink() for path in files):
+    raise SystemExit('Refusing symlinks in bundle/')
+subprocess.run([str(hub.resolve()), 'stamp', str(bundle)], check=True)
+output.parent.mkdir(parents=True, exist_ok=True)
+with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
+    for path in files:
+        if path.is_file():
+            archive.write(path, Path('bundle') / path.relative_to(bundle))
+    for name in ['LICENSE', 'NOTICE']:
+        archive.write(root / name, name)
+print(output)

@@ -2,27 +2,27 @@
   "capabilities": [
     "storage",
     "net",
-    "octos.turn.start",
-    "octos.turn.interrupt"
+    "images"
   ],
   "compute": {
     "instruction_budget": 16000000,
     "memory_bytes": 33554432
   },
-  "id": "cfaw-news-agent",
+  "id": "dev.cfaw.news",
   "integrity": {
-    "bundle_blake3": "268e32c5aa3a3e9c5610183fae4989dab6eece4db5863bb68331d5b42e578188"
+    "bundle_blake3": "dba455b6b6b31f3e3fd1b7c32c0412d552c62f0a50d06e6b8af2a20f7539c47d"
   },
-  "name": "CFAW News Agent",
+  "name": "CFAW News",
   "network": {
     "hosts": [
-      "www.apple.com",
-      "blogs.nvidia.com"
+      "hn.algolia.com",
+      "www.techmeme.com",
+      "news.google.com"
     ]
   },
   "schema": 1,
   "storage": {
-    "max_bytes": 2097152
+    "max_bytes": 8388608
   },
-  "version": "0.1.0"
+  "version": "1.0.0"
 }

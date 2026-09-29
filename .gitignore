@@ -39,5 +39,4 @@ Thumbs.db
 *.swo
 *~
 
-# Keep Cargo.lock, dev-dependencies.lock.json, tests/fixtures/ and
-# bundle/screenshots/ in Git: they are reproducibility and acceptance assets.
+# Keep dev-dependencies.lock.json in Git for reproducible tool and source versions.
