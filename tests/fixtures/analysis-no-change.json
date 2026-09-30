@@ -1,0 +1,21 @@
+{
+  "fixture_type": "no_change",
+  "is_demo_data": true,
+  "description": "Fixed synthetic input with adequate but unrelated evidence; no user action should change.",
+  "input": {
+    "schema_version": 1,
+    "request_id": "req-fixture-no-change-001",
+    "context_version": 1,
+    "interests": [{"interest_id": "interest-ai-agents", "description": "重大 AI Agent 开发工具变化"}],
+    "evidence": [{"evidence_id": "evidence-fixture-sports-001", "source_url": "https://example.invalid/news/sports", "text": "DEMO FIXTURE: A fictional local sports result unrelated to the tracked interest.", "content_kind": "summary", "published_at": "2026-09-29T08:00:00+00:00", "retrieved_at": "2026-09-29T09:00:00+00:00"}],
+    "schedules": [],
+    "previous_decisions": []
+  },
+  "expected": {
+    "valid": true,
+    "usable": true,
+    "outcome": "no_change",
+    "error": null,
+    "constraints": {"suggestions_empty": true}
+  }
+}

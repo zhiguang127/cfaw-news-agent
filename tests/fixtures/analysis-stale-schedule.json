@@ -1,0 +1,22 @@
+{
+  "fixture_type": "stale_schedule",
+  "is_demo_data": true,
+  "description": "A proposal references an older schedule version and must be rejected as stale before use.",
+  "input": {
+    "schema_version": 1,
+    "request_id": "req-fixture-stale-001",
+    "context_version": 4,
+    "interests": [{"interest_id": "interest-ai-agents", "description": "重大 AI Agent 开发工具变化"}],
+    "evidence": [{"evidence_id": "evidence-fixture-release-002", "source_url": "https://example.invalid/news/agent-update", "text": "DEMO FIXTURE: A fictional update affects the tracked research topic.", "content_kind": "summary", "published_at": "2026-09-29T08:00:00+00:00", "retrieved_at": "2026-09-29T09:00:00+00:00"}],
+    "schedules": [{"schedule_id": "schedule-fixture-research-002", "version": 3, "title": "Review AI Agent tools", "start": "2026-10-04T09:00:00+08:00", "end": "2026-10-04T11:00:00+08:00", "timezone": "Asia/Shanghai"}],
+    "previous_decisions": [{"suggestion_id": "suggestion-fixture-old-001", "state": "pending", "evidence_ids": ["evidence-fixture-release-002"]}]
+  },
+  "model_output": {"schema_version": 1, "outcome": "suggestions", "explanation": "DEMO FIXTURE: Proposal was produced against an older schedule snapshot.", "suggestions": [{"interest_ids": ["interest-ai-agents"], "evidence_ids": ["evidence-fixture-release-002"], "schedule_id": "schedule-fixture-research-002", "schedule_version": 2, "change_summary": "Review the fictional update.", "rationale": "The cited summary concerns the tracked topic.", "uncertainties": ["Synthetic fixture; not real news."], "proposed_action": {"kind": "reschedule", "title": "Review the update", "start": "2026-10-04T13:00:00+08:00", "end": "2026-10-04T14:00:00+08:00", "timezone": "Asia/Shanghai"}}]},
+  "expected": {
+    "valid": true,
+    "usable": false,
+    "outcome": "suggestions",
+    "error": "stale_context",
+    "constraints": {"must_not_apply_schedule_change": true}
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "fixture_type": "invalid_model_output",
+  "is_demo_data": true,
+  "description": "Fixed synthetic model response cites an evidence ID absent from its input and must fail validation.",
+  "input": {
+    "schema_version": 1,
+    "request_id": "req-fixture-invalid-001",
+    "context_version": 1,
+    "interests": [{"interest_id": "interest-ai-agents", "description": "重大 AI Agent 开发工具变化"}],
+    "evidence": [{"evidence_id": "evidence-fixture-known-001", "source_url": "https://example.invalid/news/known", "text": "DEMO FIXTURE: One known fictional summary.", "content_kind": "summary", "published_at": null, "retrieved_at": "2026-09-29T09:00:00+00:00"}],
+    "schedules": [],
+    "previous_decisions": []
+  },
+  "model_output": {"schema_version": 1, "outcome": "suggestions", "explanation": "DEMO FIXTURE: The response contains an unknown evidence reference.", "suggestions": [{"interest_ids": ["interest-ai-agents"], "evidence_ids": ["evidence-fixture-does-not-exist"], "schedule_id": null, "schedule_version": null, "change_summary": "Investigate the fictional development.", "rationale": "This deliberately invalid fixture tests reference validation.", "uncertainties": ["Synthetic fixture."], "proposed_action": null}]},
+  "expected": {
+    "valid": false,
+    "usable": false,
+    "outcome": null,
+    "error": "unknown_reference",
+    "constraints": {"must_not_display_or_apply": true}
+  }
+}
