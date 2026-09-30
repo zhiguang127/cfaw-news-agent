@@ -1,5 +1,5 @@
 // Derived from OctoSense apps/news, commit d1596d739e187c689ada4b59093ca8086c23bbbe.
-// CFAW modifications: Rinx callbacks/timeouts, feed-summary reader and Octos connectivity probe.
+// CFAW modifications: compact Makepad feed, labeled mock workflows and real Octos connectivity probe.
 // Licensed under Apache-2.0; see repository LICENSE and NOTICE.
 let sources = [
     {id: "hn" label: "Hacker News" kind: "hn" url: "https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=30"}
@@ -21,27 +21,67 @@ let query = ""
 let busy = false
 let updated = 0
 let reading = nil
+
+// Demo records never enter the real-news cache or saved.json.
+let demo_mode = true
+let page = "feed"
+let related_only = false
+let decision = "pending"
+let demo_saved = []
+let demo_followed = ["开发工具" "端侧 AI"]
+let live_followed = []
+let demo_storage_ok = true
+let detail_kind = ""
+let evidence_open = false
+let demo_rows = [
+    {demo: true id: "northstar" avatar: "N" source: "Northstar" time_label: "12 分钟前" topic: "开发工具"
+        title: "开发工具公开测试延期至下周一，接口文档将同步更新。"
+        summary: "原定周五开放的测试调整至下周一。公告没有提供进一步原因。"
+        hint: "可能影响你周五的工具评估" link: "https://northstar.example.invalid/preview"}
+    {demo: true id: "field" avatar: "F" source: "Field Notes" time_label: "28 分钟前" topic: "开发工具"
+        title: "从配置到部署：新版工具迁移指南发布，附完整示例。"
+        summary: "指南整理了环境准备、配置迁移与部署检查项，尚未提供新版工具的性能结果。"
+        hint: "" link: "https://field.example.invalid/guide"}
+    {demo: true id: "studio" avatar: "O" source: "Open Studio" time_label: "46 分钟前" topic: "端侧 AI"
+        title: "端侧模型评测新增低内存设备结果，公布测试方法与限制。"
+        summary: "本次更新补充低内存设备的测试记录。硬件不同，评测结果不能直接横向比较。"
+        hint: "你跟踪的端侧 AI 有新证据" link: "https://studio.example.invalid/evaluation"}
+    {demo: true id: "launch" avatar: "L" source: "Launch Weekly" time_label: "1 小时前" topic: "开发者活动"
+        title: "开发者活动公布议程：检索、数据来源与 Agent 产品设计。"
+        summary: "议程包含三场主题分享，未公布举办日期，因此不建议创建日程。"
+        hint: "" link: "https://launch.example.invalid/agenda"}
+    {demo: true id: "signal" avatar: "S" source: "Signal Lab" time_label: "2 小时前" topic: "信息检索"
+        title: "检索实验记录：加入时间因素后，新消息更容易进入候选集。"
+        summary: "实验比较了不同排序方法。结论只适用于其示例数据，仍需在自己的新闻源上验证。"
+        hint: "" link: "https://signal.example.invalid/retrieval"}
+]
+
 let octos_testing = false
 let octos_timeout_seconds = 90
+let octos_message = "未测试。点击后显示真实回复或错误。"
+fn set_octos_message(text){
+    octos_message = text
+    if detail_kind == "settings" { ui.octos_status.set_text(text) }
+}
 
 // Uses the assistant selected in Rinx, never a model endpoint or app-owned key.
 fn test_octos(){
     if octos_testing { return }
     if !host.has("octos.session.open") || !host.has("octos.turn.start") || !host.has("octos.turn.interrupt") {
-        ui.octos_status.set_text("Octos permissions missing. Review the updated bundle and run it again.")
+        set_octos_message("Octos permissions missing. Review the updated bundle and run it again.")
         return
     }
     octos_testing = true
-    ui.octos_status.set_text("Opening Octos context...")
+    set_octos_message("Opening Octos context...")
     let done = false
     let timer = start_timeout(octos_timeout_seconds, || {
         if done { return }
         done = true
-        ui.octos_status.set_text("Octos timed out after 90 seconds. Stopping request...")
+        set_octos_message("Octos timed out after 90 seconds. Stopping request...")
         let stopping = true
         let stop_timer_id = start_timeout(10, || {
             if stopping {
-                ui.octos_status.set_text("Octos timed out; stop was not acknowledged. Close and reopen this app before retrying.")
+                set_octos_message("Octos timed out; stop was not acknowledged. Close and reopen this app before retrying.")
             }
         })
         host.request("octos.turn.interrupt", {}, fn(stopped){
@@ -50,9 +90,9 @@ fn test_octos(){
             stop_timer(stop_timer_id)
             if stopped.is_ok {
                 octos_testing = false
-                ui.octos_status.set_text("Octos timed out; request stopped. Check the host/model connection, then retry.")
+                set_octos_message("Octos timed out; request stopped. Check the host/model connection, then retry.")
             } else {
-                ui.octos_status.set_text("Octos timed out; close and reopen this app. Stop error: " + stopped.error)
+                set_octos_message("Octos timed out; close and reopen this app. Stop error: " + stopped.error)
             }
         })
     })
@@ -62,21 +102,21 @@ fn test_octos(){
             done = true
             stop_timer(timer)
             octos_testing = false
-            ui.octos_status.set_text("Octos context failed: " + opened.error)
+            set_octos_message("Octos context failed: " + opened.error)
             return
         }
-        ui.octos_status.set_text("Context opened. Waiting for a real model reply...")
+        set_octos_message("Context opened. Waiting for a real model reply...")
         host.request("octos.turn.start", {text: "Connectivity test. Do not use tools. Reply with only OCTOS_OK."}, fn(reply){
             if done { return }
             done = true
             stop_timer(timer)
             octos_testing = false
             if !reply.is_ok {
-                ui.octos_status.set_text("Octos model request failed: " + reply.error)
+                set_octos_message("Octos model request failed: " + reply.error)
             } else if reply.data == nil || reply.data.text == nil || reply.data.text == "" {
-                ui.octos_status.set_text("Octos returned no model text; connectivity is not confirmed.")
+                set_octos_message("Octos returned no model text; connectivity is not confirmed.")
             } else {
-                ui.octos_status.set_text("Octos replied: " + reply.data.text)
+                set_octos_message("Octos replied: " + reply.data.text)
             }
         })
     })
@@ -90,8 +130,6 @@ fn test_octos(){
 let use_service = false
 let service_waiting = 0
 let service_relist = false
-let months = ["January" "February" "March" "April" "May" "June" "July" "August" "September" "October" "November" "December"]
-let days = ["Sunday" "Monday" "Tuesday" "Wednesday" "Thursday" "Friday" "Saturday"]
 let specials = ["\\" "." "*" "+" "?" "(" ")" "[" "]" "{" "}" "|" "^" "$"]
 
 // CFAW Rinx adapter: bounded callbacks avoid the pending await path in this host.
@@ -158,14 +196,14 @@ fn load_next(index){
     if index >= sources.len() {
         busy = false
         sync_status()
-        ui.list.render()
+        render_feed()
         ui.tile_list.render()
         return
     }
     let s = sources[index]
     request_feed(s.url, fn(res){
         accept_source(s, res)
-        ui.list.render()
+        render_feed()
         ui.tile_list.render()
         sync_status()
         load_next(index + 1)
@@ -173,6 +211,7 @@ fn load_next(index){
 }
 
 fn refresh(){
+    if demo_mode { return }
     if busy { return }
     if use_service { refresh_service(); return }
     busy = true
@@ -221,7 +260,7 @@ fn listed_service(){
         refresh()
         return
     }
-    ui.list.render()
+    render_feed()
     sync_status()
     ui.tile_list.render()
     if service_relist {
@@ -247,6 +286,20 @@ fn refresh_service(){
 }
 
 fn load_state(){
+    if fs.exists("demo_ui_state_v1.json") {
+        try {
+            let v = fs.read("demo_ui_state_v1.json").parse_json()
+            if v == nil || v.schema_version != 1 || v.saved == nil || v.followed == nil || v.decision == nil {
+                demo_storage_ok = false
+            } else if v.decision != "pending" && v.decision != "accepted" && v.decision != "kept" {
+                demo_storage_ok = false
+            } else {
+                demo_saved = v.saved
+                demo_followed = v.followed
+                decision = v.decision
+            }
+        } { demo_storage_ok = false }
+    }
     if fs.exists("saved.json") {
         let v = fs.read("saved.json").parse_json()
         if v != nil { saved = v }
@@ -260,8 +313,8 @@ fn load_state(){
     }
 }
 
-// All: the first row of each source, then the second, and so on, so every
-// source keeps its own ranking and none floods the list.
+
+// Keep the original news sources and local bookmarks available in live mode.
 fn today_rows(){
     let out = []
     for i in 30 {
@@ -272,275 +325,538 @@ fn today_rows(){
     }
     out
 }
-
 fn escape(text){
     let out = text
     for c in specials { out = out.replace(c, "\\" + c) }
     out
 }
-
-fn visible_rows(){
-    let rows = []
-    if tab == "today" { rows = today_rows() }
-    else if tab == "saved" { rows = saved }
-    else { rows = rows_by[tab] }
-    if query == "" { return rows }
-    let re = regex(escape(query), "i")
-    let out = []
-    for r in rows {
-        if re.test(r.title) || re.test(r.summary) || re.test(r.source) { out.push(r) }
-    }
-    out
+fn mock_row(r){
+    for item in demo_rows { if item.link == r.link { return true } }
+    false
 }
-
-fn ago(secs){
-    if secs == nil || secs <= 0 { return "" }
-    let d = time_now() - secs
-    if d < 60 { return "now" }
-    if d < 3600 { return "" + floor(d / 60) + "m" }
-    if d < 86400 { return "" + floor(d / 3600) + "h" }
-    "" + floor(d / 86400) + "d"
+fn contains(items, value){
+    for item in items { if item == value { return true } }
+    false
 }
-
-fn meta(r){
-    let line = r.source
-    let a = ago(r.published)
-    if a != "" { line = line + "  ·  " + a }
-    if r.points != nil { line = line + "  ·  " + r.points + " points" }
-    if r.comments != nil { line = line + "  ·  " + r.comments + " comments" }
-    line
-}
-
-fn date_line(){
-    let t = local_time()
-    days[t.weekday] + ", " + months[t.month - 1] + " " + t.day
-}
-
-fn sync_status(){
-    let text = ""
-    if busy { text = "Updating…" }
-    else if tab != "today" && tab != "saved" && failed_by[tab] && rows_by[tab].len() == 0 {
-        text = "Couldn't load this source. Pull the refresh button to try again."
-    }
-    else if updated > 0 { text = "Updated " + ago(updated) + " ago" }
-    if text == "Updated now ago" { text = "Updated just now" }
-    if !use_service {
-        let counts = ""
-        for s in sources {
-            if counts != "" { counts = counts + " · " }
-            counts = counts + s.label + ": " + rows_by[s.id].len()
-            if failed_by[s.id] { counts = counts + " (request failed; cached if any)" }
-        }
-        if text != "" { text = text + "\n" }
-        text = text + counts
-    }
-    ui.status.set_text(text)
-}
-
-fn pick(id){
-    tab = id
-    ui.tabbar.render()
-    ui.list.render()
-    sync_status()
-}
-
-fn set_query(text){
-    query = ("" + text).trim()
-    ui.list.render()
-}
-
 fn is_saved(link){
+    for r in demo_rows { if r.link == link { return contains(demo_saved, link) } }
     for s in saved { if s.link == link { return true } }
     false
 }
-
+fn is_followed(r){
+    if mock_row(r) { return contains(demo_followed, r.topic) }
+    contains(live_followed, r.source)
+}
+fn has_hint(r){
+    if !mock_row(r) || !is_followed(r) { return false }
+    if r.id == "northstar" && decision != "pending" { return false }
+    r.hint != ""
+}
+fn visible_rows(){
+    let rows = []
+    if demo_mode { rows = demo_rows }
+    else if page == "saved" { rows = saved }
+    else if tab == "today" { rows = today_rows() }
+    else { rows = rows_by[tab] }
+    let out = []
+    let re = regex(escape(query), "i")
+    for r in rows {
+        if page == "saved" && !is_saved(r.link) { continue }
+        if page == "tracking" && !is_followed(r) { continue }
+        if page == "feed" && related_only && !has_hint(r) { continue }
+        if query != "" && !re.test(r.title) && !re.test(r.summary) && !re.test(r.source) { continue }
+        out.push(r)
+    }
+    out
+}
+fn ago(secs){
+    if secs == nil || secs <= 0 { return "时间未知" }
+    let d = time_now() - secs
+    if d < 60 { return "刚刚" }
+    if d < 3600 { return "" + floor(d / 60) + " 分钟前" }
+    if d < 86400 { return "" + floor(d / 3600) + " 小时前" }
+    "" + floor(d / 86400) + " 天前"
+}
+fn meta(r){
+    if mock_row(r) { return r.source + "  ·  " + r.time_label }
+    r.source + "  ·  " + ago(r.published)
+}
+fn avatar(r){
+    if mock_row(r) { return r.avatar }
+    if r.source == "Hacker News" { return "HN" }
+    if r.source == "TechMeme" { return "T" }
+    "G"
+}
+fn notice(text){
+    ui.feedback.set_text(text)
+    ui.feedback.set_visible(text != "")
+}
+fn persist_demo(){
+    if !demo_storage_ok {
+        notice("示例状态读取失败；本次使用临时状态，原文件未覆盖。")
+        return
+    }
+    let result = fs.write("demo_ui_state_v1.json", {schema_version: 1 saved: demo_saved followed: demo_followed decision: decision}.to_json())
+    if result != nil { notice("示例状态保存失败；本次修改仅在当前会话保留。") }
+}
+fn sync_status(){
+    let text = ""
+    if !demo_mode {
+        if busy { text = "正在请求真实新闻…" }
+        else if updated > 0 { text = "真实新闻 · 更新于 " + ago(updated) }
+        else { text = "真实新闻尚未加载" }
+        for s in sources {
+            if failed_by[s.id] { text = text + " · " + s.label + " 请求失败（仅保留旧缓存）" }
+        }
+    }
+    ui.status.set_text(text)
+    ui.status.set_visible(!demo_mode && page != "schedule")
+}
+fn sync_header(){
+    if demo_mode {
+        ui.mode_note.set_text("MOCK 演示 · 新闻、Agent 判断与日程均为虚构")
+        ui.mode_button.set_text("真实新闻")
+        if decision == "pending" { ui.pending.set_text("1 条日程建议  ›") }
+        else { ui.pending.set_text("建议已处理  ›") }
+    } else {
+        ui.mode_note.set_text("真实新闻 · Agent 分析与日程仍为演示功能")
+        ui.mode_button.set_text("Mock 示例")
+    }
+    ui.pending.set_visible(demo_mode)
+    ui.refresh_button.set_visible(!demo_mode)
+}
+fn render_feed(){
+    ui.list.render()
+    let empty = visible_rows().len() == 0
+    ui.list_container.set_visible(!empty)
+    ui.empty_panel.set_visible(empty)
+    ui.empty_message.set_text(empty_text())
+}
+fn sync_schedule(){
+    ui.live_schedule_note.set_visible(!demo_mode)
+    if decision == "accepted" {
+        ui.schedule_time.set_text("下周一 14:00—15:00")
+        ui.schedule_note.set_text("已确认示例改期 · 未写入系统日历")
+    } else {
+        ui.schedule_time.set_text("周五 14:00—15:00")
+        if decision == "pending" { ui.schedule_note.set_text("1 条待确认建议 · 当前安排尚未修改") }
+        else { ui.schedule_note.set_text("已保留原计划 · 建议已处理") }
+    }
+}
+fn render_main(){
+    let text = ""
+    if page == "tracking" {
+        text = "关注的主题 · 点击已跟踪可取消"
+        if !demo_mode { text = "已跟踪的来源 · 仅作本地筛选，暂无后台监测" }
+    }
+    if page == "saved" { text = "你的收藏 · 示例和真实新闻分开保存" }
+    if page == "schedule" { text = "应用内日程 · MOCK 示例" }
+    ui.page_note.set_text(text)
+    ui.tabbar.render()
+    ui.navigation.render()
+    render_feed()
+    sync_schedule()
+    ui.tile_list.render()
+    // render reapplies declaration properties; visibility must be set afterward.
+    ui.tabbar.set_visible(page == "feed")
+    ui.search_box.set_visible(page != "schedule")
+    ui.feed_list.set_visible(page != "schedule")
+    ui.schedule_page.set_visible(page == "schedule")
+    ui.page_note.set_visible(page != "feed")
+    sync_status()
+    sync_header()
+}
+fn select_page(id){
+    page = id
+    reading = nil
+    detail_kind = ""
+    ui.detail_pane.set_visible(false)
+    ui.main.set_visible(true)
+    query = ""
+    ui.search.set_text("")
+    notice("")
+    render_main()
+}
+fn switch_mode(){
+    demo_mode = !demo_mode
+    related_only = false
+    tab = "today"
+    select_page("feed")
+    if !demo_mode { refresh() }
+}
+fn pick(id){
+    if demo_mode { related_only = id == "related" }
+    else { tab = id }
+    ui.tabbar.render()
+    render_feed()
+    sync_status()
+}
+fn set_query(text){
+    query = ("" + text).trim()
+    render_feed()
+}
+fn toggle_follow(r){
+    if mock_row(r) {
+        if is_followed(r) { demo_followed.retain(|t| t != r.topic) }
+        else { demo_followed.push(r.topic) }
+        persist_demo()
+    } else {
+        if is_followed(r) { live_followed.retain(|t| t != r.source) }
+        else { live_followed.push(r.source) }
+    }
+    render_feed()
+    if detail_kind == "story" { render_detail() }
+}
 fn toggle_save(r){
-    if is_saved(r.link) { saved.retain(|s| s.link != r.link) } else { saved.push(r) }
-    fs.write("saved.json", saved.to_json())
-    sync_reader_bar()
-    if tab == "saved" { ui.list.render() }
+    if mock_row(r) {
+        if contains(demo_saved, r.link) { demo_saved.retain(|link| link != r.link) }
+        else { demo_saved.push(r.link) }
+        persist_demo()
+    } else {
+        let exists = false
+        for item in saved { if item.link == r.link { exists = true } }
+        if exists { saved.retain(|item| item.link != r.link) } else { saved.push(r) }
+        let result = fs.write("saved.json", saved.to_json())
+        if result != nil { notice("收藏保存失败，本次会话中仍可查看。") }
+    }
+    render_feed()
+    if detail_kind == "story" { render_detail() }
 }
-
-fn sync_reader_bar(){
-    if reading == nil { return }
-    if is_saved(reading.link) { ui.save.set_text("Saved") } else { ui.save.set_text("Save") }
+fn render_detail(){
+    if detail_kind == "story" { ui.story_content.render() }
+    if detail_kind == "plan" { ui.plan_content.render() }
+    ui.story_panel.set_visible(detail_kind == "story")
+    ui.plan_panel.set_visible(detail_kind == "plan")
+    ui.settings_panel.set_visible(detail_kind == "settings")
 }
-
-// This Linux Rinx build has no embedded browser implementation. Keep the
-// official reader toolbar, show the actual feed excerpt and copyable source.
+fn show_detail(kind, title){
+    detail_kind = kind
+    ui.detail_title.set_text(title)
+    ui.main.set_visible(false)
+    ui.detail_pane.set_visible(true)
+    render_detail()
+}
 fn open_story(r){
     reading = r
-    ui.reader_title.set_text(r.source)
-    ui.reader_fail.set_text("Feed excerpt only. Copy the source URL to read the original in a browser.")
-    sync_reader_bar()
-    ui.comments.set_visible(r.discussion != "" && r.discussion != r.link)
-    ui.reader_pane.set_visible(true)
-    ui.main.set_visible(false)
-    ui.reader_content.render()
+    evidence_open = false
+    notice("")
+    show_detail("story", "新闻详情")
 }
-
-fn open_comments(){
-    if reading != nil && reading.discussion != "" {
-        ui.reader_url.set_text(reading.discussion)
-        ui.reader_fail.set_text("Discussion URL shown below; copy it to your browser.")
-    }
+fn open_agent(r){
+    reading = r
+    evidence_open = true
+    notice("")
+    show_detail("story", "Agent · 关联依据")
 }
-
-fn close_story(){
+fn toggle_evidence(){
+    evidence_open = !evidence_open
+    render_detail()
+}
+fn open_plan(){
+    notice("")
+    show_detail("plan", "日程建议 · MOCK")
+}
+fn show_settings(){
+    notice("")
+    show_detail("settings", "Octos 连接")
+}
+fn close_detail(){
+    ui.detail_pane.set_visible(false)
     ui.main.set_visible(true)
-    ui.reader_pane.set_visible(false)
+    detail_kind = ""
     reading = nil
+    sync_header()
 }
-
+fn decide(value){
+    if !demo_mode || decision != "pending" { return }
+    decision = value
+    persist_demo()
+    sync_schedule()
+    sync_header()
+    render_feed()
+    render_detail()
+    if value == "accepted" { notice("MOCK：示例日程已改期；未写入系统日历。") }
+    else { notice("MOCK：保留原计划，建议已处理。") }
+}
+fn reconsider(){
+    decision = "pending"
+    persist_demo()
+    sync_schedule()
+    notice("MOCK：已重置示例建议。")
+    sync_header()
+    render_feed()
+    render_detail()
+}
 fn empty_text(){
-    if tab == "saved" { return "Long-press a story, or tap Save while reading, to keep it here." }
-    if query != "" { return "No stories match." }
-    "No stories yet."
+    if query != "" { return "没有匹配的新闻，试试其他关键词。" }
+    if page == "saved" { return "还没有收藏。回到动态，收藏值得再看的新闻。" }
+    if page == "tracking" { return "还没有跟踪内容。回到动态，选择感兴趣的主题。" }
+    if related_only { return "暂时没有新的关联提示。" }
+    "新闻暂未加载。可以点击刷新；请求失败不会替换为 Mock 数据。"
 }
-
 fn boot(){
-    ui.date.set_text(date_line())
     load_state()
-    ui.tabbar.render()
-    ui.list.render()
-    ui.tile_list.render()
     use_service = host.has("news")
-    refresh()
+    render_main()
+    if !demo_storage_ok { notice("示例状态读取失败；本次使用临时状态，原文件未覆盖。") }
 }
 start_timeout(0.05, || boot())
-start_interval(900, || refresh())
+start_interval(900, || { if !demo_mode { refresh() } })
 
-let ink = #x1c1c1e
-let secondary = #x8e8e93
-let accent = #xe0245e
-let ground = #xf2f2f7
-
-let TabButton = ButtonFlat{height: 32 padding: Inset{left: 11 right: 11}
-    draw_bg +: {border_radius: 16.0 color: #x00000000 color_hover: #x0000000a color_down: #x00000014 border_size: 0.0}
-    draw_text +: {color: #x3a3a3c color_hover: #x3a3a3c color_down: #x3a3a3c text_style +: {font_size: 13}}
+let ink = #x202126
+let secondary = #x666873
+let accent = #x515db4
+let line = #xeaeaf0
+let soft = #xf6f6f9
+let white = #xffffff
+let Text = Label{width: Fill padding: 0 draw_text.color: ink draw_text.text_style.font_size: 14 draw_text.text_style.line_spacing: 1.15}
+let Small = Text{draw_text.color: secondary draw_text.text_style.font_size: 11}
+let Heading = Text{draw_text.text_style: theme.font_bold{font_size: 20 line_spacing: 1.2}}
+let Section = Text{draw_text.text_style: theme.font_bold{font_size: 13 line_spacing: 1.2}}
+let Divider = SolidView{width: Fill height: 1 draw_bg.color: line}
+let QuietButton = ButtonFlat{height: 30 padding: Inset{left: 7 right: 7} margin: 0
+    draw_bg +: {color: #x00000000 color_hover: #x00000008 color_down: #x00000010 border_size: 0.0 border_radius: 6.0}
+    draw_text +: {color: secondary color_hover: ink color_down: ink text_style +: {font_size: 11}}
 }
-let TabButtonActive = TabButton{
-    draw_bg +: {color: #x1c1c1e color_hover: #x1c1c1e color_down: #x3a3a3c}
-    draw_text +: {color: #xffffff color_hover: #xffffff color_down: #xffffff}
+let LinkButton = QuietButton{draw_text +: {color: accent color_hover: accent color_down: accent}}
+let HintButton = LinkButton{width: Fill height: 28 align: Align{x: 0.0} padding: 0
+    draw_text +: {text_style +: {font_size: 12}}
 }
-let BarButton = ButtonFlat{height: 36 padding: Inset{left: 10 right: 10}
-    draw_bg +: {color: #x00000000 color_hover: #x0000000a color_down: #x00000014 border_size: 0.0}
-    draw_text +: {color: accent color_hover: accent color_down: accent text_style +: {font_size: 15}}
+let Pill = LinkButton{height: 30 padding: Inset{left: 10 right: 10}
+    draw_bg +: {color: #xf0f1fa color_hover: #xe7e9f7 color_down: #xdfe2f1 border_radius: 15.0}
 }
-
-let StoryHead = View{width: Fill height: Fit flow: Down spacing: 4
-    meta := Label{width: Fill text: "" max_lines: 1 draw_text.color: secondary draw_text.text_style.font_size: 11}
-    title := Label{width: Fill text: "" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 16}}
+let Primary = QuietButton{height: 40 padding: Inset{left: 14 right: 14}
+    draw_bg +: {color: ink color_hover: #x353741 color_down: #x454752 border_radius: 9.0}
+    draw_text +: {color: white color_hover: white color_down: white text_style +: {font_size: 13}}
 }
-let StoryText = StoryHead{
-    summary := Label{width: Fill text: "" max_lines: 2 draw_text.color: #x3a3a3c draw_text.text_style.font_size: 13}
+let SecondaryButton = QuietButton{height: 40 padding: Inset{left: 12 right: 12}
+    draw_bg +: {color: soft color_hover: #xececf2 color_down: #xe4e4eb border_radius: 9.0}
+    draw_text +: {color: ink color_hover: ink color_down: ink text_style +: {font_size: 13}}
 }
-let StoryCard = RoundedView{width: Fill height: Fit flow: Right spacing: 12 align: Align{y: 0.0}
-    padding: Inset{top: 12 bottom: 12 left: 14 right: 14}
-    new_batch: true show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 12.0
+let Nav = QuietButton{width: Fill height: 42
+    draw_text +: {text_style +: {font_size: 13}}
 }
-let CardText = StoryCard{text := StoryText{}}
-let CardHead = StoryCard{text := StoryHead{}}
-let CardTextImage = StoryCard{text := StoryText{} thumb := Image{width: 76 height: 76 fit: ImageFit.CropToFill}}
-let CardHeadImage = StoryCard{text := StoryHead{} thumb := Image{width: 76 height: 76 fit: ImageFit.CropToFill}}
+let NavActive = Nav{
+    draw_bg +: {color: soft color_hover: soft color_down: #xececf2 border_radius: 10.0}
+    draw_text +: {color: ink color_hover: ink color_down: ink}
+}
+let Filter = Nav{height: 36}
+let FilterActive = Filter{
+    draw_text +: {color: ink color_hover: ink color_down: ink}
+    draw_bg +: {color: soft color_hover: soft color_down: #xececf2 border_radius: 8.0}
+}
+let Box = RoundedView{width: Fill height: Fit flow: Down padding: 16 spacing: 10
+    show_bg: true draw_bg.color: soft draw_bg.border_radius: 12.0}
+let Search = TextInput{width: Fill height: 32 empty_text: "搜索新闻"
+    draw_bg +: {color: soft color_hover: soft color_focus: soft color_empty: soft
+        border_color: #x00000000 border_color_hover: #x00000000 border_color_focus: #x00000000 border_color_empty: #x00000000 border_radius: 8.0}
+    draw_text +: {color: ink color_hover: ink color_focus: ink color_empty: secondary color_empty_hover: secondary text_style +: {font_size: 12}}
+}
 
 HostedView{width: Fill height: Fill
-    full: View{width: Fill height: Fill flow: Overlay show_bg: true draw_bg.color: ground
-        main := View{width: Fill height: Fill flow: Down
-            View{width: Fill height: Fit flow: Right align: Align{y: 1.0} padding: Inset{left: 18 right: 12 top: 14 bottom: 6}
-                View{width: Fill height: Fit flow: Down spacing: 2
-                    date := Label{text: "" draw_text.color: secondary draw_text.text_style: theme.font_bold{font_size: 12}}
-                    Label{text: "News" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 32}}
-                }
-                BarButton{text: "Refresh" on_click: || refresh()}
-            }
-            View{width: Fill height: Fit padding: Inset{left: 16 right: 16 bottom: 8}
-                search := TextInput{width: Fill height: 36 empty_text: "Search stories"
-                    on_change: |text| set_query(text)
-                    draw_bg +: {color: #xe5e5ea color_hover: #xe5e5ea color_focus: #xe5e5ea color_empty: #xe5e5ea
-                        border_color: #x00000000 border_color_hover: #x00000000 border_color_focus: #x00000000 border_color_empty: #x00000000
-                        border_radius: 10.0}
-                    draw_text +: {color: ink color_hover: ink color_focus: ink color_empty: secondary color_empty_hover: secondary}
-                }
-            }
-            tabbar := ScrollXView{width: Fill height: 44 flow: Right spacing: 4 padding: Inset{left: 12 right: 12 top: 4 bottom: 8}
-                on_render: || {
-                    for t in tabs {
-                        if t.id == tab { TabButtonActive{text: t.label on_click: || pick(t.id)} }
-                        else { TabButton{text: t.label on_click: || pick(t.id)} }
-                    }
-                }
-            }
-            status := Label{width: Fill padding: Inset{left: 18 right: 18 bottom: 6} text: "" draw_text.color: secondary draw_text.text_style.font_size: 11}
-            View{width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 bottom: 8} spacing: 4
-                BarButton{text: "Test Octos" on_click: || test_octos()}
-                ScrollYView{width: Fill height: 58 flow: Down
-                    octos_status := Label{width: Fill text: "Not tested. Select an assistant in Rinx, then click Test Octos."
-                        draw_text.color: ink draw_text.text_style.font_size: 12}
-                }
-            }
-            list := ScrollYView{width: Fill height: Fill flow: Down spacing: 10 padding: Inset{left: 12 right: 12 bottom: 24}
-                on_render: || {
-                    let rows = visible_rows()
-                    if rows.len() == 0 {
-                        View{width: Fill height: 200 align: Align{x: 0.5 y: 0.5}
-                            Label{text: empty_text() draw_text.color: secondary draw_text.text_style.font_size: 13}
-                        }
-                    }
-                    for r in rows {
-                        GestureView{width: Fill height: Fit
-                            on_tap: |x, y| open_story(r)
-                            on_long_press: |x, y| toggle_save(r)
-                            if r.image != "" && r.summary != "" {
-                                CardTextImage{text.meta.text: meta(r) text.title.text: r.title text.summary.text: r.summary thumb.src: http_resource(r.image)}
-                            } else if r.image != "" {
-                                CardHeadImage{text.meta.text: meta(r) text.title.text: r.title thumb.src: http_resource(r.image)}
-                            } else if r.summary != "" {
-                                CardText{text.meta.text: meta(r) text.title.text: r.title text.summary.text: r.summary}
-                            } else {
-                                CardHead{text.meta.text: meta(r) text.title.text: r.title}
-                            }
-                        }
-                    }
-                }
+    full: View{width: Fill height: Fill flow: Down show_bg: true draw_bg.color: white
+        View{width: Fill height: 60 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 14} spacing: 8
+            Label{width: Fill text: "cfaw news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 23}}
+            pending := Pill{text: "1 条日程建议  ›" on_click: || open_plan()}
+        }
+        View{width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 14 bottom: 6} spacing: 2
+            mode_note := Small{text: "MOCK 演示 · 新闻、Agent 判断与日程均为虚构"}
+            View{width: Fill height: 28 flow: Right spacing: 5
+                mode_button := LinkButton{text: "真实新闻" on_click: || switch_mode()}
+                refresh_button := QuietButton{visible: false text: "刷新" on_click: || refresh()}
+                View{width: Fill}
+                LinkButton{text: "Octos 连接" on_click: || show_settings()}
             }
         }
-        reader_pane := View{visible: false width: Fill height: Fill flow: Down new_batch: true show_bg: true draw_bg.color: #xffffff
-            View{width: Fill height: 52 flow: Right align: Align{y: 0.5} padding: Inset{left: 4 right: 8} spacing: 4
-                BarButton{text: "‹ News" on_click: || close_story()}
-                reader_title := Label{width: Fill text: "" max_lines: 1 align: Align{x: 0.5}
-                    draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 14}}
-                comments := BarButton{text: "Comments" on_click: || open_comments()}
-                save := BarButton{text: "Save" on_click: || { if reading != nil { toggle_save(reading) } }}
-            }
-            reader_fail := Label{width: Fill padding: Inset{left: 18 right: 18} text: "" draw_text.color: secondary draw_text.text_style.font_size: 12}
-            reader_content := ScrollYView{width: Fill height: Fill flow: Down spacing: 14 padding: 18 on_render: || {
-                if reading != nil {
-                    Label{width: Fill text: reading.title draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 23}}
-                    Label{width: Fill text: meta(reading) draw_text.color: secondary draw_text.text_style.font_size: 12}
-                    reader_url := TextInput{width: Fill height: 44 text: reading.link
-                        draw_text +: {color: ink color_hover: ink color_focus: ink}}
-                    Label{width: Fill text: reading.link draw_text.color: secondary draw_text.text_style.font_size: 11}
-                    Label{width: Fill text: reading.summary draw_text.color: ink draw_text.text_style.font_size: 15}
-                    if reading.summary == "" { Label{width: Fill text: "This feed provides no article excerpt." draw_text.color: secondary} }
+        Divider{}
+        main := View{width: Fill height: Fill flow: Down
+            tabbar := View{width: Fill height: 42 flow: Right padding: Inset{left: 12 right: 12 top: 3 bottom: 3} spacing: 4 on_render: || {
+                if demo_mode {
+                    for f in [{id: "today" label: "最新动态"} {id: "related" label: "与你有关"}] {
+                        let active = (f.id == "related" && related_only) || (f.id == "today" && !related_only)
+                        if active { FilterActive{text: f.label on_click: || pick(f.id)} }
+                        else { Filter{text: f.label on_click: || pick(f.id)} }
+                    }
+                } else {
+                    for t in tabs {
+                        if t.id != "saved" {
+                            if t.id == tab { FilterActive{text: t.label on_click: || pick(t.id)} }
+                            else { Filter{text: t.label on_click: || pick(t.id)} }
+                        }
+                    }
                 }
             }}
-        }
-    }
-    tile: View{width: Fill height: Fill flow: Down padding: Inset{left: 14 right: 14 top: 12 bottom: 12} spacing: 8
-        new_batch: true show_bg: true draw_bg.color: #xffffff
-        Label{text: "News" draw_text.color: accent draw_text.text_style: theme.font_bold{font_size: 13}}
-        tile_list := View{width: Fill height: Fill flow: Down spacing: 8 on_render: || {
-            let rows = today_rows()
-            if rows.len() == 0 { Label{text: "Headlines appear here." draw_text.color: secondary draw_text.text_style.font_size: 12} }
-            for i r in rows {
-                if i < 3 {
-                    View{width: Fill height: Fit flow: Down spacing: 1
-                        Label{width: Fill text: r.source max_lines: 1 draw_text.color: secondary draw_text.text_style.font_size: 10}
-                        Label{width: Fill text: r.title max_lines: 2 draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 13}}
+            page_note := Small{visible: false text: "" padding: Inset{left: 18 right: 18 top: 14 bottom: 8}}
+            search_box := View{width: Fill height: Fit padding: Inset{left: 18 right: 18 top: 4 bottom: 8}
+                search := Search{on_change: |text| set_query(text)}
+            }
+            status := Small{visible: false text: "" padding: Inset{left: 18 right: 18 bottom: 6}}
+            feed_list := View{width: Fill height: Fill flow: Down
+                empty_panel := View{visible: false width: Fill height: Fill flow: Down padding: 28 spacing: 12
+                    Section{text: "这里暂时没有内容"}
+                    empty_message := Text{text: "" draw_text.color: secondary}
+                }
+                list_container := View{width: Fill height: Fill flow: Down
+                list := ScrollYView{width: Fill height: Fill flow: Down on_render: || {
+                    let rows = visible_rows()
+                    for i r in rows {
+                        View{width: Fill height: Fit flow: Down
+                            View{width: Fill height: Fit flow: Right spacing: 10 padding: Inset{left: 18 right: 18 top: 12 bottom: 8}
+                                RoundedView{width: 32 height: 32 show_bg: true draw_bg.color: soft draw_bg.border_radius: 16.0 align: Align{x: 0.5 y: 0.5}
+                                    Label{text: avatar(r) draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 12}}
+                                }
+                                View{width: Fill height: Fit flow: Down spacing: 4
+                                    Small{text: meta(r) draw_text.text_style: theme.font_bold{font_size: 11 line_spacing: 1.15}}
+                                    GestureView{width: Fill height: Fit on_tap: |x, y| open_story(r)
+                                        Text{text: r.title max_lines: 3 draw_text.text_style.font_size: 14}
+                                    }
+                                    if has_hint(r) { HintButton{text: "Agent · " + r.hint + "  ›" on_click: || open_agent(r)} }
+                                    View{width: Fill height: 28 flow: Right spacing: 10
+                                        if is_followed(r) { LinkButton{text: "已跟踪" on_click: || toggle_follow(r)} }
+                                        else { QuietButton{text: "跟踪" on_click: || toggle_follow(r)} }
+                                        if is_saved(r.link) { LinkButton{text: "已收藏" on_click: || toggle_save(r)} }
+                                        else { QuietButton{text: "收藏" on_click: || toggle_save(r)} }
+                                        QuietButton{text: "查看  ›" on_click: || open_story(r)}
+                                    }
+                                }
+                            }
+                            Divider{}
+                        }
+                        if i == 2 && page == "feed" && demo_mode && !related_only && decision == "pending" {
+                            View{width: Fill height: Fit flow: Right padding: Inset{left: 18 right: 18 top: 10 bottom: 10} spacing: 8 show_bg: true draw_bg.color: soft
+                                View{width: Fill height: Fit flow: Down spacing: 3
+                                    Section{text: "Agent · 一项安排值得重新考虑" draw_text.color: accent draw_text.text_style.font_size: 12}
+                                    Small{text: "MOCK · 测试延期，周五可能无法实测"}
+                                }
+                                LinkButton{text: "查看  ›" on_click: || open_plan()}
+                            }
+                            Divider{}
+                        }
+                    }
+                }}
+                }
+            }
+            schedule_page := View{visible: false width: Fill height: Fill flow: Down
+                ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 16
+                    live_schedule_note := Small{visible: false text: "以下为独立的虚构日程示例，没有使用真实新闻生成建议。"}
+                    schedule_primary := Box{
+                        Small{text: "MOCK · 你的安排"}
+                        Heading{text: "新版工具实测"}
+                        schedule_time := Text{text: "周五 14:00—15:00"}
+                        schedule_note := Small{text: "1 条待确认建议 · 当前安排尚未修改"}
+                        LinkButton{text: "查看日程建议  ›" on_click: || open_plan()}
+                    }
+                    schedule_secondary := Box{
+                        Small{text: "MOCK · 无需调整"}
+                        Section{text: "周五上午 · 资料准备"}
+                        Text{text: "保留阅读接口文档和整理评估问题的安排。"}
                     }
                 }
             }
+        }
+        detail_pane := View{visible: false width: Fill height: Fill flow: Down
+            View{width: Fill height: 44 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 18} spacing: 8
+                QuietButton{text: "‹ 返回" on_click: || close_detail()}
+                detail_title := Small{width: Fill text: "新闻详情" align: Align{x: 1.0}}
+            }
+            Divider{}
+            settings_panel := View{visible: false width: Fill height: Fill flow: Down
+                ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 16
+                    Heading{text: "连接你的 Octos"}
+                    Text{text: "此按钮会真实调用宿主所选的 Octos 和模型；不会使用 Mock 回复。"}
+                    Small{text: "在 Rinx 导入页配置模型并点 Use this device，或选择已有服务后点 Connect Octos。"}
+                    Primary{text: "Test Octos" on_click: || test_octos()}
+                    octos_status := Text{text: octos_message}
+                }
+            }
+            plan_panel := View{visible: false width: Fill height: Fill flow: Down
+                plan_content := ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 16 on_render: || {
+                    Small{text: "MOCK · Agent 建议，依据与日期均为虚构" draw_text.color: accent}
+                    Heading{text: "把实测安排到测试开放之后"}
+                    Text{text: "Northstar 的公开测试延期。你可以保留周五的资料准备，将实测移到下周一。"}
+                    Box{
+                        Section{text: "新版工具实测"}
+                        Small{text: "原安排"}
+                        Text{text: "周五 14:00—15:00"}
+                        if decision == "accepted" { Small{text: "已调整为"} }
+                        else { Small{text: "建议时间"} }
+                        Text{text: "下周一 14:00—15:00"}
+                    }
+                    Small{text: "仅修改示例状态 · 未核对其他日程冲突 · 不写入系统日历"}
+                    if !demo_mode {
+                        Text{text: "请先切换 Mock 示例模式，再体验确认交互。"}
+                    } else if decision == "pending" {
+                        Primary{text: "确认改期" on_click: || decide("accepted")}
+                        SecondaryButton{text: "保留原计划" on_click: || decide("kept")}
+                    } else {
+                        if decision == "accepted" { Section{text: "已确认改期" draw_text.color: accent} }
+                        else { Section{text: "已保留原计划"} }
+                        SecondaryButton{text: "重置示例建议" on_click: || reconsider()}
+                    }
+                    LinkButton{text: "查看新闻依据  ›" on_click: || open_agent(demo_rows[0])}
+                }}
+            }
+            story_panel := View{visible: false width: Fill height: Fill flow: Down
+                story_content := ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 16 on_render: || {
+                    if reading != nil {
+                    Small{text: meta(reading)}
+                    Heading{text: reading.title}
+                    if mock_row(reading) { Small{text: "MOCK 新闻 · 虚构来源，仅用于交互演示" draw_text.color: accent} }
+                    else { Small{text: "真实 feed 摘要，非文章全文"} }
+                    if reading.summary == "" { Text{text: "此新闻源未提供摘要。" draw_text.color: secondary} }
+                    else { Text{text: reading.summary} }
+                    Small{text: "来源 URL（可复制）"}
+                    Search{text: reading.link empty_text: "来源 URL"}
+                    if mock_row(reading) && reading.hint != "" {
+                        Divider{}
+                        Section{text: "Agent · 为什么与你有关" draw_text.color: accent}
+                        if reading.id == "northstar" {
+                            Text{text: "示例中你关注了开发工具，并在周五安排了新版工具实测。测试延期可能影响原计划。"}
+                        } else {
+                            Text{text: "示例中你关注了端侧 AI。这次补充设备测试，值得阅读，但不足以直接形成日程建议。"}
+                        }
+                        if !evidence_open { SecondaryButton{text: "展开依据与判断" on_click: || toggle_evidence()} }
+                        else {
+                            SecondaryButton{text: "收起依据" on_click: || toggle_evidence()}
+                            Box{
+                                Section{text: "新闻事实（MOCK）"}
+                                if reading.id == "northstar" { Text{text: "公开测试由周五推迟至下周一。"} }
+                                else { Text{text: "新增低内存设备测试，公布测试条件与限制。"} }
+                                Section{text: "关联依据（MOCK）"}
+                                if reading.id == "northstar" { Text{text: "关注：开发工具；日程：周五 14:00 工具实测。"} }
+                                else { Text{text: "关注：端侧 AI；需要结合自己的目标设备判断。"} }
+                                Section{text: "Agent 判断（MOCK）"}
+                                if reading.id == "northstar" { Text{text: "可考虑改期；未核对其他安排，是否调整由你确认。"} }
+                                else { Text{text: "值得进一步阅读；暂不建议调整日程。"} }
+                            }
+                        }
+                        if reading.id == "northstar" { Primary{text: "查看日程建议" on_click: || open_plan()} }
+                    }
+                    View{width: Fill height: Fit flow: Right spacing: 10
+                        if is_followed(reading) { SecondaryButton{text: "已跟踪" on_click: || toggle_follow(reading)} }
+                        else { SecondaryButton{text: "跟踪" on_click: || toggle_follow(reading)} }
+                        if is_saved(reading.link) { SecondaryButton{text: "已收藏" on_click: || toggle_save(reading)} }
+                        else { SecondaryButton{text: "收藏" on_click: || toggle_save(reading)} }
+                    }                    }
+                }}
+            }
+        }
+        feedback := Small{visible: false text: "" padding: Inset{left: 18 right: 18 top: 8 bottom: 8}}
+        Divider{}
+        navigation := View{width: Fill height: 58 flow: Right padding: Inset{left: 12 right: 12 top: 7 bottom: 9} spacing: 4 on_render: || {
+            for n in [{id: "feed" label: "动态"} {id: "tracking" label: "跟踪"} {id: "schedule" label: "日程"} {id: "saved" label: "收藏"}] {
+                if page == n.id { NavActive{text: n.label on_click: || select_page(n.id)} }
+                else { Nav{text: n.label on_click: || select_page(n.id)} }
+            }
+        }}
+    }
+    tile: View{width: Fill height: Fill flow: Down padding: 14 spacing: 8 show_bg: true draw_bg.color: white
+        Section{text: "cfaw news" draw_text.color: accent}
+        tile_list := View{width: Fill height: Fill flow: Down spacing: 8 on_render: || {
+            let rows = demo_rows
+            if !demo_mode { rows = today_rows() }
+            if demo_mode { Small{text: "MOCK · 虚构示例"} }
+            for i r in rows { if i < 3 { Text{text: r.title max_lines: 2 draw_text.text_style.font_size: 12} } }
         }}
     }
 }

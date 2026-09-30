@@ -1,6 +1,6 @@
 # 队友上手与开发分工
 
-先跑通新闻 App 的 **Test Octos**，再开发自己负责的部分。业务开发在本仓库完成；Rinx 是宿主，Octos 是 Agent 执行环境，普通业务功能不需要修改它们的源码。
+先跑通新闻 App 顶部 **Octos 连接 → Test Octos**，再开发自己负责的部分。业务开发在本仓库完成；Rinx 是宿主，Octos 是 Agent 执行环境，普通业务功能不需要修改它们的源码。
 
 开发约定见 [AGENTS.md](../AGENTS.md)，架构与当前状态见 [README](../README.md)，版本以 [依赖记录](../dev-dependencies.lock.json) 为准。
 
@@ -58,14 +58,20 @@ OCTO_HUB=/path/to/hub python3 scripts/package.py
 ### 配置和导入（在 Rinx 界面）
 
 1. 登录 Matrix 账号，进入 **Mini apps → Import an app**。
-2. 填写 Provider、Model、API key；使用自定义模型端点时再填写 Base URL。点击 **Use this device**。例如使用 DeepSeek 时 Provider 是 `deepseek`，Model 按实际使用的模型填写。
+2. 配置 **Rinx 自带的本地 Octos**：填写 Provider、Model、API key；使用自定义模型端点时再填写 Base URL，点击 **Use this device**。例如 Provider 填 `deepseek`，Model 填账号可用的模型 ID（如 `deepseek-chat`），默认端点的 Base URL 留空，API key 填模型提供方控制台获取的密钥。完整字段说明见 [README 配置步骤](../README.md#5-配置-rinx-自带-octos-并测试)。
 3. **OctoSense bundle folder** 填 `realpath bundle` 输出的绝对路径，Room 留空。
 4. 点击 **Review bundle**，核对 `CFAW News`、新闻网络域名以及 `storage`、`net`、`images` 和三个 `octos.*` 服务权限，然后点击 **Run**。
-5. 在新闻首页点击 **Test Octos**。看到 `Octos replied: ...` 和实际模型回复，说明本次模型调用完成；测试要求模型回复 `OCTOS_OK`。
+5. 在新闻首页点击顶部 **Octos 连接 → Test Octos**。看到 `Octos replied: ...` 和实际模型回复，说明本次模型调用完成；测试要求模型回复 `OCTOS_OK`。
 
 **密钥配置注意：**当前宿主保存后会清空密钥输入框。如果保留 Provider、Model，又空着密钥重复点击 **Use this device**，会覆盖掉原密钥。要修改配置时重新填写密钥；只是打开应用时不必重复保存模型配置。密钥只输入宿主，不写入代码、截图或提交记录。
 
-如果团队使用独立 Octos 服务，则改用 **Connect Octos**：填写该服务的 HTTP(S) 基地址、实际 profile 和 Octos access token。这个地址不是模型 Base URL，token 不是模型 API key。宿主自动连接其 `/api/ui-protocol/ws`；无需自己填写 WebSocket URL。本地模式与远程模式选一种即可。
+本项目由 Rinx 启动并管理配套 Octos，无需另外启动 HTTP 服务。导入页的 **Octos server URL / Octos profile / Octos access token** 留空，无需点击 **Connect Octos**。本地 Octos 仍可使用云端模型 API；模型 Base URL 是模型端点。
+
+### 演示新版界面
+
+默认使用明确标注的 Mock 新闻、Agent 判断和日程：切换“与你有关”，跟踪/收藏条目，点击关联提示展开依据，再查看建议并确认改期或保留原计划。底部导航为动态、跟踪、日程和收藏；处理后的示例建议可以重置再演示。示例状态独立保存，不覆盖真实收藏，也不写入系统日历。
+
+顶部“真实新闻”切换到原有新闻来源，失败时显示失败或旧缓存，不会自动填充示例。真实模式跟踪只作当前会话中的来源筛选；真实 Agent 分析、日程管理和后台监测仍需开发。“Octos 连接”中的测试始终使用真实宿主服务。
 
 ## 3. 每个人在哪个目录做什么
 
@@ -128,7 +134,7 @@ Rinx 本地导入、打包、App Hub 准入和正式上架是不同步骤。当�
 
 | 现象 | 处理 |
 | --- | --- |
-| `The assistant is off` | 在导入页选择 Use this device 或 Connect Octos，再重新打开应用 |
+| `The assistant is off` | 在导入页配置本地模型并点击 Use this device，再重新打开应用 |
 | `failed to create LLM provider`、API key 为空 | 在 Rinx 重新填写完整模型配置和密钥；个人 Octos 登录不会自动带入 |
 | 找不到配套 Octos | 在实际运行的 Rinx 检出中执行内核打包命令，确认 `octos` 与 `rinx` 位于同一目录 |
 | 按钮不存在或权限缺失 | 确认导入本项目最新 bundle，重打包并重新 Review，而不是沿用旧快照 |

@@ -1,6 +1,6 @@
 # CFAW News
 
-使用官方 OctoSense News 的 Makepad / Splash 页面，在 Rinx 中运行。唯一入口是 `bundle/main.splash`。保留来源标签、搜索、新闻卡片、摘要阅读和本地收藏，界面沿用官方英文文案。
+使用 OctoScript / Makepad 实现紧凑新闻信息流，在 Rinx 中运行。唯一入口是 `bundle/main.splash`。新闻接入沿用官方 OctoSense News，界面已重写为中文动态、跟踪、日程和收藏页面。
 
 
 队友首次参与请先阅读 [队友上手与开发分工](docs/TEAM_GUIDE.md)：运行环境、Octos 配置、各目录职责和日常联调步骤。
@@ -9,7 +9,7 @@
 
 目标是一个接入单个新闻 Agent 的 OctoScript 应用：跟踪用户关注的新闻，呈现重要变化，并依据新闻证据提供日程建议。前端采用 Makepad，首页采用 Threads 式紧凑信息流，一页连续展示多条新闻。
 
-当前运行代码仍在 `bundle/main.splash`。开发目录与 Octos 接入约定已建立，已在运行入口增加 Octos 连通性测试按钮；业务 Agent、混合检索、日程或后台推送尚未实现。`src/` 暂按职责分组，后续依据真实运行位置和宿主接口确定实现文件的语言、后缀及加载方式；尚未建立 `src/` 到运行包的组装流程。
+当前运行代码仍在 `bundle/main.splash`。前端已实现紧凑信息流、新闻详情、依据展开、日程建议确认和四项导航。默认使用明确标注的 Mock 新闻与建议；可切换真实新闻，并真实调用 Octos 连通性测试。新闻分析 Agent、混合检索、真实日程管理和后台推送尚未实现。`src/` 暂按职责分组，后续依据真实运行位置和宿主接口确定实现文件的语言、后缀及加载方式；尚未建立 `src/` 到运行包的组装流程。
 
 ### 已确认的界面设计
 
@@ -122,7 +122,7 @@ Agent 的两个开发者可以分别侧重流程与宿主适配、提示词与�
 
 ## 当前运行与演示
 
-当前代码仍是官方 News 页面的 Rinx 适配版；已讨论的 Threads 风格首页、Agent 和日程建议尚未接入。编辑 `src/` 中的占位目录暂不会改变应用行为。
+当前界面已在 Makepad 中重写，默认进入 Mock 演示。真实新闻浏览和 Octos 测试仍保留；Agent 判断和日程建议暂用示例数据。编辑 `src/` 中的占位目录暂不会改变应用行为。
 
 ### 1. 准备官方 Rinx
 
@@ -160,7 +160,7 @@ cargo run --locked --release --features agent_chat
 
 宿主脚本构建匹配版本的 Octos 并放到 Rinx 旁边，检查其版本与宿主 Cargo.lock 一致；本项目的 `scripts/package.py` 不承担这一步。OctoSense 模块模式使用 Shell 提供的服务，不运行这套独立宿主打包步骤。
 
-测试本地运行时，通过宿主界面的提供方、模型、可选 Base URL 和密钥字段完成配置，再点击 **Use this device**；密钥仅交给宿主。`agent_chat` 构建特性不等同于 mini-app 的 `octos.*` 权限。以上准备也不会让当前应用自动具备新闻分析能力。保存后密钥输入框会清空；当前宿主在 Provider、Model 保留而密钥为空时再次保存会清除原密钥，修改配置时请重新填写完整信息。
+本项目使用 **Rinx 自带、由 Rinx 管理的本地 Octos**，无需另外启动 HTTP 服务。模型字段与密钥的填写步骤见下方“配置 Rinx 自带 Octos 并测试”。`agent_chat` 构建特性不等同于 mini-app 的 `octos.*` 权限；完成环境准备也不会让当前应用自动具备新闻分析能力。
 
 开发者已于 2026-09-29 反馈本机 Test Octos 连通成功；尚未完成完整业务验收。后续联调至少验证：服务可用、真实分析返回、取消、服务不可用、非法结果及旧响应丢弃；随后再验证新闻变化与日程确认闭环。
 
@@ -185,29 +185,52 @@ realpath bundle
 
 Rinx 导入的是 `bundle/` 文件夹，不是 ZIP。分享 `build/cfaw-news.zip` 后，接收方先解压，再选择其中的 `bundle/`。
 
-### 4. 演示当前已有能力
+### 4. 演示当前界面
 
-建议用以下顺序完成一次短演示：
+应用默认进入 **MOCK 演示**，不自动请求网络新闻。示例新闻、来源、Agent 判断和日程均为虚构；点击确认只更新独立的示例状态。
 
-1. 打开 **Today**，等待真实新闻加载，再切换 **HN / TechMeme / Google** 来源。
-2. 在 **Search stories** 中输入当前列表里存在的关键词，展示筛选，再清空输入。
-3. 点击一条新闻阅读 feed 摘要，展示来源 URL；不要将摘要称为全文。
-4. 点击 **Save**，返回 **Saved** 标签查看收藏，再进入阅读页取消收藏。
-5. 点击 **Refresh** 展示重新请求。来源失败时如实展示失败或旧缓存，不替换为虚构新闻。
+1. 在 **动态** 浏览多条新闻，切换 **最新动态 / 与你有关**，用搜索框筛选。
+2. 点击 **跟踪 / 已跟踪** 切换主题关注，到底部 **跟踪** 查看相关条目；点击 **收藏 / 已收藏**，到底部 **收藏** 查看。
+3. 点击新闻或一行 Agent 提示进入详情，展开/收起依据，区分新闻事实、关联依据和 Agent 判断。
+4. 从顶部 **1 条日程建议**、信息流提醒或详情进入建议页，选择 **确认改期 / 保留原计划**，到 **日程** 查看结果。处理后提示不再待确认；**重置示例建议** 可重新演示。
+5. 点击顶部 **真实新闻** 切换到真实来源，可选 **Today / HN / TechMeme / Google**、搜索、查看 feed 摘要并收藏；**刷新** 重新请求。请求失败显示错误或已有缓存，不自动替换成 Mock。
+6. 点击 **Octos 连接 → Test Octos**，验证真实模型调用。
 
-当前可演示新闻浏览、搜索、摘要阅读、收藏，以及下述 Octos 连通性探测。新信息流设计、持续关注分析和日程建议仍属于后续开发范围；应用内刷新也不等同于后台推送。
+示例关注、收藏和建议决定保存到独立的 `demo_ui_state_v1.json`，真实新闻收藏仍使用 `saved.json`；不会覆盖原收藏。真实模式的跟踪目前仅是当前会话中的来源筛选，暂无后台订阅。示例日程未写入系统日历，也未完成实际冲突核验。返回详情前的信息流时保留原列表与位置。
+
+2026-09-30：在参考 card-host 的 360×860 和 430×860 原生窗口检查了界面与交互，包括筛选、跟踪、收藏、依据展开、建议确认/保留、状态重开恢复、模式切换及 Octos 无服务错误。截图来自隔离的 Xvfb 测试显示，用于布局检查。部分真实新闻源在测试环境请求失败，按失败状态展示。新版界面仍需在实际 Rinx 中复核；这些检查不代表 App Hub 上架验收。
 
 当前包仅用于本地开发导入。包摘要、App Hub 准入检查和真实官方 Rinx UI 验收分别验证不同事项，不能互相替代。
 
-### 5. 在新闻 App 内测试 Octos
+### 5. 配置 Rinx 自带 Octos 并测试
 
-1. **连接已有的 Octos 服务**：在 Rinx 的 **Import an app** 中填写 **Octos server URL**（Octos 服务的 `http://` 或 `https://` 基地址，不是模型 Base URL；宿主自动拼接 `/api/ui-protocol/ws` 并切换 WebSocket 协议）、**Octos profile** 和 **Octos access token**，点击 **Connect Octos**。使用服务实际配置的地址、profile 和 token，不猜端口，也不要把模型 API key 当成 Octos token。
-2. **或者由 Rinx 管理本地 Octos**：完成上述配套内核准备，填写模型配置并点击 **Use this device**。已有独立后台进程不代表 Rinx 自动连接了它；两种方式选一种。Shell 托管模式在 Shell 的 AI 设置中配置。
-3. 选择本项目 `bundle/` 的绝对路径，重新 **Review bundle → Run**；运行中的旧快照不会自动获得新代码或权限。切换助手后也重新打开应用。
-4. 在新闻首页点击 **Test Octos**。状态依次显示打开上下文、等待模型，然后显示 `Octos replied: ...` 和实际返回文本（请求模型回复 `OCTOS_OK`）。仅打开上下文不算完成验证。
+本项目通过 **Use this device** 使用 Rinx 配套 Octos 来执行和管理 Agent。先完成上面的配套内核准备，再启动 Rinx；后续由 Rinx 管理 Octos 的启动和生命周期。“本地”指 Octos 在本机运行，模型仍可调用云端 API。
 
-按钮只发送固定测试语句，不发送新闻或日程。它通过 `host.request("octos.session.open", {}, callback)` 和 `host.request("octos.turn.start", {text: ...}, callback)` 调用宿主，宿主再转发到所选 Octos；应用内不填写服务地址或凭据。重复点击不会并发发起测试。90 秒未完成会请求中断，迟到结果会被忽略；未确认中断时需关闭再打开应用。
+1. 在 Rinx 登录 Matrix，进入 **Mini apps → Import an app**。
+2. 填写本地助手的四个字段。以下是使用 DeepSeek 的填写示例；其他提供方按其实际支持的 Provider 和模型 ID 配置。
 
-`The assistant is off` 表示宿主未启用助手，回到设置选择上述一种方式。模型鉴权、网络及其他失败会在按钮下显示真实错误。Matrix 的 `m.secret_storage.default_key` / `moments.preferences` 账户数据 404 并非 Octos 调用错误；应依据按钮反馈继续诊断。
+| Rinx 字段 | 填写内容 |
+| --- | --- |
+| `Assistant on this device: provider (e.g. deepseek)` | `deepseek`，填写提供方标识 |
+| `Model` | 账号可用的模型 ID，例如 `deepseek-flash`；不是模型显示名称 |
+| `Base URL (optional)` | 使用默认 DeepSeek 官方端点时留空；自定义端点时填写模型 API 基地址 |
+| `API key (kept in Rinx's own runtime)` | 在模型提供方控制台获取的 API key；不要填 Matrix 密码 |
 
-已在参考 card-host 的 430×860 原生窗口验证按钮点击及无服务时的错误反馈；该宿主没有 Octos 服务。截图抓取超时，尚未完成像素级视觉验收；开发者随后反馈真实 Rinx / Octos 连通测试成功；超时中断与完整业务流程仍待验证。该反馈不是完整 UI 或 App Hub 验收记录。
+3. 点击 **Use this device**。配置保存到 Rinx 自己的 Octos profile；个人 `~/.octos` 中的登录或配置不会自动带入。**Octos server URL / Octos profile / Octos access token** 留空，本项目无需点击 **Connect Octos**。
+4. 在 **OctoSense bundle folder** 填入本项目 `bundle/` 的绝对路径，Room 留空，执行 **Review bundle → Run**。修改模型配置或应用代码后，退出旧应用再重新打开。
+5. 在新闻 App 点击顶部 **Octos 连接 → Test Octos**。状态依次显示打开上下文、等待模型，然后显示 `Octos replied: ...` 和真实回复（请求模型回复 `OCTOS_OK`）；仅打开上下文不算完成验证。
+
+**保存密钥时注意：**点击 **Use this device** 后，密钥输入框会清空，这是界面行为。当前固定宿主版本中，保留 Provider、Model 却空着密钥再次保存，会覆盖掉原密钥；修改配置时请重新填写密钥，日常打开应用无需重复保存。密钥只交给 Rinx，不写入应用代码、bundle、截图或 Git。
+
+应用通过 `host.request("octos.session.open", {}, callback)` 和 `host.request("octos.turn.start", {text: ...}, callback)` 调用宿主，由 Rinx 转交给本地 Octos。应用不配置 Octos HTTP 地址或持有模型密钥。测试按钮只发送固定测试语句，不发送新闻或日程；重复点击不会并发发起测试。90 秒未完成会请求中断，迟到结果会被忽略；未确认中断时需关闭再打开应用。
+
+| 反馈 | 处理 |
+| --- | --- |
+| `The assistant is off` | 回到 Rinx 导入页配置本地模型并点击 **Use this device**，再重新打开应用 |
+| `failed to create LLM provider`、API key 为空 | 在 Rinx 重新填写 Provider、Model 和密钥后保存；无需对个人 Octos 执行登录命令 |
+| `no packaged assistant runtime` | 在实际运行的 Rinx 检出中执行上面的内核打包命令，确保 `octos` 与 `rinx` 在同一目录 |
+| 模型鉴权或请求失败 | 根据按钮下的真实错误核对密钥、模型 ID、模型 Base URL 和网络 |
+
+Matrix 的 `m.secret_storage.default_key` / `moments.preferences` 账户数据 404 并非 Octos 调用错误；应依据测试按钮反馈继续诊断。
+
+参考 card-host 没有 Octos 服务，已验证新版连接页显示其真实错误。开发者曾反馈 Rinx / Octos 连通测试成功；新版界面的成功回复、超时中断与完整业务流程仍待在实际宿主验证。
