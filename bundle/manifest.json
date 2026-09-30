@@ -20,7 +20,9 @@
     "hosts": [
       "hn.algolia.com",
       "www.techmeme.com",
-      "news.google.com"
+      "news.google.com",
+      "api.open-meteo.com",
+      "nb73jtmvn7.re.qweatherapi.com"
     ]
   },
   "schema": 1,

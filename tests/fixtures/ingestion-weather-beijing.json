@@ -1,0 +1,22 @@
+{
+  "_note": "Ingestion sample for the weather source (branch feat/ingestion-weather). Real Open-Meteo response shape, trimmed to 2 days. Frontend renders title/summary/source; Agent B maps each entry to an analysis.md evidence record (content_kind=summary, published_at=null with the valid date in text, retrieved_at=fetched_at).",
+  "source_id": "weather",
+  "endpoint": "https://api.open-meteo.com/v1/forecast?latitude=39.9042&longitude=116.4074&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=7&timezone=Asia%2FShanghai",
+  "fetched_at": "2026-09-30T18:30:00+08:00",
+  "rows": [
+    {
+      "title": "北京 2026-09-30 阴 · 14.9~19.7°C",
+      "link": "https://open-meteo.com/en/docs#latitude=39.90&longitude=116.40",
+      "source": "北京天气",
+      "day": "2026-09-30",
+      "summary": "无降水。"
+    },
+    {
+      "title": "北京 2026-10-01 晴 · 10.6~22.4°C",
+      "link": "https://open-meteo.com/en/docs#latitude=39.90&longitude=116.40",
+      "source": "北京天气",
+      "day": "2026-10-01",
+      "summary": "无降水。"
+    }
+  ]
+}

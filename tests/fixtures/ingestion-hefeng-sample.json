@@ -1,0 +1,35 @@
+{
+  "_note": "Ingestion samples for Hefeng sources (branch feat/ingestion-weather). Real API responses, trimmed. Hourly: first 2 of 24 entries (code keeps 8). Warning: live zeroResult response (no active alerts in Beijing at fetch time); alert row shape follows vendor docs, no fabricated alert included.",
+  "hourly": {
+    "source_id": "hefeng",
+    "endpoint": "https://nb73jtmvn7.re.qweatherapi.com/v7/weather/24h?location=101010100",
+    "auth": "X-QW-Api-Key header, key kept local only, never committed",
+    "fetched_at": "2026-09-30T18:41:00+08:00",
+    "rows": [
+      {
+        "title": "北京 2026-09-30 19:00 晴 17°C",
+        "link": "https://www.qweather.com/weather/beijing-101010100.html",
+        "source": "和风逐小时",
+        "summary": "降水 0.0mm，西北风1-3级，湿度17%。"
+      },
+      {
+        "title": "北京 2026-09-30 20:00 多云 16°C",
+        "link": "https://www.qweather.com/weather/beijing-101010100.html",
+        "source": "和风逐小时",
+        "summary": "降水 0.0mm，西北风1-3级，湿度18%。"
+      }
+    ]
+  },
+  "warning": {
+    "source_id": "hefeng_warn",
+    "endpoint": "https://nb73jtmvn7.re.qweatherapi.com/weatheralert/v1/current/39.90/116.40?localTime=true",
+    "fetched_at": "2026-09-30T18:45:00+08:00",
+    "raw": {
+      "metadata": {
+        "zeroResult": true
+      },
+      "alerts": []
+    },
+    "rows": []
+  }
+}

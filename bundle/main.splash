@@ -1,20 +1,31 @@
 // Derived from OctoSense apps/news, commit d1596d739e187c689ada4b59093ca8086c23bbbe.
 // CFAW modifications: compact Makepad feed, labeled mock workflows and real Octos connectivity probe.
 // Licensed under Apache-2.0; see repository LICENSE and NOTICE.
+// Local-only credential. Fill in your own key for live Hefeng requests and
+// NEVER commit it: the bundle is packaged and may be published.
+// Empty means Hefeng sources are skipped and the keyless Open-Meteo source
+// below stays as the fallback.
+let HEFENG_KEY = ""
 let sources = [
     {id: "hn" label: "Hacker News" kind: "hn" url: "https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=30"}
     {id: "techmeme" label: "TechMeme" kind: "digest" url: "https://www.techmeme.com/feed.xml"}
     {id: "google" label: "Google News" kind: "google" url: "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"}
+    {id: "weather" label: "北京天气" kind: "weather" city: "北京" url: "https://api.open-meteo.com/v1/forecast?latitude=39.9042&longitude=116.4074&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=7&timezone=Asia%2FShanghai"}
+    {id: "hefeng" label: "和风逐小时" kind: "hefeng" city: "北京" needs_key: true url: "https://nb73jtmvn7.re.qweatherapi.com/v7/weather/24h?location=101010100"}
+    {id: "hefeng_warn" label: "天气预警" kind: "hefeng_warn" city: "北京" needs_key: true url: "https://nb73jtmvn7.re.qweatherapi.com/weatheralert/v1/current/39.90/116.40?localTime=true"}
 ]
 let tabs = [
     {id: "today" label: "Today"}
     {id: "hn" label: "HN"}
     {id: "techmeme" label: "TechMeme"}
     {id: "google" label: "Google"}
+    {id: "weather" label: "天气"}
+    {id: "hefeng" label: "和风"}
+    {id: "hefeng_warn" label: "预警"}
     {id: "saved" label: "Saved"}
 ]
-let rows_by = {hn: [] techmeme: [] google: []}
-let failed_by = {hn: false techmeme: false google: false}
+let rows_by = {hn: [] techmeme: [] google: [] weather: [] hefeng: [] hefeng_warn: []}
+let failed_by = {hn: false techmeme: false google: false weather: false hefeng: false hefeng_warn: false}
 let saved = []
 let tab = "today"
 let query = ""
@@ -133,10 +144,12 @@ let service_relist = false
 let specials = ["\\" "." "*" "+" "?" "(" ")" "[" "]" "{" "}" "|" "^" "$"]
 
 // CFAW Rinx adapter: bounded callbacks avoid the pending await path in this host.
-fn request_feed(url, callback){
+fn request_feed(url, extra, callback){
     let done = false
     let timer = start_timeout(18, || { if !done { done = true callback(nil) } })
-    net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET headers: {"User-Agent": "OctoSense-News/1.0"}}) do net.HttpEvents{
+    let headers = {"User-Agent": "OctoSense-News/1.0"}
+    if extra != nil { headers = {"User-Agent": "OctoSense-News/1.0" "X-QW-Api-Key": extra} }
+    net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET headers: headers}) do net.HttpEvents{
         on_response: |r| { if !done { done = true stop_timer(timer) callback(r) } }
         on_error: |_e| { if !done { done = true stop_timer(timer) callback(nil) } }
     }
@@ -174,6 +187,109 @@ fn feed_rows(body, s){
     out
 }
 
+// Open-Meteo daily forecast, in the same row shape as the news sources.
+// `published` is the fetch time (retrieved_at); the forecast's valid date is
+// kept in `day` (YYYY-MM-DD) so the analysis adapter can map it to a
+// schedule without inventing a publication timestamp.
+fn wmo_text(code){
+    if code == 0 { return "晴" }
+    if code == 1 || code == 2 { return "多云" }
+    if code == 3 { return "阴" }
+    if code == 45 || code == 48 { return "雾" }
+    if code == 51 || code == 53 || code == 55 { return "毛毛雨" }
+    if code == 56 || code == 57 { return "冻毛毛雨" }
+    if code == 61 { return "小雨" }
+    if code == 63 { return "中雨" }
+    if code == 65 { return "大雨" }
+    if code == 66 || code == 67 { return "冻雨" }
+    if code == 71 { return "小雪" }
+    if code == 73 { return "中雪" }
+    if code == 75 || code == 77 { return "大雪" }
+    if code == 80 || code == 81 { return "阵雨" }
+    if code == 82 { return "暴雨" }
+    if code == 85 || code == 86 { return "阵雪" }
+    if code == 95 || code == 96 || code == 99 { return "雷暴" }
+    "天气变化"
+}
+
+fn weather_rows(body, s){
+    let out = []
+    let data = body.parse_json()
+    if data == nil || data.daily == nil || data.daily.time == nil { return out }
+    let days = data.daily.time
+    let fetched = time_now()
+    for i day in days {
+        let wmo = nil
+        if data.daily.weather_code != nil && i < data.daily.weather_code.len() { wmo = data.daily.weather_code[i] }
+        let tmax = nil
+        if data.daily.temperature_2m_max != nil && i < data.daily.temperature_2m_max.len() { tmax = data.daily.temperature_2m_max[i] }
+        let tmin = nil
+        if data.daily.temperature_2m_min != nil && i < data.daily.temperature_2m_min.len() { tmin = data.daily.temperature_2m_min[i] }
+        let precip = 0
+        if data.daily.precipitation_sum != nil && i < data.daily.precipitation_sum.len() && data.daily.precipitation_sum[i] != nil { precip = data.daily.precipitation_sum[i] }
+        let cond = wmo_text(wmo)
+        let title = s.city + " " + day + " " + cond
+        if tmax != nil && tmin != nil { title = title + " · " + tmin + "~" + tmax + "°C" }
+        let tip = "无降水。"
+        if precip >= 5 { tip = "降水 " + precip + "mm，出门带伞。" }
+        else if precip > 0 { tip = "降水 " + precip + "mm，可能有零星降水。" }
+        out.push({title: title link: "https://open-meteo.com/en/docs#latitude=39.90&longitude=116.40" source: s.label published: fetched day: day summary: tip image: "" discussion: "" points: nil comments: nil})
+    }
+    out
+}
+
+// Hefeng hourly: next 8 hours only, in the feed row shape.
+// fxTime is kept readable with plain string replacements only.
+fn hefeng_rows(body, s){
+    let out = []
+    let data = body.parse_json()
+    if data == nil || data.code != "200" || data.hourly == nil { return out }
+    let count = 0
+    for h in data.hourly {
+        if count < 8 {
+            let when = ""
+            if h.fxTime != nil { when = h.fxTime.replace("T", " ").replace("+08:00", "") }
+            let cond = ""
+            if h.text != nil { cond = h.text }
+            let temp = ""
+            if h.temp != nil { temp = h.temp + "°C" }
+            let title = s.city + " " + when + " " + cond + " " + temp
+            let precip = "0.0"
+            if h.precip != nil { precip = h.precip }
+            let wind = ""
+            if h.windDir != nil { wind = h.windDir }
+            if h.windScale != nil { wind = wind + h.windScale + "级" }
+            let detail = "降水 " + precip + "mm"
+            if wind != "" { detail = detail + "，" + wind }
+            if h.humidity != nil { detail = detail + "，湿度" + h.humidity + "%" }
+            detail = detail + "。"
+            out.push({title: title link: "https://www.qweather.com/weather/beijing-101010100.html" source: s.label published: time_now() day: "" summary: detail image: "" discussion: "" points: nil comments: nil})
+            count = count + 1
+        }
+    }
+    out
+}
+
+// Hefeng weather alerts: one row per active alert, empty when zeroResult.
+// issuedTime stays in the summary so the adapter can use the real time.
+fn hefeng_warn_rows(body, s){
+    let out = []
+    let data = body.parse_json()
+    if data == nil || data.alerts == nil { return out }
+    for a in data.alerts {
+        let headline = "天气预警"
+        if a.headline != nil && a.headline != "" { headline = a.headline }
+        let sev = ""
+        if a.severity != nil { sev = "（严重程度 " + a.severity + "）" }
+        let desc = ""
+        if a.issuedTime != nil { desc = "发布：" + a.issuedTime + "。" }
+        if a.description != nil { desc = desc + a.description }
+        if a.instruction != nil && a.instruction != "" { desc = desc + " 防御指南：" + a.instruction }
+        out.push({title: s.city + "预警 · " + headline + sev link: "https://www.qweather.com/" source: s.label published: time_now() day: "" summary: desc image: "" discussion: "" points: nil comments: nil})
+    }
+    out
+}
+
 fn accept_source(s, res){
     failed_by[s.id] = true
     if res == nil || res.status_code != 200 || res.body == nil { return }
@@ -181,7 +297,7 @@ fn accept_source(s, res){
     let rows = nil
     try {
         let body = res.body.to_string()
-        if s.kind == "hn" { rows = hn_rows(body) } else { rows = feed_rows(body, s) }
+        if s.kind == "hn" { rows = hn_rows(body) } else if s.kind == "weather" { rows = weather_rows(body, s) } else if s.kind == "hefeng" { rows = hefeng_rows(body, s) } else if s.kind == "hefeng_warn" { rows = hefeng_warn_rows(body, s) } else { rows = feed_rows(body, s) }
     } { rows = nil }
     if rows == nil { return }
     let limited = []
@@ -201,7 +317,17 @@ fn load_next(index){
         return
     }
     let s = sources[index]
-    request_feed(s.url, fn(res){
+    if s.needs_key == true && HEFENG_KEY == "" {
+        failed_by[s.id] = true
+        render_feed()
+        ui.tile_list.render()
+        sync_status()
+        load_next(index + 1)
+        return
+    }
+    let extra = nil
+    if s.needs_key == true { extra = HEFENG_KEY }
+    request_feed(s.url, extra, fn(res){
         accept_source(s, res)
         render_feed()
         ui.tile_list.render()
