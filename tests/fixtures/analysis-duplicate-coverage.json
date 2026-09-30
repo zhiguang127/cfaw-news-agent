@@ -1,0 +1,28 @@
+{
+  "fixture_type": "duplicate_coverage",
+  "is_demo_data": true,
+  "description": "Two synthetic URLs repeat the same underlying claim and must not count as independent corroboration.",
+  "input": {
+    "schema_version": 1,
+    "request_id": "req-fixture-duplicates-001",
+    "context_version": 2,
+    "interests": [{"interest_id": "interest-ai-agents", "description": "重大 AI Agent 开发工具变化"}],
+    "evidence": [
+      {"evidence_id": "evidence-fixture-duplicate-a", "source_url": "https://example.invalid/news/original", "text": "DEMO FIXTURE: Fictional claim X, syndicated from one report.", "content_kind": "summary", "published_at": "2026-09-29T08:00:00+00:00", "retrieved_at": "2026-09-29T09:00:00+00:00"},
+      {"evidence_id": "evidence-fixture-duplicate-b", "source_url": "https://example.invalid/news/syndicated-copy", "text": "DEMO FIXTURE: The same fictional claim X, copied from the same original report.", "content_kind": "summary", "published_at": "2026-09-29T08:30:00+00:00", "retrieved_at": "2026-09-29T09:05:00+00:00"}
+    ],
+    "schedules": [],
+    "previous_decisions": []
+  },
+  "expected": {
+    "valid": true,
+    "usable": null,
+    "outcome": null,
+    "error": null,
+    "constraints": {
+      "scope": "data_deduplication",
+      "independent_corroboration_count": 1,
+      "duplicate_coverage_alone_is_material_change": false
+    }
+  }
+}

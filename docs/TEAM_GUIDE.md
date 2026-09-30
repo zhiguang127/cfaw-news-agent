@@ -81,7 +81,7 @@ OCTO_HUB=/path/to/hub python3 scripts/package.py
 | --- | --- | --- |
 | 前端同学 | `src/frontend/pages/` | 动态、详情、跟踪、日程、收藏页面及其交互状态 |
 | 前端同学 | `src/frontend/components/` | 多页面复用的新闻条目、Agent 提示、建议确认 UI；样式先放 frontend 层 |
-| Agent 同学 A（建议分工） | `src/agent/runtime/` | 上下文组装、Octos 调用、任务状态、超时、取消、旧响应处理 |
+| Agent 同学 A（建议分工） | `src/agent/runtime/` | 上下文组装、Octos 调用、任务状态、超时、取消、旧响应处理；接口见 [Agent A runtime interface](agent-a-interface.md) |
 | Agent 同学 B（建议分工） | `src/agent/prompts/`、`src/agent/results/` | 分析提示词、结果解析、证据与日期核验、建议去重和变化判断 |
 | 数据同学 | `src/data/ingestion/` | 新闻源请求、解析、统一字段、来源保留与去重 |
 | 数据同学 | `src/data/retrieval/` | 关键词和语义召回、融合排序、不可用时的降级；明确索引的运行位置 |

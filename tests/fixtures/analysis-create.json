@@ -1,0 +1,46 @@
+{
+  "fixture_type": "create",
+  "is_demo_data": true,
+  "description": "Fixed synthetic input where evidence supports proposing a new in-app schedule item; the proposal still requires user confirmation.",
+  "input": {
+    "schema_version": 1,
+    "request_id": "req-fixture-create-001",
+    "context_version": 6,
+    "interests": [{"interest_id": "interest-ai-agents", "description": "重大 AI Agent 开发工具变化"}],
+    "evidence": [{"evidence_id": "evidence-fixture-workshop-001", "source_url": "https://example.invalid/news/workshop", "text": "DEMO FIXTURE: A fictional announcement confirms a new workshop about the tracked AI Agent topic on 2026-10-06 from 14:00 to 16:00 China Standard Time.", "content_kind": "full_text", "published_at": "2026-09-29T08:00:00+00:00", "retrieved_at": "2026-09-29T09:00:00+00:00"}],
+    "schedules": [],
+    "previous_decisions": []
+  },
+  "model_output": {
+    "schema_version": 1,
+    "outcome": "suggestions",
+    "explanation": "The confirmed fictional workshop is directly relevant to the tracked interest and has a specific time, so a new in-app schedule item is proposed.",
+    "suggestions": [{
+      "interest_ids": ["interest-ai-agents"],
+      "evidence_ids": ["evidence-fixture-workshop-001"],
+      "schedule_id": null,
+      "schedule_version": null,
+      "change_summary": "Add the relevant workshop to the in-app schedule.",
+      "rationale": "The cited evidence contains a specific time-bound event matching the user's interest.",
+      "uncertainties": ["Synthetic fixture; user must confirm before the app creates the schedule item."],
+      "proposed_action": {
+        "kind": "create",
+        "title": "AI Agent workshop",
+        "start": "2026-10-06T14:00:00+08:00",
+        "end": "2026-10-06T16:00:00+08:00",
+        "timezone": "Asia/Shanghai"
+      }
+    }]
+  },
+  "expected": {
+    "valid": true,
+    "usable": true,
+    "outcome": "suggestions",
+    "error": null,
+    "constraints": {
+      "action_kind": "create",
+      "schedule_reference_is_null": true,
+      "requires_user_confirmation": true
+    }
+  }
+}

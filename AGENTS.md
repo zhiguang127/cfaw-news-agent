@@ -35,13 +35,13 @@ Support revising or withdrawing earlier suggestions when evidence changes. Avoid
 
 ## Layer responsibilities and code organization
 
-| Area | Responsibility |
-| --- | --- |
-| `src/frontend/` | Makepad views, components, styling, interactions, and visible states |
-| `src/agent/` | Execution flow, Octos host integration, prompts, analysis, validation, and change detection |
-| `src/data/` | News ingestion, normalization, hybrid retrieval, and persistence |
-| `src/app/` | Initialization, navigation, and connecting the three layers |
-| `src/contracts/` | Shared data shapes, interface expectations, errors, and state transitions |
+| Area             | Responsibility                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------- |
+| `src/frontend/`  | Makepad views, components, styling, interactions, and visible states                        |
+| `src/agent/`     | Execution flow, Octos host integration, prompts, analysis, validation, and change detection |
+| `src/data/`      | News ingestion, normalization, hybrid retrieval, and persistence                            |
+| `src/app/`       | Initialization, navigation, and connecting the three layers                                 |
+| `src/contracts/` | Shared data shapes, interface expectations, errors, and state transitions                   |
 
 - Keep pages in `frontend/pages/` and reusable UI in `frontend/components/`.
 - Keep ingestion, retrieval, and persistence in `data/ingestion/`, `data/retrieval/`, and `data/storage/` respectively.
@@ -108,6 +108,7 @@ Use a Threads-inspired compact vertical feed. Several news items should remain v
 - Give each module a clear responsibility and each function an understandable input, output, and side effect. Split code when responsibilities diverge, not to satisfy arbitrary file-size limits.
 - Use descriptive domain names such as `published_at`, `retrieved_at`, and `suggestion_id`. Name time units explicitly. Keep tunable timeouts, retrieval limits, and ranking weights in a small, documented configuration area rather than scattering literals across handlers.
 - Extract shared behavior when real duplication appears. Avoid generic helper collections, speculative plugin systems, and abstractions with only hypothetical consumers. Comments should explain constraints or decisions, not narrate obvious code.
+
 
 ### Keep dependencies and contracts explicit
 

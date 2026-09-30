@@ -2,7 +2,6 @@
 
 使用 OctoScript / Makepad 实现紧凑新闻信息流，在 Rinx 中运行。唯一入口是 `bundle/main.splash`。新闻接入沿用官方 OctoSense News，界面已重写为中文动态、跟踪、日程和收藏页面。
 
-
 队友首次参与请先阅读 [队友上手与开发分工](docs/TEAM_GUIDE.md)：运行环境、Octos 配置、各目录职责和日常联调步骤。
 
 ## 产品方向与当前状态
@@ -41,7 +40,9 @@ cfaw-news-agent/
 ├── LICENSE / NOTICE
 ├── .gitignore
 ├── docs/
-│   └── TEAM_GUIDE.md              # 队友上手、目录分工与联调
+│   ├── TEAM_GUIDE.md              # 队友上手、目录分工与联调
+│   ├── fixture-expectations.md    # 固定样例 expected 字段契约
+│   └── agent-a-interface.md       # Agent A runtime 接口交接
 ├── src/
 │   ├── app/                       # 启动、导航、三层连接
 │   ├── contracts/                 # 三层共享的数据结构与接口
@@ -94,6 +95,14 @@ cfaw-news-agent/
 4. **建议与执行分开。** Agent 输出带证据的建议；应用处理用户确认后更新日程，避免模型回复直接修改用户安排。
 5. **跟踪状态与触发方式分开。** 先支持打开应用或手动刷新时检查；后台运行、系统通知和推送须依据目标宿主的实际能力另行接入。
 6. **共享接口先对齐。** 修改 `contracts/`、`app/`、manifest 或打包流程时，由相关负责人共同核对字段、错误状态和调用关系。各层通过固定样例验证后再联调。
+
+固定分析样例的 `expected` 字段和 `constraints.scope` 规则见
+[fixture expectation schema](docs/fixture-expectations.md)。`scope` 是可选的
+测试域标注，不要求所有 fixture 为了对齐而添加；没有模型输出的 fixture
+仍须遵守文档中对 `usable` 和 `outcome` 三态语义的说明。
+
+Agent A 的 runtime 适配边界、Octos 调用顺序、状态机、超时取消和失败映射
+见 [Agent A runtime interface](docs/agent-a-interface.md)。
 
 Agent 的两个开发者可以分别侧重流程与宿主适配、提示词与结果核验，具体分工按任务确定，不拆成两个运行时 Agent。
 

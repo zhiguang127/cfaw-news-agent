@@ -1,0 +1,46 @@
+{
+  "fixture_type": "reschedule",
+  "is_demo_data": true,
+  "description": "Fixed synthetic input where a known schedule can be legally proposed for rescheduling; the proposal still requires user confirmation.",
+  "input": {
+    "schema_version": 1,
+    "request_id": "req-fixture-reschedule-001",
+    "context_version": 5,
+    "interests": [{"interest_id": "interest-ai-agents", "description": "重大 AI Agent 开发工具变化"}],
+    "evidence": [{"evidence_id": "evidence-fixture-deadline-001", "source_url": "https://example.invalid/news/deadline", "text": "DEMO FIXTURE: A fictional announcement establishes a confirmed review deadline at 2026-10-04T13:00:00+08:00 relevant to the tracked topic.", "content_kind": "full_text", "published_at": "2026-09-29T08:00:00+00:00", "retrieved_at": "2026-09-29T09:00:00+00:00"}],
+    "schedules": [{"schedule_id": "schedule-fixture-research-003", "version": 4, "title": "Review AI Agent tools", "start": "2026-10-04T09:00:00+08:00", "end": "2026-10-04T11:00:00+08:00", "timezone": "Asia/Shanghai"}],
+    "previous_decisions": []
+  },
+  "model_output": {
+    "schema_version": 1,
+    "outcome": "suggestions",
+    "explanation": "The confirmed fictional deadline conflicts with the current research timing, so a review later that day is proposed.",
+    "suggestions": [{
+      "interest_ids": ["interest-ai-agents"],
+      "evidence_ids": ["evidence-fixture-deadline-001"],
+      "schedule_id": "schedule-fixture-research-003",
+      "schedule_version": 4,
+      "change_summary": "Move the research review to the afternoon to account for the reported deadline.",
+      "rationale": "The cited evidence contains a specific time-bound development relevant to the scheduled topic.",
+      "uncertainties": ["Synthetic fixture; user must confirm availability and conflicts before applying."],
+      "proposed_action": {
+        "kind": "reschedule",
+        "title": "Review AI Agent tools after the deadline",
+        "start": "2026-10-04T14:00:00+08:00",
+        "end": "2026-10-04T16:00:00+08:00",
+        "timezone": "Asia/Shanghai"
+      }
+    }]
+  },
+  "expected": {
+    "valid": true,
+    "usable": true,
+    "outcome": "suggestions",
+    "error": null,
+    "constraints": {
+      "action_kind": "reschedule",
+      "requires_user_confirmation": true,
+      "must_recheck_schedule_version": true
+    }
+  }
+}

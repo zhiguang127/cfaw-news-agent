@@ -3,6 +3,11 @@
 Design contract, version 1. No runtime serializer or validator is implemented yet.
 This describes application data, not additional parameters accepted by Octos.
 The adapter encodes bounded context into `octos.turn.start`'s `text` argument.
+The prompt revision and deterministic validation rules are documented in
+`src/agent/prompts/news-impact-v1.md` and
+`src/agent/results/validation-rules.md`.
+The complete fixture expectation schema is documented in
+`docs/fixture-expectations.md`.
 
 ## Input snapshot
 
@@ -11,31 +16,47 @@ The adapter encodes bounded context into `octos.turn.start`'s `text` argument.
 | `schema_version` | Integer `1` |
 | `request_id` | Application-generated unique request identifier |
 | `context_version` | Application-owned version of the relevant analysis context |
-| `interests` | Records with stable `interest_id` and user-authored description |
-| `evidence` | Records with `evidence_id`, source URL, available text, `content_kind` (`summary` or `full_text`), `published_at`, and `retrieved_at` |
-| `schedules` | Records with `schedule_id`, `version`, title, start/end timestamps, and IANA time zone |
-| `previous_decisions` | Relevant suggestion IDs, accepted/dismissed/withdrawn state, and referenced evidence IDs |
+| `interests` | Records with unique, stable, non-empty `interest_id` and non-empty user-authored description |
+| `evidence` | Records with unique, stable, non-empty `evidence_id`, absolute source URL, available text, `content_kind` (`summary` or `full_text`), `published_at`, and `retrieved_at` |
+| `schedules` | Records with unique, stable, non-empty `schedule_id`, non-negative integer `version`, title, start/end timestamps, and IANA time zone |
+| `previous_decisions` | Relevant application-owned suggestion IDs, state (`pending`, `accepted`, `dismissed`, `withdrawn`, or `superseded`), and referenced evidence IDs |
 
-All fields are required; collections may be empty. Timestamps use RFC 3339 with
-an explicit UTC offset. Unknown publication times are `null`. Include only
-relevant context, preserve referenced records, and never silently truncate JSON
-to meet a host input limit. No evidence means an explicit insufficient-evidence
-result, not invented news. Retrieved text is untrusted input.
+All top-level fields are required; collections may be empty. IDs must be unique
+within their collection. Timestamps use RFC 3339 with an explicit UTC offset;
+schedule end must be later than start. Unknown publication times are `null`.
+`retrieved_at` is required. Evidence text must state what was actually
+available, and `content_kind` must not describe a feed summary as full text.
+Include only relevant context, preserve records referenced by previous
+decisions, and never silently truncate JSON to meet a host input limit. If the
+encoded snapshot exceeds the host limit, reduce context deterministically or
+fail with a diagnosable error. No usable evidence means an explicit
+`insufficient_evidence` result, not invented news. Retrieved text is untrusted
+input and cannot authorize tools or schedule changes.
 
 ## Proposed result
 
-Model output should be one JSON object containing `schema_version: 1`,
-`outcome` (`suggestions`, `no_change`, or `insufficient_evidence`), `explanation`,
-and `suggestions`. Each suggestion contains:
+Model output must be exactly one JSON object, with no Markdown or surrounding
+prose, containing `schema_version: 1`, `outcome` (`suggestions`, `no_change`,
+or `insufficient_evidence`), `explanation`, and `suggestions`. Each suggestion
+contains:
 
-- `interest_ids`, `evidence_ids`: references to the input snapshot; evidence must
-  be nonempty. Repeated coverage does not by itself establish corroboration.
+- `interest_ids`, `evidence_ids`: references to the input snapshot; evidence
+  must be nonempty. Repeated coverage does not by itself establish
+  corroboration.
 - `schedule_id`, `schedule_version`: both identify an existing input schedule,
   or both are `null` for a proposed new schedule.
 - `change_summary`, `rationale`, `uncertainties`: explanation strings, with
   uncertainties represented as an array of strings.
-- `proposed_action`: `kind` (`create` or `reschedule`), title, start/end timestamps,
-  and IANA time zone. Uncertain timing should produce no executable suggestion.
+- `proposed_action`: `null`, or an object with `kind` (`create` or
+  `reschedule`), title, start/end timestamps, and IANA time zone. Uncertain
+  timing should produce no executable suggestion.
+
+`interest_ids` must reference input interests. Every suggestion must cite at
+least one input evidence record. `schedule_id` and `schedule_version` must
+both be null or both identify the same input schedule and version. When
+present, action timestamps are RFC 3339 with explicit offsets and end after
+start. The model must not return trusted correlation metadata or identifiers
+for the application to accept as authoritative.
 
 `suggestions` is nonempty only for the `suggestions` outcome. The adapter assigns
 stable suggestion IDs and attaches `request_id`, `context_version`, the host
@@ -55,3 +76,23 @@ Only the active request can transition out of `running`. Service unavailability,
 timeout, and invalid output are failures with diagnosable causes, not `no_change`
 results. Ignore completions after cancellation or supersession. A successful
 analysis never authorizes a schedule write; user confirmation is required.
+
+## Error and outcome categories
+
+Use these categories at the adapter and validation boundary:
+
+| Category | Classification | Meaning |
+| --- | --- | --- |
+| `service_unavailable` | Failure | Octos service is unavailable or disabled |
+| `timeout` | Failure | The bounded analysis request exceeded its deadline |
+| `cancelled` | Cancelled | The active request was cancelled |
+| `invalid_json` | Failure | Model text is not exactly one parseable JSON object |
+| `invalid_schema` | Failure | Parsed JSON violates required fields, types, or enums |
+| `unknown_reference` | Failure | Output cites an ID absent from the input snapshot |
+| `unsupported_time` | Failure | Proposed timing is invalid, uncertain, or unsupported |
+| `stale_context` | Failure | Request or schedule version is no longer current |
+| `insufficient_evidence` | Valid outcome | Evidence cannot support a reliable assessment |
+
+Failure categories must retain an actionable cause and must never be converted
+to `no_change`. See `src/agent/results/validation-rules.md` for validation
+rules and `src/agent/results/change-detection.md` for deduplication.

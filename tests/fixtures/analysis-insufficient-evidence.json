@@ -1,0 +1,21 @@
+{
+  "fixture_type": "insufficient_evidence",
+  "is_demo_data": true,
+  "description": "Fixed input with a user interest but no retrieved evidence; no claims or actions may be invented.",
+  "input": {
+    "schema_version": 1,
+    "request_id": "req-fixture-insufficient-001",
+    "context_version": 1,
+    "interests": [{"interest_id": "interest-ai-agents", "description": "重大 AI Agent 开发工具变化"}],
+    "evidence": [],
+    "schedules": [],
+    "previous_decisions": []
+  },
+  "expected": {
+    "valid": true,
+    "usable": true,
+    "outcome": "insufficient_evidence",
+    "error": null,
+    "constraints": {"suggestions_empty": true, "must_not_invent_evidence": true}
+  }
+}
