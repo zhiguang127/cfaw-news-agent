@@ -34,6 +34,9 @@ let failed_by = {hn: false techmeme: false google: false weather: false hefeng: 
 let saved = []
 let tab = "today"
 let query = ""
+let retrieve_strategy = "keyword"
+let retrieve_degraded = false
+let retrieve_considered = 0
 let busy = false
 let updated = 0
 let reading = nil
@@ -483,6 +486,92 @@ fn has_hint(r){
     if r.id == "northstar" && decision != "pending" { return false }
     r.hint != ""
 }
+// Lexical retrieval over the cached rows. This is keyword scoring, not BM25
+// and not vector search: the query is split on whitespace and each term is
+// matched case-insensitively against the title (weight 3) and summary (weight
+// 1), plus a recency bonus. `data.md` names this strategy "keyword"; it must
+// not be called semantic or hybrid until a real index exists.
+//
+// The runtime exposes only these string methods (len, trim, replace, split,
+// index, search, match_str, captures, parse_json, to_chars), so matching goes
+// through `regex` rather than a `contains` helper, and ranking uses a repeated
+// max scan because there is no array sort.
+
+fn query_terms(q){
+    let terms = []
+    for t in q.split(" ") {
+        let term = t.trim()
+        if term != "" { terms.push(term) }
+    }
+    terms
+}
+
+// Recency bonus decays over three days. A missing or future time gets the full
+// bonus rather than a negative score.
+fn recency_bonus(published){
+    if published == nil { return 0 }
+    let age_h = floor((time_now() - published) / 3600)
+    if age_h < 0 { age_h = 0 }
+    let bonus = 3 - floor(age_h / 24)
+    if bonus < 0 { return 0 }
+    bonus
+}
+
+fn score_rows(rows, terms){
+    let scored = []
+    let idx = 0
+    for r in rows {
+        let score = 0
+        for t in terms {
+            let re = regex(escape(t), "i")
+            if re.test(r.title) { score = score + 3 }
+            if r.summary != nil && r.summary != "" && re.test(r.summary) { score = score + 1 }
+        }
+        if score > 0 { score = score + recency_bonus(r.published) }
+        scored.push({idx: idx row: r score: score})
+        idx = idx + 1
+    }
+    scored
+}
+
+fn top_rows(scored, limit){
+    let taken = []
+    let out = []
+    let n = scored.len()
+    for step in limit {
+        let best = nil
+        let best_score = 0
+        for i in n {
+            let p = scored[i]
+            let used = false
+            for u in taken { if u == p.idx { used = true } }
+            if !used && p.score > best_score { best_score = p.score best = p }
+        }
+        if best != nil {
+            taken.push(best.idx)
+            out.push(best.row)
+        }
+    }
+    out
+}
+
+// Returns ranked rows and records how the answer was produced, so the UI and
+// the Agent adapter can tell a real ranking from a degraded one.
+fn retrieve(q, rows, limit){
+    retrieve_strategy = "keyword"
+    retrieve_degraded = false
+    retrieve_considered = 0
+    let terms = query_terms(q)
+    if terms.len() == 0 {
+        retrieve_strategy = "fallback_recent"
+        retrieve_degraded = true
+        return rows
+    }
+    let scored = score_rows(rows, terms)
+    retrieve_considered = scored.len()
+    top_rows(scored, limit)
+}
+
 fn visible_rows(){
     let rows = []
     if demo_mode { rows = demo_rows }
@@ -498,6 +587,7 @@ fn visible_rows(){
         if query != "" && !re.test(r.title) && !re.test(r.summary) && !re.test(r.source) { continue }
         out.push(r)
     }
+    if !demo_mode && query != "" && out.len() > 0 { return retrieve(query, out, 40) }
     out
 }
 fn ago(secs){
@@ -541,6 +631,10 @@ fn sync_status(){
         text = text + " · 源 " + ready + "/" + sources.len()
         for s in sources {
             if failed_by[s.id] { text = text + " · " + s.label + " 请求失败（仅保留旧缓存）" }
+        }
+        if query != "" {
+            text = text + " · 检索 " + retrieve_strategy + "（候选 " + retrieve_considered + "）"
+            if retrieve_degraded { text = text + " 降级" }
         }
     }
     ui.status.set_text(text)

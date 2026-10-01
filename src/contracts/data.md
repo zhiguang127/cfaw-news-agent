@@ -98,18 +98,60 @@ The Agent adapter builds `analysis.md` evidence records from rows:
    independent corroboration by default.
 3. Same story with changed content: update in place, refresh fetch time.
 
-## Retrieval interface (language-neutral, future)
+## Retrieval interface
 
 ```text
-retrieve(query, since?, categories?, limit=20)
-  -> { items: Row[], strategy: "keyword"|"hybrid"|"fallback_recent",
-       degraded: bool, candidates_considered: int }
+retrieve(query, rows, limit)
+  -> ranked rows, and records:
+     strategy = "keyword" | "fallback_recent"
+     degraded = bool
+     candidates_considered = int
 ```
 
-Current implementation is keyword/regex over cached rows (`strategy:
-"keyword"`). Degradation chain: `hybrid` → `keyword` → `fallback_recent` →
-empty. Any step down sets `degraded: true` and the flag travels with the
+Current implementation, in `bundle/main.splash`:
+
+- The query is split on whitespace; empty terms are dropped.
+- Each term is matched case-insensitively (via `regex` + `test`) against the
+  row title (weight 3) and summary (weight 1).
+- A recency bonus of up to 3 points decays linearly over three days. Rows with
+  no timestamp get the full bonus rather than a negative score.
+- Ranking is a repeated max scan; the runtime has no array sort.
+- An empty query returns the rows unchanged with `strategy: "fallback_recent"`
+  and `degraded: true`, so a caller can never mistake an unranked list for a
+  ranked one.
+
+**This is keyword scoring, not BM25 and not vector retrieval.** Do not describe
+it as hybrid, semantic, or vector-backed. A real BM25 index (FTS5-style) and an
+embedding index do not exist yet; the interface is shaped so they can be added
+as additional strategies without changing callers.
+
+Degradation chain once those exist: `hybrid` → `keyword` → `fallback_recent` →
+empty. Any step down sets `degraded: true`, and the flag travels with the
 evidence so the model never mistakes "not retrieved" for "nothing happened".
+
+## Runtime constraints that shaped this
+
+The splash runtime's real method surface is small. Verified from
+`makepad/platform/script/src/string.rs` and `array.rs`:
+
+- string: `len` `trim` `replace` `split` `index` `search` `match_str`
+  `captures` `match_all` `parse_json` `to_chars` `to_f64` `strip_prefix`
+  `strip_suffix` `url_encode` `url_decode`
+- array: `len` `push` `pop` `remove` `retain` `clear` `to_string` `parse_json`
+- globals used here: `regex` `time_now` `floor` `fs` `start_timeout`
+
+There is **no** `lower`, `contains`, `sort`, `range`, or `get` method.
+`lower`/`upper`/`len` exist only as `text.*` standard-library functions, not as
+string methods. Use `regex` for matching and index loops for ordering.
+
+Two further runtime rules found the hard way:
+
+1. Reading a field a record does not declare is a **runtime error**, not `nil`.
+   Every record must declare the same field set.
+2. `octoscript check` is stricter than the splash runtime and reports false
+   positives for Makepad extensions (`#x` colors, `+:`, two-variable `for`).
+   It also rejects `.len()` on strings, which the runtime accepts. Use it for
+   syntax only, and confirm behavior with `card-host`.
 
 ## Migrations
 
