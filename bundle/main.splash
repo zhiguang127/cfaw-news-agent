@@ -5,15 +5,18 @@
 // NEVER commit it: the bundle is packaged and may be published.
 // Empty means Hefeng sources are skipped and the keyless Open-Meteo source
 // below stays as the fallback.
-let HEFENG_KEY = "a358940a70ff4caa98313e0c1d03a9e9"
+let HEFENG_KEY = ""
+// Every record carries the same field set. Reading a field a record does not
+// declare is a runtime error in this runtime, not a nil, so optional fields
+// are declared on all sources rather than left out.
 let sources = [
-    {id: "hn" label: "Hacker News" kind: "hn" url: "https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=30"}
-    {id: "techmeme" label: "TechMeme" kind: "digest" url: "https://www.techmeme.com/feed.xml"}
-    {id: "google" label: "Google News" kind: "google" url: "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"}
-    {id: "weather" label: "北京天气" kind: "weather" city: "北京" url: "https://api.open-meteo.com/v1/forecast?latitude=39.9042&longitude=116.4074&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=7&timezone=Asia%2FShanghai"}
+    {id: "hn" label: "Hacker News" kind: "hn" city: "" needs_key: false url: "https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=30"}
+    {id: "techmeme" label: "TechMeme" kind: "digest" city: "" needs_key: false url: "https://www.techmeme.com/feed.xml"}
+    {id: "google" label: "Google News" kind: "google" city: "" needs_key: false url: "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"}
+    {id: "airchina" label: "国航" kind: "digest" city: "" needs_key: false url: "https://www.airchinagroup.com/cnah/include/xwzx/news_rss.xml"}
+    {id: "weather" label: "北京天气" kind: "weather" city: "北京" needs_key: false url: "https://api.open-meteo.com/v1/forecast?latitude=39.9042&longitude=116.4074&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=7&timezone=Asia%2FShanghai"}
     {id: "hefeng" label: "和风逐小时" kind: "hefeng" city: "北京" needs_key: true url: "https://nb73jtmvn7.re.qweatherapi.com/v7/weather/24h?location=101010100"}
     {id: "hefeng_warn" label: "天气预警" kind: "hefeng_warn" city: "北京" needs_key: true url: "https://nb73jtmvn7.re.qweatherapi.com/weatheralert/v1/current/39.90/116.40?localTime=true"}
-    {id: "airchina" label: "国航" kind: "digest" url: "https://www.airchinagroup.com/cnah/include/xwzx/news_rss.xml"}
 ]
 let tabs = [
     {id: "today" label: "Today"}
