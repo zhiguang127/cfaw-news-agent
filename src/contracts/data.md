@@ -137,35 +137,31 @@ evidence so the model never mistakes "not retrieved" for "nothing happened".
 | `techmeme` | TechMeme | digest | no |
 | `google` | Google News (en-US) | rss | no |
 | `airchina` | 国航 | rss | no |
-| `weather` | 北京天气 | weather | no |
-| `weather_sh` `weather_gz` `weather_cd` `weather_sy` | 上海 / 广州 / 成都 / 三亚天气 | weather | no |
 | `hefeng` | 和风逐小时 | hefeng | **yes** |
 | `hefeng_warn` | 天气预警 | hefeng | **yes** |
 
-Five city forecasts are fetched as separate sources and merged by
-`weather_all_rows()` into one 出行天气 tab, grouped by city then day.
-`today_rows()` skips weather sources so the interleaved Today feed stays news.
+### City forecasts are not sources
 
-### Tracked cities
+Weather is not in `sources`. `city_list` holds 30 major mainland China cities
+as `{cid, name, lat, lon}`; `cid` is `w01`…`w30` because map keys must be
+ASCII identifiers.
 
-`cities` in `bundle/main.splash` is the single source of truth:
+- `tracked` is the list of cities actually fetched, starting at 5.
+- `pick_city(name)` adds the city and fires one request the first time it is
+  picked, so the app never pays for forecasts nobody looks at.
+- `fetch_cities` runs them **in parallel** and does not touch `busy`: one slow
+  city must not stall the news chain, and 30 cities must not cost 30 serial
+  round trips. `weather_pending` drives the status line.
+- `weather_city_rows()` merges tracked cities grouped by city then day, filtered
+  by `city_sel` (`全部` means every tracked city).
+- `today_rows()` skips weather so forecasts never flood the interleaved feed.
 
-```text
-["全部" "北京" "上海" "广州" "成都" "三亚"]
-```
+Adding a city means adding a `cid` key to both `rows_by` and `failed_by` as
+well as the `city_list` entry.
 
-`全部` means every tracked city. `city_sel` holds the current selection and
-`weather_city_rows()` filters on `source.city`. The filter row is only shown on
-the 出行天气 tab in live mode.
-
-Frontend: build a real city picker on this list. The natural end state is a
-picker driven by schedule locations (`schedules[].location`), so the forecast
-cities follow the user's trips instead of a fixed set; that is a contract
-change and needs agreement, not a local edit.
-
-Adding a source means adding its id to `sources`, to `tabs`, to both `rows_by`
-and `failed_by`, and to the manifest host allowlist. Adding a city also means
-adding it to `cities`.
+Frontend: the natural end state is a picker driven by schedule locations
+(`schedules[].location`), so forecast cities follow the user's trips instead of
+a fixed list. That is a contract change and needs agreement, not a local edit.
 
 ## Runtime constraints that shaped this
 
@@ -187,8 +183,12 @@ Two further runtime rules found the hard way:
 1. Reading a field a record does not declare is a **runtime error**, not `nil`.
    Every record must declare the same field set.
 2. The same holds for maps: a key absent from `rows_by` / `failed_by` reads as
-   `nil`, and `nil` has no `len()`. Adding a source means adding its id to the
-   `sources` list **and** to both maps, or the feed dies on the first fetch.
+   `nil`, and `nil` has no `len()`. Adding a source or city means adding its id
+   to both maps, or the feed dies on the first fetch. Map keys must also be
+   ASCII identifiers: `w01`, not `w北京`.
+3. A widget declared `visible: false` does not reliably come back with
+   `set_visible`. Render conditional UI inside an `on_render` that already
+   runs, rather than toggling a hidden declaration.
 3. `octoscript check` is stricter than the splash runtime and reports false
    positives for Makepad extensions (`#x` colors, `+:`, two-variable `for`).
    It also rejects `.len()` on strings, which the runtime accepts. Use it for
