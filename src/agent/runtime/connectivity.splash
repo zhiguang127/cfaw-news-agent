@@ -1,0 +1,66 @@
+// Optional user-triggered probe only; news browsing never invokes this.
+let octos_testing = false
+let octos_timeout_seconds = 90
+let octos_message = "未测试。点击后显示真实回复或错误。"
+fn set_octos_message(text){
+    octos_message = text
+    if detail_kind == "settings" { ui.octos_status.set_text(text) }
+}
+
+// Uses the assistant selected in Rinx, never a model endpoint or app-owned key.
+fn test_octos(){
+    if octos_testing { return }
+    if !host.has("octos.session.open") || !host.has("octos.turn.start") || !host.has("octos.turn.interrupt") {
+        set_octos_message("Octos permissions missing. Review the updated bundle and run it again.")
+        return
+    }
+    octos_testing = true
+    set_octos_message("Opening Octos context...")
+    let done = false
+    let timer = start_timeout(octos_timeout_seconds, || {
+        if done { return }
+        done = true
+        set_octos_message("Octos timed out after 90 seconds. Stopping request...")
+        let stopping = true
+        let stop_timer_id = start_timeout(10, || {
+            if stopping {
+                set_octos_message("Octos timed out; stop was not acknowledged. Close and reopen this app before retrying.")
+            }
+        })
+        host.request("octos.turn.interrupt", {}, fn(stopped){
+            if !stopping { return }
+            stopping = false
+            stop_timer(stop_timer_id)
+            if stopped.is_ok {
+                octos_testing = false
+                set_octos_message("Octos timed out; request stopped. Check the host/model connection, then retry.")
+            } else {
+                set_octos_message("Octos timed out; close and reopen this app. Stop error: " + stopped.error)
+            }
+        })
+    })
+    host.request("octos.session.open", {}, fn(opened){
+        if done { return }
+        if !opened.is_ok {
+            done = true
+            stop_timer(timer)
+            octos_testing = false
+            set_octos_message("Octos context failed: " + opened.error)
+            return
+        }
+        set_octos_message("Context opened. Waiting for a real model reply...")
+        host.request("octos.turn.start", {text: "Connectivity test. Do not use tools. Reply with only OCTOS_OK."}, fn(reply){
+            if done { return }
+            done = true
+            stop_timer(timer)
+            octos_testing = false
+            if !reply.is_ok {
+                set_octos_message("Octos model request failed: " + reply.error)
+            } else if reply.data == nil || reply.data.text == nil || reply.data.text == "" {
+                set_octos_message("Octos returned no model text; connectivity is not confirmed.")
+            } else {
+                set_octos_message("Octos replied: " + reply.data.text)
+            }
+        })
+    })
+}

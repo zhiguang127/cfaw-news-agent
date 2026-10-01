@@ -1,0 +1,36 @@
+let StoryPage = View{visible: false width: Fill height: Fill flow: Down
+    story_content := ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 14 on_render: || {
+        if reading != nil {
+            Small{text: news_meta(reading)}
+            Heading{text: reading.title}
+            if reading.evidence_kind == "hn_submission" { Small{text: "HN 提交记录；提交时间不等于原文发布时间"} }
+            else { Small{text: "真实 RSS / Atom 摘要，非文章全文"} }
+            if reading.summary == "" { Text{text: "来源未提供摘要，请通过条目链接查看。" draw_text.color: secondary} }
+            else { Text{text: reading.summary} }
+            Small{text: "抓取于 " + age_label(reading.retrieved_at)}
+            Section{text: "条目链接（可复制）"}
+            Search{text: reading.source_url empty_text: "条目 URL"}
+            if news_source(reading.source_id) != nil {
+                Small{text: "抓取来源：" + news_source(reading.source_id).label}
+                if news_source(reading.source_id).kind == "google" { Small{text: "通过 Google News 聚合；条目可能保留聚合跳转链接。"} }
+            }
+            if reading.references.len() > 1 {
+                Small{text: "相同链接已合并；重复收录不代表独立证据。"}
+                for ref in reading.references { Small{text: ref.source + " · " + ref.source_id} }
+            }
+            let reasons = interest_matches(reading, user_interests)
+            if reasons.len() > 0 {
+                Divider{}
+                Section{text: "与你有关 · 规则匹配" draw_text.color: accent}
+                for reason in reasons { Text{text: reason} }
+            }
+            Small{text: "Agent 分析暂未启用；当前未生成判断或日程建议。"}
+            View{width: Fill height: Fit flow: Right spacing: 10
+                if records_has_interest("source", reading.source) { SecondaryButton{text: "已跟踪来源" on_click: || toggle_follow(reading)} }
+                else { SecondaryButton{text: "跟踪来源" on_click: || toggle_follow(reading)} }
+                if records_is_bookmarked(reading.news_id) { SecondaryButton{text: "已收藏" on_click: || toggle_save(reading)} }
+                else { SecondaryButton{text: "收藏" on_click: || toggle_save(reading)} }
+            }
+        }
+    }}
+}

@@ -13,14 +13,25 @@
   },
   "id": "dev.cfaw.news",
   "integrity": {
-    "bundle_blake3": "d537c14442080119f6d64355c3dd14771edc0f74650553843873a41c764f3cb1"
+    "bundle_blake3": "8537b255975686a15fa2dbd5db5a5f6ce2a8ab313cfed838b48e252afb1baec9"
   },
   "name": "CFAW News",
   "network": {
     "hosts": [
+      "arstechnica.com",
+      "export.arxiv.org",
+      "feeds.arstechnica.com",
+      "feeds.bbci.co.uk",
       "hn.algolia.com",
+      "news.google.com",
+      "news.mit.edu",
+      "rss.arxiv.org",
+      "techcrunch.com",
+      "venturebeat.com",
+      "www.cnbc.com",
       "www.techmeme.com",
-      "news.google.com"
+      "www.theguardian.com",
+      "www.theverge.com"
     ]
   },
   "schema": 1,

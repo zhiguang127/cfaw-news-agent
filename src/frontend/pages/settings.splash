@@ -1,0 +1,25 @@
+let SourcesPage = View{visible: false width: Fill height: Fill flow: Down
+    ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 12
+        Heading{text: "选择新闻来源"}
+        Small{text: "启用来源后点击刷新。各来源独立失败，已有缓存继续可读。"}
+        Primary{text: "刷新已启用来源" on_click: || refresh()}
+        source_list := View{width: Fill height: Fit flow: Down spacing: 8 on_render: || {
+            for source in news_sources {
+                View{width: Fill height: Fit flow: Down spacing: 4
+                    View{width: Fill height: 30 flow: Right align: Align{y: 0.5} spacing: 6
+                        Section{width: Fill text: source.label}
+                        if source_enabled(source.id) { LinkButton{text: "已启用" on_click: || toggle_source(source.id)} }
+                        else { QuietButton{text: "启用" on_click: || toggle_source(source.id)} }
+                    }
+                    Small{text: category_label(source.category) + " · " + source.language}
+                    Small{text: source_status_text(source)}
+                    Divider{}
+                }
+            }
+        }}
+        Section{text: "Agent 状态"}
+        Small{text: "新闻分析暂未启用。下方为已有的手动连接测试，仅点击时调用模型。"}
+        SecondaryButton{text: "Test Octos" on_click: || test_octos()}
+        octos_status := Text{text: octos_message}
+    }
+}

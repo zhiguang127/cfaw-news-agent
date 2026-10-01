@@ -1,0 +1,43 @@
+let TrackingHeader = View{visible: false width: Fill height: 48 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 18} spacing: 8
+    tracking_summary := Small{width: Fill text: "0 条规则 · 0 条新消息"}
+    LinkButton{text: "管理追踪 ›" on_click: || manage_tracking()}
+}
+let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
+    ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 12
+        Heading{text: "关注你想持续了解的变化"}
+        Small{text: "打开应用或手动刷新时检查。关键词匹配标题和摘要，暂无后台监测。"}
+        Section{text: "添加关键词"}
+        keyword_input := Search{empty_text: "例如：端侧 AI、NVIDIA（每次添加一个）" on_change: |text| {keyword_draft = text}}
+        Primary{text: "添加追踪" on_click: || add_keyword()}
+        Section{text: "追踪主题"}
+        topic_list := View{width: Fill height: Fit flow: Down spacing: 4 on_render: || {
+            for item in category_filters {
+                if item.id != "all" {
+                    View{width: Fill height: 34 flow: Right align: Align{y: 0.5}
+                        Text{text: category_label(item.id)}
+                        if records_has_interest("category", item.id) { LinkButton{text: "已追踪" on_click: || toggle_topic(item.id)} }
+                        else { QuietButton{text: "追踪" on_click: || toggle_topic(item.id)} }
+                    }
+                }
+            }
+        }}
+        Divider{}
+        Section{text: "我的规则"}
+        interest_list := View{width: Fill height: Fit flow: Down spacing: 4 on_render: || {
+            if user_interests.len() == 0 { Small{text: "尚未添加追踪。也可在新闻条目上点击跟踪来源。"} }
+            for item in user_interests {
+                View{width: Fill height: Fit flow: Right align: Align{y: 0.5} spacing: 8
+                    View{width: Fill height: Fit flow: Down spacing: 2
+                        if item.kind == "category" { Text{text: category_label(item.value)} }
+                        else { Text{text: item.value} }
+                        if item.kind == "keyword" { Small{text: "标题 / 摘要关键词 · 忽略英文大小写"} }
+                        if item.kind == "source" { Small{text: "新闻发布方"} }
+                        if item.kind == "category" { Small{text: "新闻源所属主题"} }
+                    }
+                    QuietButton{text: "取消追踪" on_click: || remove_interest(item.interest_id)}
+                }
+                Divider{}
+            }
+        }}
+    }
+}

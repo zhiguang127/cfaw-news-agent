@@ -1,0 +1,5 @@
+let SchedulePage = View{visible: false width: Fill height: Fill flow: Down padding: 24 spacing: 14
+    Heading{text: "日程"}
+    Text{text: "当前版本尚未接入日程管理和 Agent 建议。"}
+    Small{text: "新闻、收藏和追踪已独立运行。真实新闻不会自动修改你的安排。"}
+}

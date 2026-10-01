@@ -1,0 +1,231 @@
+// UI actions connect repository/retrieval/ingestion; mutable navigation lives here.
+let page = "feed"
+let category = "all"
+let related_only = false
+let query = ""
+let keyword_draft = ""
+let reading = nil
+let detail_kind = ""
+let busy = false
+let app_feed_rows = []
+let visible_limit = 40
+let display_rows = []
+let category_filters = [{id: "all" label: "全部"} {id: "tech" label: "科技"}
+    {id: "ai" label: "AI"} {id: "world" label: "国际"} {id: "finance" label: "财经"} {id: "china" label: "中文"}]
+fn age_label(seconds){
+    if seconds == nil || seconds <= 0 { return "时间未知" }
+    let delta = time_now() - seconds
+    if delta < 0 { return "来源时间晚于当前时间" }
+    if delta < 60 { return "刚刚" }
+    if delta < 3600 { return "" + floor(delta / 60) + " 分钟前" }
+    if delta < 86400 { return "" + floor(delta / 3600) + " 小时前" }
+    "" + floor(delta / 86400) + " 天前"
+}
+fn news_meta(row){
+    let label = "发布于 "
+    if row.timestamp_kind == "submitted" { label = "提交于 " }
+    row.source + " · " + label + age_label(row.published_at)
+}
+fn news_avatar(row){
+    if row.source_id == "hn" { return "HN" }
+    if row.category == "ai" { return "AI" }
+    if row.category == "china" { return "中" }
+    if row.category == "finance" { return "财" }
+    if row.category == "world" { return "世" }
+    "科"
+}
+fn source_enabled(id){ return record_contains(enabled_source_ids, id) }
+fn source_status_text(source){
+    let status = feed_status_by_source[source.id]
+    if status == nil { return "尚未请求" }
+    if status.state == "loading" { return "正在获取…" }
+    let text = "尚未请求"
+    if status.state == "error" { text = "请求失败" }
+    if status.retrieved_at > 0 {
+        text = "" + status.count + " 条 · 抓取于 " + age_label(status.retrieved_at)
+        if status.state == "cached" || time_now() - status.retrieved_at > news_config.cache_stale_seconds { text = text + " · 缓存" }
+    } else if status.state == "fresh" { text = "请求成功，暂无条目" }
+    if status.error != "" { text = text + " · " + status.error }
+    text
+}
+fn row_cache_note(row){
+    if page == "saved" { return "收藏快照" }
+    let status = feed_status_by_source[row.source_id]
+    if status == nil { return "" }
+    if status.state == "error" { return "缓存 · 该来源刷新失败" }
+    if row.retrieved_at > 0 && time_now() - row.retrieved_at > news_config.cache_stale_seconds { return "缓存 · 超过两小时未更新" }
+    ""
+}
+fn row_match_hint(row){
+    let reasons = interest_matches(row, user_interests)
+    if reasons.len() > 0 { return reasons[0] }
+    ""
+}
+fn row_is_new(row){ return records_is_unread(row.news_id) && row_match_hint(row) != "" }
+fn tracking_new_count(){
+    let count = 0
+    for row in app_feed_rows { if row_is_new(row) { count = count + 1 } }
+    count
+}
+fn visible_rows(){
+    if page == "saved" {
+        let rows = []
+        for i in user_bookmarks.len() { rows.push(user_bookmarks[user_bookmarks.len() - 1 - i]) }
+        return news_filter(rows, [], "all", false, query)
+    }
+    news_filter(app_feed_rows, user_interests, category, page == "tracking" || related_only, query)
+}
+fn empty_text(){
+    if query != "" { return "没有匹配的新闻，试试其他关键词。" }
+    if page == "saved" { return "收藏新闻后可在这里重看；清理新闻缓存不会删除收藏。" }
+    if page == "tracking" || related_only {
+        if user_interests.len() == 0 { return "还没有追踪规则。可追踪新闻来源，或在管理追踪中添加主题和关键词。" }
+        return "当前新闻没有匹配你的追踪规则。打开应用或手动刷新时会重新检查。"
+    }
+    if enabled_source_ids.len() == 0 { return "尚未启用新闻源。点击顶部来源，选择需要获取的来源。" }
+    if busy { return "正在获取真实新闻，来源完成后会逐步显示。" }
+    "暂无可显示的新闻。点击刷新重试，或到来源查看请求错误。"
+}
+fn notice(text){ ui.feedback.set_text(text) ui.feedback.set_visible(text != "") }
+fn sync_status(){
+    let failed = 0
+    for id in enabled_source_ids { if feed_status_by_source[id].state == "error" { failed = failed + 1 } }
+    let text = "" + app_feed_rows.len() + " 条真实新闻"
+    if busy && feed_task != nil { text = "正在获取 " + feed_task.completed + "/" + feed_task.sources.len() + " 个来源 · " + app_feed_rows.len() + " 条" }
+    if page == "saved" { text = "" + user_bookmarks.len() + " 条收藏" }
+    if page == "tracking" && !busy { text = "" + display_rows.len() + " 条新闻匹配追踪规则" }
+    if failed > 0 && page != "saved" { text = text + " · " + failed + " 个来源失败，详情见来源" }
+    ui.status.set_text(text)
+    ui.refresh_button.set_text("刷新")
+    if busy { ui.refresh_button.set_text("取消刷新") }
+    ui.tracking_summary.set_text("" + user_interests.len() + " 条规则 · " + tracking_new_count() + " 条新消息")
+}
+fn render_feed(){
+    display_rows = visible_rows()
+    ui.list.render()
+    let empty = display_rows.len() == 0
+    ui.list_container.set_visible(!empty)
+    ui.empty_panel.set_visible(empty)
+    ui.empty_message.set_text(empty_text())
+    ui.more_button.set_visible(display_rows.len() > visible_limit)
+    sync_status()
+    ui.tile_list.render()
+}
+fn render_main(){
+    ui.filters.render()
+    ui.categories.render()
+    ui.navigation.render()
+    ui.feed_filters.set_visible(page == "feed")
+    ui.tracking_header.set_visible(page == "tracking")
+    ui.bookmarks_header.set_visible(page == "saved")
+    ui.search_box.set_visible(page != "schedule")
+    ui.status.set_visible(page != "schedule")
+    ui.feed_list.set_visible(page != "schedule")
+    ui.schedule_page.set_visible(page == "schedule")
+    render_feed()
+}
+fn select_page(id){
+    page = id
+    category = "all"
+    query = ""
+    visible_limit = 40
+    reading = nil
+    detail_kind = ""
+    ui.search.set_text("")
+    ui.detail_pane.set_visible(false)
+    ui.main.set_visible(true)
+    render_main()
+}
+fn pick_filter(followed){ related_only = followed visible_limit = 40 ui.filters.render() render_feed() }
+fn pick_category(id){ category = id visible_limit = 40 ui.categories.render() render_feed() }
+fn set_query(text){ query = text.trim() visible_limit = 40 render_feed() }
+fn show_more(){ visible_limit = visible_limit + 40 render_feed() }
+fn rebuild_feed(complete){
+    feed_build_rows(enabled_source_ids, fn(rows){ app_feed_rows = rows complete() })
+}
+fn refresh(){
+    if busy { feed_cancel() busy = false render_feed() notice("已取消等待；迟到结果不会更新新闻。") return }
+    busy = true
+    feed_refresh(enabled_source_ids, || {
+        rebuild_feed(|| render_feed())
+        if detail_kind == "settings" { ui.source_list.render() }
+    }, fn(successes){
+        rebuild_feed(|| {
+            busy = false
+            if successes > 0 {
+                let error = records_check_tracking(app_feed_rows, user_interests, time_now())
+                if error != "" { notice(error) }
+            }
+            start_timeout(0.01, || {
+                render_feed()
+                if detail_kind == "settings" { ui.source_list.render() }
+            })
+        })
+    }, news_http_request)
+    sync_status()
+}
+fn toggle_follow(row){
+    let error = ""
+    if records_has_interest("source", row.source) { error = records_remove_interest("source:" + row.source) }
+    else { error = records_add_interest("source", row.source) }
+    notice(error)
+    render_feed()
+    if detail_kind == "story" { ui.story_content.render() }
+}
+fn toggle_save(row){
+    let existed = records_is_bookmarked(row.news_id)
+    let error = records_toggle_bookmark(row)
+    if error != "" { notice(error) }
+    else if existed { notice("已取消收藏") } else { notice("已保存收藏，重开应用仍可查看") }
+    render_feed()
+    if detail_kind == "story" { ui.story_content.render() }
+}
+fn render_detail(){
+    if detail_kind == "story" { ui.story_content.render() }
+    if detail_kind == "settings" { ui.source_list.render() }
+    if detail_kind == "tracking" { ui.interest_list.render() ui.topic_list.render() }
+    ui.story_panel.set_visible(detail_kind == "story")
+    ui.settings_panel.set_visible(detail_kind == "settings")
+    ui.tracking_panel.set_visible(detail_kind == "tracking")
+}
+fn show_detail(kind, title){
+    detail_kind = kind
+    ui.detail_title.set_text(title)
+    ui.main.set_visible(false)
+    ui.detail_pane.set_visible(true)
+    render_detail()
+}
+fn open_story(row){
+    reading = row
+    let error = records_mark_read(row.news_id)
+    notice(error)
+    show_detail("story", "新闻详情")
+}
+fn close_detail(){
+    detail_kind = ""
+    reading = nil
+    ui.detail_pane.set_visible(false)
+    ui.main.set_visible(true)
+    // Preserve the existing ScrollYView and its position on return.
+    sync_status()
+}
+fn show_settings(){ notice("") show_detail("settings", "新闻来源") }
+fn manage_tracking(){ notice("") show_detail("tracking", "管理追踪") }
+fn add_keyword(){
+    let error = records_add_interest("keyword", keyword_draft)
+    notice(error)
+    if error == "" { keyword_draft = "" ui.keyword_input.set_text("") }
+    render_detail()
+    render_feed()
+}
+fn remove_interest(id){ notice(records_remove_interest(id)) render_detail() render_feed() }
+fn toggle_topic(id){
+    if records_has_interest("category", id) { remove_interest("category:" + id) }
+    else { notice(records_add_interest("category", id)) render_detail() render_feed() }
+}
+fn toggle_source(id){
+    if busy { feed_cancel() busy = false }
+    notice(records_toggle_source(id))
+    render_detail()
+    rebuild_feed(|| render_feed())
+}

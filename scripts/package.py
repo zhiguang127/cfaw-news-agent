@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import zipfile
+from assemble import build, source_catalog
 
 root = Path(__file__).resolve().parents[1]
 bundle = root / 'bundle'
@@ -15,11 +16,16 @@ args = parser.parse_args()
 manifest = json.loads((bundle / 'manifest.json').read_text())
 if manifest.get('publisher_signature') or manifest.get('integrity', {}).get('signature'):
     raise SystemExit('Refusing to restamp a signed bundle')
-if not (bundle / 'main.splash').is_file():
-    raise SystemExit('Missing bundle/main.splash')
+build()
+from urllib.parse import urlsplit
+catalog = source_catalog()
+expected_hosts = {urlsplit(s['url']).hostname for s in catalog['sources']} | set(catalog.get('redirect_hosts', []))
+if not expected_hosts.issubset(set(manifest['network']['hosts'])):
+    raise SystemExit('Source hosts missing from bundle/manifest.json')
 lock = json.loads((root / 'dev-dependencies.lock.json').read_text())
 repo = next(item for item in lock['repositories'] if item['name'] == 'OctoSense-App-Hub')
-hub = Path(os.environ.get('OCTO_HUB', str(root / repo['relative_checkout'] / 'target/release/hub'))).expanduser()
+hub_name = 'hub.exe' if os.name == 'nt' else 'hub'
+hub = Path(os.environ.get('OCTO_HUB', str(root / repo['relative_checkout'] / 'target/release' / hub_name))).expanduser()
 if not hub.is_file():
     raise SystemExit('Hub tool not found; set OCTO_HUB to the pinned hub executable')
 output = (args.output or root / 'build/cfaw-news.zip').resolve()

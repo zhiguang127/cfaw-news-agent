@@ -1,6 +1,6 @@
 # 队友上手与开发分工
 
-先跑通新闻 App 顶部 **Octos 连接 → Test Octos**，再开发自己负责的部分。业务开发在本仓库完成；Rinx 是宿主，Octos 是 Agent 执行环境，普通业务功能不需要修改它们的源码。
+先运行真实新闻与数据检查，再开发自己负责的部分；Agent 同学额外在 **来源 → Test Octos** 验证连通性。业务开发在本仓库完成；Rinx 是宿主，Octos 是 Agent 执行环境，普通业务功能不需要修改它们的源码。
 
 开发约定见 [AGENTS.md](../AGENTS.md)，架构与当前状态见 [README](../README.md)，版本以 [依赖记录](../dev-dependencies.lock.json) 为准。
 
@@ -53,7 +53,7 @@ OCTO_HUB=/path/to/hub python3 scripts/package.py
 
 `/path/to/hub` 要替换为实际路径。可由队友提供适配本机平台的固定版本开发工具，或按 App Hub 上游构建说明准备；仅克隆仓库不会生成可执行文件。
 
-脚本刷新 bundle 摘要并生成 `build/cfaw-news.zip`，不编译业务模块、不构建 Octos，也不发布到 App Hub。
+脚本按 `scripts/assemble.py` 中的 `ORDER` 组装 `src/`，生成 `bundle/main.splash` 与 `build/source-map.json`，再刷新摘要并生成 `build/cfaw-news.zip`；不构建 Octos，也不发布到 App Hub。
 
 ### 配置和导入（在 Rinx 界面）
 
@@ -61,7 +61,7 @@ OCTO_HUB=/path/to/hub python3 scripts/package.py
 2. 配置 **Rinx 自带的本地 Octos**：填写 Provider、Model、API key；使用自定义模型端点时再填写 Base URL，点击 **Use this device**。例如 Provider 填 `deepseek`，Model 填账号可用的模型 ID（如 `deepseek-chat`），默认端点的 Base URL 留空，API key 填模型提供方控制台获取的密钥。完整字段说明见 [README 配置步骤](../README.md#5-配置-rinx-自带-octos-并测试)。
 3. **OctoSense bundle folder** 填 `realpath bundle` 输出的绝对路径，Room 留空。
 4. 点击 **Review bundle**，核对 `CFAW News`、新闻网络域名以及 `storage`、`net`、`images` 和三个 `octos.*` 服务权限，然后点击 **Run**。
-5. 在新闻首页点击顶部 **Octos 连接 → Test Octos**。看到 `Octos replied: ...` 和实际模型回复，说明本次模型调用完成；测试要求模型回复 `OCTOS_OK`。
+5. 新闻浏览无需模型。需要连通性测试时进入 **来源**，滚动到底部点击 **Test Octos**；看到 `Octos replied: ...` 和实际模型回复才算本次调用完成。
 
 **密钥配置注意：**当前宿主保存后会清空密钥输入框。如果保留 Provider、Model，又空着密钥重复点击 **Use this device**，会覆盖掉原密钥。要修改配置时重新填写密钥；只是打开应用时不必重复保存模型配置。密钥只输入宿主，不写入代码、截图或提交记录。
 
@@ -69,13 +69,13 @@ OCTO_HUB=/path/to/hub python3 scripts/package.py
 
 ### 演示新版界面
 
-默认使用明确标注的 Mock 新闻、Agent 判断和日程：切换“与你有关”，跟踪/收藏条目，点击关联提示展开依据，再查看建议并确认改期或保留原计划。底部导航为动态、跟踪、日程和收藏；处理后的示例建议可以重置再演示。示例状态独立保存，不覆盖真实收藏，也不写入系统日历。
+默认自动请求真实新闻；来源页管理 17 个公开来源并显示各来源的实际状态。切换“与你有关”、跟踪来源、收藏条目，再在“管理追踪”添加主题与关键词，重开应用验证状态恢复。收藏、规则和已读记录分别保存在宿主私有 JSON 文件中，旧 `saved.json` 可迁移。新闻失败显示失败或旧缓存，详情展示 feed 摘要与来源链接。
 
-顶部“真实新闻”切换到原有新闻来源，失败时显示失败或旧缓存，不会自动填充示例。真实模式跟踪只作当前会话中的来源筛选；真实 Agent 分析、日程管理和后台监测仍需开发。“Octos 连接”中的测试始终使用真实宿主服务。
+当前关联提示是规则匹配，没有 Agent 推理。日程页是空状态，真实 Agent 分析、日程管理、跨设备同步和后台监测仍需开发；Test Octos 只在手动点击时调用宿主。
 
 ## 3. 每个人在哪个目录做什么
 
-**现在的可执行入口只有 `bundle/main.splash`。** `src/` 除接口文档外仍是骨架，尚未接入运行时。把代码放进去不会自动加载，`scripts/package.py` 也不会把它组装进 bundle。
+**业务源码维护在 `src/`，宿主执行自动生成的 `bundle/main.splash`。** `scripts/package.py` 调用组装器，按固定顺序拼接 OctoScript 文件与 JSON 来源目录。新增可执行文件要加入 `ORDER`；文档和提示词不会自动执行。不要手工修改生成入口。
 
 | 负责人 | 目录 | 负责的交付 |
 | --- | --- | --- |
@@ -88,11 +88,11 @@ OCTO_HUB=/path/to/hub python3 scripts/package.py
 | 数据同学 | `src/data/storage/` | 新闻缓存、用户关注、日程与决策历史；版本和迁移 |
 | 共同维护，每项改动指定一个集成人 | `src/app/` | 初始化、导航、用户动作到各层的连接 |
 | 共同维护 | `src/contracts/` | 各层共享字段、错误与状态约定；现有入口是 [analysis.md](../src/contracts/analysis.md) |
-| 各功能负责人 | `tests/fixtures/`、`tests/unit/`、`tests/scenarios/` | 固定样例、确定性逻辑测试、完整业务流程；目前还没有配置测试运行器 |
+| 各功能负责人 | `tests/fixtures/`、`tests/unit/`、`tests/scenarios/` | 固定样例、实际 OctoScript 数据测试与业务场景；运行 `python scripts/test_runtime.py` |
 
-Agent 两位同学共同实现**一个业务 Agent**。A/B 是协作侧重点，不是两套 Agent。团队下一项集成工作应先验证模块如何加载或组装，再迁移执行逻辑；不能假定 bundle 会执行任意 Rust、Python 或自动读取提示词文件。
+Agent 两位同学共同实现**一个业务 Agent**。A/B 是协作侧重点，不是两套 Agent。后续 Agent 模块须加入已验证的组装顺序并连接调用方；bundle 不执行任意 Rust、Python，也不自动读取提示词文件。
 
-在模块接入前，需要立即演示的改动仍落在 `bundle/main.splash`。同一任务指定一人集成，其他人先交付契约、提示词草稿或固定样例；避免同时大改入口，也不要长期维护 `src/` 与 bundle 两份手工同步的业务代码。
+各层只维护自己的源文件，`app/` 连接数据和页面，`contracts/` 对齐共享结构。生成入口不能成为第二份手工业务源码。
 
 其他目录：`bundle/manifest.json` 声明真实需要的权限和域名；`bundle/assets/` 放实际资源；`bundle/screenshots/` 放实际运行截图；`scripts/` 放开发和打包工具；`docs/` 放协作说明；`build/` 是忽略提交的生成产物。空资源目录在新克隆中可能不存在。
 
@@ -108,9 +108,9 @@ Agent 两位同学共同实现**一个业务 Agent**。A/B 是协作侧重点，
              结果核验 → 页面展示 → 用户确认 → 日程更新
 ```
 
-第一版先由应用获取候选新闻，再提交给 Octos 分析。不必修改 Octos 内核，也不必先实现自主检索工具。数据层代码不会自动注册为 Octos 工具。
+后续 Agent 集成可先由应用获取候选新闻，再提交给 Octos 分析。当前第一版只获取和匹配新闻，不提交分析。数据层代码不会自动注册为 Octos 工具。
 
-实际可参考 `bundle/main.splash` 中的 `test_octos()`：
+实际可参考 `src/agent/runtime/connectivity.splash` 中的 `test_octos()`：
 
 - `host.request("octos.session.open", {}, callback)` 打开应用作用域上下文。
 - `host.request("octos.turn.start", {text: ...}, callback)` 发送任务文本，回调检查 `is_ok`，读取 `data.text` 或 `error`。
@@ -124,7 +124,7 @@ Agent 两位同学共同实现**一个业务 Agent**。A/B 是协作侧重点，
 
 1. 开工先看 Git 状态和 [AGENTS.md](../AGENTS.md)，确认本次涉及的字段、模块及入口集成人。
 2. 变更共享接口时同步修改生产方、消费方和固定样例；先确定代码在哪执行，再决定语言与后缀。
-3. 修改 bundle 后，在本项目根目录执行 `python3 scripts/package.py`。然后退出旧应用，重新 **Review bundle → Run**。改 `src/` 骨架或文档不需要重打包。
+3. 修改运行源码或 manifest 后执行 `python3 scripts/package.py`。然后退出旧应用，重新 **Review bundle → Run**。数据逻辑修改执行 `python scripts/test_runtime.py`；仅文档修改不必重打包。
 4. 验证受影响的交互；改 Agent 时保留一次真实调用验证，改数据处理时验证来源、日期、去重和失败状态。
 5. 交接写清“改了什么、如何运行、实际测了什么、还有什么没做”。只提交有关文件；ZIP、密钥、个人模型配置和私人日程不入库。
 
@@ -140,6 +140,6 @@ Rinx 本地导入、打包、App Hub 准入和正式上架是不同步骤。当�
 | 按钮不存在或权限缺失 | 确认导入本项目最新 bundle，重打包并重新 Review，而不是沿用旧快照 |
 | 测试超时 | 查看按钮反馈并检查模型/服务状态；中断未确认时关闭再打开应用 |
 | Matrix 账户数据 404 | 这不是 Octos 接口错误；用 Test Octos 的具体错误继续排查 |
-| `src/` 改了但界面没变化 | 尚无模块加载/组装流程；当前运行入口是 bundle/main.splash |
+| `src/` 改了但界面没变化 | 重新打包并导入；新增执行文件加入 assemble.py 的 ORDER，运行 --check 检查生成入口 |
 
 2026-09-29：开发者已反馈本机 Test Octos 连通成功；这不代表完整业务 Agent、所有机器或 App Hub 安装路径已验收。每位队友应在自己的环境完成一次测试。
