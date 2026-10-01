@@ -66,7 +66,9 @@ fn feed_build_rows(enabled_ids, complete){
     for id in enabled_ids { if feed_rows_by_source[id] != nil { groups.push(feed_rows_by_source[id]) } }
     let work = {revision: feed_build_revision generation: feed_generation groups: groups group_index: 0 row_index: 0
         rows: [] indexed: {} width: 1 start: 0 left: 0 right: 0 middle: 0 end: 0 next: [] complete: complete}
-    feed_collect_step(work)
+    // First collect step runs on its own budget slice, never inline with the
+    // caller (cache restore / refresh callback), which may already be near 64ms.
+    start_timeout(0.01, || feed_collect_step(work))
 }
 fn feed_work_current(work){ work.revision == feed_build_revision && work.generation == feed_generation }
 fn feed_collect_step(work){
@@ -124,8 +126,14 @@ fn feed_pump(task){
             if feed_accept(source, result, time_now()) { task.successes = task.successes + 1 }
             task.active = task.active - 1
             task.completed = task.completed + 1
-            task.on_update()
-            feed_pump(task)
+            // feed_accept does the heavy parse_feed/normalize/write under this
+            // callback's 64ms budget; yield before rebuilding rows so the merge
+            // never shares the same slice and trips the hard wall budget.
+            start_timeout(0.01, || {
+                if task.generation != feed_generation { return }
+                task.on_update()
+                feed_pump(task)
+            })
         })
     }
     if task.active == 0 && task.next >= task.sources.len() && !task.done {

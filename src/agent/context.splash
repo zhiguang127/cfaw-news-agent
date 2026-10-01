@@ -1,0 +1,66 @@
+// Build the bounded, application-owned snapshot passed to the single Agent.
+// Convert observed Unix seconds to UTC; never invent a missing publication date.
+let analysis_schema_version = 1
+let analysis_prompt_revision = "news-impact-v1"
+let analysis_max_text_chars = 6000
+
+fn analysis_two_digits(value){ if value < 10 { return "0" + value } "" + value }
+fn analysis_four_digits(value){
+    if value < 10 { return "000" + value }
+    if value < 100 { return "00" + value }
+    if value < 1000 { return "0" + value }
+    "" + value
+}
+fn analysis_epoch_rfc3339(seconds){
+    if !record_number(seconds) || seconds <= 0 { return nil }
+    let days = floor(seconds / 86400)
+    let day_seconds = seconds - days * 86400
+    let hour = floor(day_seconds / 3600)
+    let minute = floor((day_seconds - hour * 3600) / 60)
+    let second = day_seconds - hour * 3600 - minute * 60
+    // Civil date conversion in UTC; avoids relying on an unverified host API.
+    let z = days + 719468
+    let era = floor(z / 146097)
+    let doe = z - era * 146097
+    let yoe = floor((doe - floor(doe / 1460) + floor(doe / 36524) - floor(doe / 146096)) / 365)
+    let year = yoe + era * 400
+    let doy = doe - (365 * yoe + floor(yoe / 4) - floor(yoe / 100))
+    let month_part = floor((5 * doy + 2) / 153)
+    let day = doy - floor((153 * month_part + 2) / 5) + 1
+    let month = month_part - 9
+    if month_part < 10 { month = month_part + 3 }
+    let adjusted_year = year
+    if month <= 2 { adjusted_year = year + 1 }
+    analysis_four_digits(adjusted_year) + "-" + analysis_two_digits(month) + "-" + analysis_two_digits(day) + "T" + analysis_two_digits(hour) + ":" + analysis_two_digits(minute) + ":" + analysis_two_digits(second) + "Z"
+}
+
+fn analysis_interest_description(item){
+    if item.kind == "source" { return "关注新闻来源：" + item.value + "（来自用户追踪规则）" }
+    if item.kind == "category" { return "关注新闻主题：" + category_label(item.value) + "（来自用户追踪规则）" }
+    "关注关键词：" + item.value + "（来自用户追踪规则）"
+}
+
+fn analysis_make_snapshot(row){
+    let interests = []
+    for item in user_interests {
+        if item.enabled { interests.push({interest_id: item.interest_id description: analysis_interest_description(item)}) }
+    }
+    let available_text = row.title
+    if row.summary != "" { available_text = available_text + "\n\n" + row.summary }
+    let published = nil
+    if row.published_at != nil { published = analysis_epoch_rfc3339(row.published_at) }
+    let evidence = [{evidence_id: row.news_id source_url: row.source_url text: available_text
+        content_kind: "summary" published_at: published retrieved_at: analysis_epoch_rfc3339(row.retrieved_at)}]
+    let schedules = []
+    for item in user_schedules { schedules.push(item.to_json().parse_json()) }
+    {schema_version: analysis_schema_version request_id: "pending" context_version: 0
+        interests: interests evidence: evidence schedules: schedules previous_decisions: []}
+}
+
+fn analysis_snapshot_text(snapshot){
+    let text = snapshot.to_json()
+    // Conservative character budget: the runtime has no verified UTF-8 byte
+    // counter, and non-ASCII characters can occupy multiple bytes.
+    if text.len() > analysis_max_text_chars { return nil }
+    text
+}

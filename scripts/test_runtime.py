@@ -15,6 +15,7 @@ from assemble import ROOT, ORDER, assemble
 def run():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', type=Path, help='Pinned card-host executable')
+    parser.add_argument('--agent-only', action='store_true', help='Run isolated agent validation tests')
     args = parser.parse_args()
     lock = json.loads((ROOT / 'dev-dependencies.lock.json').read_text())
     checkout = ROOT / next(r['relative_checkout'] for r in lock['repositories'] if r['name'] == 'OctoSense-App-Hub')
@@ -24,10 +25,20 @@ def run():
     work = ROOT / '.test-state' / ('runtime-' + uuid4().hex[:12])
     bundle = work / 'bundle'
     bundle.mkdir(parents=True)
-    source, _ = assemble(paths=ORDER[:8])
-    for name, file in [('fixture_rss', 'news-rss.xml'), ('fixture_atom', 'news-atom.xml'), ('fixture_hn', 'news-hn.json')]:
+    paths = ORDER[:3] + ['src/data/storage/schedules.splash', 'src/agent/context.splash', 'src/agent/history.splash', 'src/agent/results/validator.splash', 'src/agent/results/change.splash'] if args.agent_only else ORDER[:9] + ['src/agent/context.splash', 'src/agent/history.splash', 'src/agent/results/validator.splash', 'src/agent/results/change.splash']
+    source, _ = assemble(paths=paths)
+    for name, file in [('fixture_rss', 'news-rss.xml'), ('fixture_atom', 'news-atom.xml'), ('fixture_hn', 'news-hn.json'),
+                       ('fixture_analysis_no_change', 'analysis-no-change.json'),
+                       ('fixture_analysis_create', 'analysis-create.json'),
+                       ('fixture_analysis_suggestion', 'analysis-suggestion.json'),
+                       ('fixture_analysis_invalid_model_output', 'analysis-invalid-model-output.json')]:
         source += '\nlet ' + name + ' = ' + json.dumps((ROOT / 'tests/fixtures' / file).read_text(encoding='utf-8'), ensure_ascii=False) + '\n'
-    source += (ROOT / 'tests/unit/news_runtime.splash').read_text(encoding='utf-8')
+    source += (ROOT / 'tests/unit/agent_validation.splash').read_text(encoding='utf-8')
+    if args.agent_only:
+        source += '\nHostedView{full: View{Label{text: "Agent fixture tests"}}}\n'
+        source += 'start_timeout(0.05, || { agent_test_validation() start_timeout(0.02, || { agent_test_confirmation() fs.write("runtime-report.json", {passed: agent_validation_passes failed: agent_validation_failures stage: "complete"}.to_json()) }) })\n'
+    else:
+        source += (ROOT / 'tests/unit/news_runtime.splash').read_text(encoding='utf-8')
     (bundle / 'main.splash').write_text(source, encoding='utf-8')
     manifest = json.loads((ROOT / 'bundle/manifest.json').read_text())
     manifest['id'] = 'dev.cfaw.runtime-tests'
@@ -44,7 +55,7 @@ def run():
         startup.wShowWindow = 0
     report_path = work / 'data' / manifest['id'] / 'runtime-report.json'
     with (work / 'host.log').open('w', encoding='utf-8') as log:
-        process = subprocess.Popen([str(host), '--bundle', str(bundle), '--allow-unsigned', '--stamp', '--app-data', str(work / 'data'), '--size', '430x860', '--remote', str(port)], cwd=host.parents[2], stdout=log, stderr=log, startupinfo=startup)
+        process = subprocess.Popen([str(host), '--bundle', str(bundle), '--allow-unsigned', '--stamp', '--app-data', str(work / 'data'), '--remote', str(port)], cwd=host.parents[2], stdout=log, stderr=log, startupinfo=startup)
         try:
             deadline = time.monotonic() + 20
             while time.monotonic() < deadline and process.poll() is None and not report_path.exists():

@@ -35,6 +35,9 @@ that a claim is factually correct or that cited evidence truly supports it.
 
 ## Proposed actions and dates
 
+- During the stage-4 integration, `proposed_action` may be `null`, `create`, or `reschedule`, but never authorizes a write without user confirmation.
+  Non-null actions are rejected as `invalid_schema`; they must not be shown as
+  pending schedule changes.
 - `proposed_action.kind` must be `create` or `reschedule`; its title must be
   non-empty.
 - Action start and end must be valid RFC 3339 timestamps with explicit UTC

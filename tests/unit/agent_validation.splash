@@ -1,0 +1,101 @@
+let agent_validation_passes = 0
+let agent_validation_failures = 0
+fn agent_assert(condition, message){
+    if condition { agent_validation_passes = agent_validation_passes + 1 }
+    else { agent_validation_failures = agent_validation_failures + 1; print("FAIL agent: " + message) }
+}
+fn agent_test_validation(){
+    agent_assert(analysis_epoch_rfc3339(0) == nil, "unknown timestamp")
+    agent_assert(analysis_epoch_rfc3339(86400) == "1970-01-02T00:00:00Z", "UTC date conversion")
+    let no_change = fixture_analysis_no_change.parse_json()
+    let result = analysis_validate_model_text({schema_version: 1 outcome: "no_change" explanation: "No relevant change in the synthetic fixture." suggestions: []}.to_json(), no_change.input)
+    agent_assert(result.valid && result.outcome == "no_change" && result.result.suggestions.len() == 0, "valid no_change")
+
+    let create = fixture_analysis_create.parse_json()
+    result = analysis_validate_model_text(create.model_output.to_json(), create.input)
+    agent_assert(result.valid && result.result.suggestions[0].proposed_action.kind == "create", "create action validated")
+
+    let invalid = fixture_analysis_invalid_model_output.parse_json()
+    result = analysis_validate_model_text(invalid.model_output.to_json(), invalid.input)
+    agent_assert(!result.valid && result.error == "unknown_reference", "unknown reference")
+
+    let positive = fixture_analysis_suggestion.parse_json()
+    let suggestion = {interest_ids: ["interest-ai-agents"] evidence_ids: ["evidence-fixture-release-001"]
+        schedule_id: nil schedule_version: nil change_summary: "Review this fictional update"
+        rationale: "The synthetic summary matches the tracked topic" uncertainties: ["Only a summary is available"] proposed_action: nil}
+    result = analysis_validate_model_text({schema_version: 1 outcome: "suggestions" explanation: "Synthetic suggestion for fixture validation" suggestions: [suggestion]}.to_json(), positive.input)
+    agent_assert(result.valid && result.outcome == "suggestions", "valid evidence-backed suggestion")
+
+    result = analysis_validate_model_text("not-json", no_change.input)
+    agent_assert(!result.valid && result.error == "invalid_json", "invalid JSON")
+    result = analysis_validate_model_text("{\"schema_version\":1,\"outcome\":\"no_change\"}", no_change.input)
+    agent_assert(!result.valid && result.error == "invalid_schema", "missing result fields")
+    result = analysis_validate_model_text("{\"schema_version\":1,\"outcome\":\"no_change\",\"explanation\":\"ok\",\"suggestions\":{}}", no_change.input)
+    agent_assert(!result.valid && result.error == "invalid_schema", "wrong suggestions type")
+
+    let key_a = analysis_suggestion_key({interest_ids: ["a" "b"] evidence_ids: ["e1" "e2"] schedule_id: nil schedule_version: nil proposed_action: nil})
+    let key_b = analysis_suggestion_key({interest_ids: ["a" "b"] evidence_ids: ["e1" "e2"] schedule_id: nil schedule_version: nil proposed_action: nil})
+    agent_assert(key_a == key_b, "stable deduplication key")
+    let previous = {state: "dismissed" evidence_ids: ["e1"] schedule_version: nil deduplication_key: key_a}
+    let current = {interest_ids: ["a"] evidence_ids: ["e1"] schedule_id: nil schedule_version: nil proposed_action: nil}
+    agent_assert(analysis_should_reconsider(previous, current, nil).state == "suppressed", "dismissed suppression")
+    previous.state = "pending"
+    current.evidence_ids = ["e1" "e2"]
+    agent_assert(analysis_should_reconsider(previous, current, nil).state == "superseded", "pending supersession")
+    agent_assert(history_valid_state("accepted") && history_valid_state("dismissed") && history_valid_state("withdrawn"), "history lifecycle states")
+    agent_assert(!history_valid_state("unknown"), "reject unknown lifecycle state")
+    let version_a = history_evidence_version({news_id: "https://example.invalid/item" title: "Title" summary: "Old summary" retrieved_at: 10})
+    let version_b = history_evidence_version({news_id: "https://example.invalid/item" title: "Title" summary: "New summary" retrieved_at: 11})
+    agent_assert(version_a.evidence_id == version_b.evidence_id && version_a.content_hash != version_b.content_hash, "same-link content versioning")
+    user_schedules = []
+    let created = schedule_create("Demo review", "2026-10-03T09:00:00+08:00", "2026-10-03T10:00:00+08:00", "Asia/Shanghai", nil)
+    agent_assert(created.success, "schedule create")
+    let conflict = schedule_create("Overlapping review", "2026-10-03T09:30:00+08:00", "2026-10-03T10:30:00+08:00", "Asia/Shanghai", nil)
+    agent_assert(!conflict.success && conflict.error == "Schedule conflict", "schedule conflict check")
+    let stale = schedule_update(created.item.schedule_id, 0, "Changed", "2026-10-03T11:00:00+08:00", "2026-10-03T12:00:00+08:00", "Asia/Shanghai", nil)
+    agent_assert(!stale.success && stale.stale == true, "schedule version recheck")
+    let updated = schedule_update(created.item.schedule_id, 1, "Changed", "2026-10-03T11:00:00+08:00", "2026-10-03T12:00:00+08:00", "Asia/Shanghai", nil)
+    agent_assert(updated.success && updated.item.version == 2, "schedule edit increments version")
+    let offset_overlap = schedule_create("UTC overlap", "2026-10-03T03:30:00Z", "2026-10-03T04:30:00Z", "UTC", nil)
+    agent_assert(!offset_overlap.success && offset_overlap.conflicts.len() > 0, "offset-equivalent conflict")
+    let unique = schedule_create("Confirmed proposal", "2026-10-04T09:00:00+08:00", "2026-10-04T10:00:00+08:00", "Asia/Shanghai", "suggestion-fixture-1")
+    let duplicate = schedule_create("Confirmed proposal", "2026-10-04T09:00:00+08:00", "2026-10-04T10:00:00+08:00", "Asia/Shanghai", "suggestion-fixture-1")
+    agent_assert(unique.success && duplicate.success && duplicate.idempotent && user_schedules.len() == 2, "duplicate create confirmation idempotent")
+    let proposed = schedule_update(created.item.schedule_id, 2, "Proposed change", "2026-10-05T11:00:00+08:00", "2026-10-05T12:00:00+08:00", "Asia/Shanghai", "suggestion-fixture-2")
+    let replay = schedule_update(created.item.schedule_id, 2, "Proposed change", "2026-10-05T11:00:00+08:00", "2026-10-05T12:00:00+08:00", "Asia/Shanghai", "suggestion-fixture-2")
+    agent_assert(proposed.success && replay.success && replay.idempotent && replay.item.version == 3, "duplicate reschedule confirmation idempotent")
+    schedules_load()
+    agent_assert(user_schedules.len() == 2 && schedule_find(created.item.schedule_id).version == 3, "schedule reload persistence")
+}
+fn agent_test_confirmation(){
+    let action = {kind: "create" title: "User confirmed" start: "2026-10-06T13:00:00+08:00" end: "2026-10-06T14:00:00+08:00" timezone: "Asia/Shanghai"}
+    suggestion_history = [{suggestion_id: "confirm-fixture" deduplication_key: "fixture" state: "pending" created_at: 1
+        analysis_id: "analysis-fixture" news_id: "fixture" interest_ids: ["interest"] evidence_ids: ["evidence"]
+        evidence_versions: [] schedule_id: nil schedule_version: nil change_summary: "Fixture" rationale: "Fixture"
+        uncertainties: [] proposed_action: action decision_reason: "fixture" applied_key: nil}]
+    agent_assert(history_write(suggestion_history_file, suggestion_history, "suggestion") == "", "persist pending proposal")
+    let count_before = user_schedules.len()
+    let confirmed = history_confirm_suggestion("confirm-fixture")
+    agent_assert(confirmed.success && user_schedules.len() == count_before + 1 && suggestion_history[0].state == "accepted", "confirmed action and decision saved")
+    let again = history_confirm_suggestion("confirm-fixture")
+    agent_assert(again.success && again.idempotent && user_schedules.len() == count_before + 1, "duplicate confirmation unchanged")
+    history_load() schedules_load()
+    agent_assert(suggestion_history[0].state == "accepted" && user_schedules.len() == count_before + 1, "confirmation survives restart")
+    suggestion_history[0].state = "pending"
+    history_write(suggestion_history_file, suggestion_history, "suggestion")
+    analysis_history_file.writable = false
+    let failed_history = history_confirm_suggestion("confirm-fixture")
+    agent_assert(!failed_history.success && suggestion_history[0].state == "pending" && user_schedules.len() == count_before + 1, "failed decision write does not duplicate schedule")
+    analysis_history_file.writable = true
+    let recovered_confirm = history_confirm_suggestion("confirm-fixture")
+    agent_assert(recovered_confirm.success && user_schedules.len() == count_before + 1, "retry recovers decision without second action")
+    let versioned_id = user_schedules[0].schedule_id
+    let version_before = user_schedules[0].version
+    let stale_proposal = schedule_update(versioned_id, 0, "Wrong version", "2026-10-08T09:00:00+08:00", "2026-10-08T10:00:00+08:00", "Asia/Shanghai", "stale-fixture")
+    agent_assert(!stale_proposal.success && stale_proposal.stale && schedule_find(versioned_id).version == version_before, "stale reschedule leaves entry unchanged")
+    schedule_file.writable = false
+    let before_count = user_schedules.len()
+    let refused = schedule_create("Read-only", "2026-10-09T09:00:00+08:00", "2026-10-09T10:00:00+08:00", "Asia/Shanghai", nil)
+    agent_assert(!refused.success && user_schedules.len() == before_count, "read-only storage refuses schedule write")
+    schedule_file.writable = true
+}

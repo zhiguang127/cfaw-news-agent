@@ -10,6 +10,10 @@ fn set_octos_message(text){
 // Uses the assistant selected in Rinx, never a model endpoint or app-owned key.
 fn test_octos(){
     if octos_testing { return }
+    if analysis_busy || analysis_needs_reopen {
+        set_octos_message("An analysis is active or its interruption was not confirmed. Finish it or reopen the app before testing Octos.")
+        return
+    }
     if !host.has("octos.session.open") || !host.has("octos.turn.start") || !host.has("octos.turn.interrupt") {
         set_octos_message("Octos permissions missing. Review the updated bundle and run it again.")
         return

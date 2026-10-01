@@ -10,6 +10,13 @@ let busy = false
 let app_feed_rows = []
 let visible_limit = 40
 let display_rows = []
+let schedule_edit_id = nil
+let schedule_edit_version = nil
+let schedule_title_draft = ""
+let schedule_start_draft = ""
+let schedule_end_draft = ""
+let schedule_timezone_draft = "UTC"
+let schedule_confirmation_id = nil
 let category_filters = [{id: "all" label: "全部"} {id: "tech" label: "科技"}
     {id: "ai" label: "AI"} {id: "world" label: "国际"} {id: "finance" label: "财经"} {id: "china" label: "中文"}]
 fn age_label(seconds){
@@ -49,6 +56,7 @@ fn source_status_text(source){
     text
 }
 fn row_cache_note(row){
+    if row["demo_data"] == true { return "演示缓存 · 非实时新闻" }
     if page == "saved" { return "收藏快照" }
     let status = feed_status_by_source[row.source_id]
     if status == nil { return "" }
@@ -135,6 +143,49 @@ fn select_page(id){
     ui.detail_pane.set_visible(false)
     ui.main.set_visible(true)
     render_main()
+    if id == "schedule" { ui.schedule_list.render() ui.schedule_editor.render() }
+}
+fn schedule_begin_new(){
+    schedule_edit_id = nil schedule_edit_version = nil
+    schedule_title_draft = "" schedule_start_draft = "" schedule_end_draft = "" schedule_timezone_draft = "UTC"
+    ui.schedule_title_input.set_text("") ui.schedule_start_input.set_text("")
+    ui.schedule_end_input.set_text("") ui.schedule_timezone_input.set_text("UTC")
+    ui.schedule_editor.render()
+}
+fn schedule_begin_edit(id){
+    let item = schedule_find(id)
+    if item == nil { notice("找不到日程，请刷新") return }
+    schedule_edit_id = id schedule_edit_version = item.version
+    schedule_title_draft = item.title schedule_start_draft = item.start schedule_end_draft = item.end schedule_timezone_draft = item.timezone
+    ui.schedule_title_input.set_text(item.title) ui.schedule_start_input.set_text(item.start)
+    ui.schedule_end_input.set_text(item.end) ui.schedule_timezone_input.set_text(item.timezone)
+    ui.schedule_editor.render()
+}
+fn schedule_save_draft(){
+    let result = nil
+    if schedule_edit_id == nil { result = schedule_create(schedule_title_draft, schedule_start_draft, schedule_end_draft, schedule_timezone_draft, nil) }
+    else { result = schedule_update(schedule_edit_id, schedule_edit_version, schedule_title_draft, schedule_start_draft, schedule_end_draft, schedule_timezone_draft, nil) }
+    if !result.success { notice(result.error) return }
+    notice("日程已保存（版本 " + result.item.version + "）")
+    schedule_edit_id = result.item.schedule_id schedule_edit_version = result.item.version
+    ui.schedule_list.render() ui.schedule_editor.render()
+}
+fn schedule_begin_confirm(id){
+    let item = history_find_suggestion(id)
+    if item == nil || item.state != "pending" { notice("建议已变化，请刷新详情") return }
+    schedule_confirmation_id = id
+    ui.story_content.render()
+}
+fn schedule_cancel_confirm(){ schedule_confirmation_id = nil ui.story_content.render() }
+fn schedule_confirm(){
+    if schedule_confirmation_id == nil { return }
+    let result = history_confirm_suggestion(schedule_confirmation_id)
+    if result.success {
+        schedule_confirmation_id = nil
+        notice("已确认；日程与建议状态已保存")
+        ui.schedule_list.render()
+    } else { notice(result.error) }
+    ui.story_content.render()
 }
 fn pick_filter(followed){ related_only = followed visible_limit = 40 ui.filters.render() render_feed() }
 fn pick_category(id){ category = id visible_limit = 40 ui.categories.render() render_feed() }
@@ -163,6 +214,21 @@ fn refresh(){
         })
     }, news_http_request)
     sync_status()
+}
+fn analyze_changes(){
+    if analysis_batch_busy { notice("变化分析正在进行，请等待完成。") return }
+    analysis_batch_rows = history_changed_rows(app_feed_rows)
+    if analysis_batch_rows.len() == 0 { notice("没有检测到尚未分析或内容已更新的新闻。") return }
+    analysis_batch_busy = true analysis_batch_index = 0 analysis_batch_done = 0
+    notice("开始分析本次变化：" + analysis_batch_rows.len() + " 条")
+    analysis_batch_next()
+}
+fn analysis_batch_next(){
+    if !analysis_batch_busy { return }
+    if analysis_batch_index >= analysis_batch_rows.len() { analysis_batch_busy = false notice("本次变化分析完成：" + analysis_batch_done + " 条") return }
+    let row = analysis_batch_rows[analysis_batch_index]
+    analysis_batch_index = analysis_batch_index + 1
+    analysis_start(row)
 }
 fn toggle_follow(row){
     let error = ""
@@ -196,10 +262,20 @@ fn show_detail(kind, title){
     render_detail()
 }
 fn open_story(row){
+    schedule_confirmation_id = nil
+    analysis_result = nil
+    analysis_state = "idle"
     reading = row
     let error = records_mark_read(row.news_id)
     notice(error)
     show_detail("story", "新闻详情")
+}
+fn update_suggestion_state(id, state){
+    if state == "accepted" { schedule_begin_confirm(id) return }
+    let error = history_update_suggestion_state(id, state)
+    if error != "" { notice(error) }
+    else { notice("建议状态已更新：" + history_state_label(state)) }
+    if detail_kind == "story" { ui.story_content.render() }
 }
 fn close_detail(){
     detail_kind = ""
