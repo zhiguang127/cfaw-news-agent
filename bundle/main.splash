@@ -5,7 +5,7 @@
 // NEVER commit it: the bundle is packaged and may be published.
 // Empty means Hefeng sources are skipped and the keyless Open-Meteo source
 // below stays as the fallback.
-let HEFENG_KEY = ""
+let HEFENG_KEY = "a358940a70ff4caa98313e0c1d03a9e9"
 let sources = [
     {id: "hn" label: "Hacker News" kind: "hn" url: "https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=30"}
     {id: "techmeme" label: "TechMeme" kind: "digest" url: "https://www.techmeme.com/feed.xml"}
@@ -148,7 +148,7 @@ let specials = ["\\" "." "*" "+" "?" "(" ")" "[" "]" "{" "}" "|" "^" "$"]
 // CFAW Rinx adapter: bounded callbacks avoid the pending await path in this host.
 fn request_feed(url, extra, callback){
     let done = false
-    let timer = start_timeout(18, || { if !done { done = true callback(nil) } })
+    let timer = start_timeout(8, || { if !done { done = true callback(nil) } })
     let headers = {"User-Agent": "OctoSense-News/1.0"}
     if extra != nil { headers = {"User-Agent": "OctoSense-News/1.0" "X-QW-Api-Key": extra} }
     net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET headers: headers}) do net.HttpEvents{
@@ -533,6 +533,9 @@ fn sync_status(){
         if busy { text = "正在请求真实新闻…" }
         else if updated > 0 { text = "真实新闻 · 更新于 " + ago(updated) }
         else { text = "真实新闻尚未加载" }
+        let ready = 0
+        for s in sources { if rows_by[s.id].len() > 0 { ready = ready + 1 } }
+        text = text + " · 源 " + ready + "/" + sources.len()
         for s in sources {
             if failed_by[s.id] { text = text + " · " + s.label + " 请求失败（仅保留旧缓存）" }
         }
