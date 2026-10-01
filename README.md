@@ -44,6 +44,7 @@ cfaw-news-agent/
 ├── .gitignore
 ├── docs/
 │   ├── TEAM_GUIDE.md              # 队友上手、目录分工与联调
+│   ├── windows-development.md    # Windows 本地环境与已验证的运行边界
 │   ├── fixture-expectations.md    # 固定样例 expected 字段契约
 │   └── agent-a-interface.md       # Agent A runtime 接口交接
 ├── src/
@@ -68,7 +69,9 @@ cfaw-news-agent/
 ├── scripts/
 │   ├── assemble.py                # 分层源码组装及源行映射
 │   ├── test_runtime.py            # 隔离存储下执行实际 OctoScript 数据测试
-│   └── package.py                 # 组装、摘要刷新与 ZIP 打包
+│   ├── package.py                 # 组装、摘要刷新与 ZIP 打包
+│   ├── stage_windows_resources.ps1 # 将宿主资源放到二进制旁
+│   └── run_windows.ps1            # 启动已准备的 Windows 参考宿主或 Rinx
 ├── tests/
 │   ├── fixtures/                  # 明确标注的固定样例
 │   ├── unit/                      # 数据处理、检索、接口约定等检查
@@ -177,6 +180,22 @@ cargo run --locked --release --features agent_chat
 本项目使用 **Rinx 自带、由 Rinx 管理的本地 Octos**，无需另外启动 HTTP 服务。模型字段与密钥的填写步骤见下方“配置 Rinx 自带 Octos 并测试”。`agent_chat` 构建特性不等同于 mini-app 的 `octos.*` 权限；完成环境准备也不会让当前应用自动具备新闻分析能力。
 
 开发者已于 2026-09-29 反馈本机 Test Octos 连通成功；尚未完成完整业务验收。后续联调至少验证：服务可用、真实分析返回、取消、服务不可用、非法结果及旧响应丢弃；随后再验证新闻变化与日程确认闭环。
+
+### Windows 本地运行
+
+Windows 环境与固定版本构建步骤见 [Windows 开发说明](docs/windows-development.md)。已准备的工具放在项目相邻的 `../demo-workspace/vendor/` 中，与依赖锁中的相对路径一致；在本项目根目录可直接执行：
+
+```powershell
+# 启动真实新闻界面；无需 Matrix 或模型密钥
+powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1
+
+# 启动官方 Rinx，登录后按下方步骤导入 bundle
+powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1 -Mode Rinx
+```
+
+脚本核对宿主检出的固定提交、重新打包，再打开可交互窗口；不下载或编译工具。参考宿主的数据保存在 `.local-state/windows-preview/`，Rinx 的数据和缓存默认保存在 `.local-state/rinx/`；已设置 `RINX_DATA_DIR` 或 `ROBRIX_DATA_DIR` 时沿用该配置。直接运行 `rinx.exe` 会使用宿主自身的默认数据目录，建议通过脚本启动以沿用迁移后的登录状态。使用其他开发依赖目录时传入 `-DevRoot`。
+
+2026-10-01：Windows 上已准备固定版本 Rinx、hub、card-host 和 Rinx 配套 Octos。第一版在参考 card-host 中显示 205 条真实新闻，12 个默认来源中 11 个成功，VentureBeat 返回 429。430×860 与 360×860 布局、收藏与三条来源/主题/关键词规则重启恢复、搜索、新消息打开后已读和来源切换保存通过；43 项实际 OctoScript 数据检查与 4 项组装检查通过，包括 17 个来源的批量合并。宿主每次回调限制 64 ms，缓存恢复和排序分批执行，关键词匹配器复用，页面每次渲染只筛选一次。曾导致全部抓取失败的自定义 `User-Agent` 已移除。参考宿主依赖与 Rinx 的依赖不同；本版仍需在实际 Rinx 中完成导入与完整 UI 验收。
 
 ### 2. 打包当前应用
 
