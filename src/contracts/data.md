@@ -146,8 +146,26 @@ Five city forecasts are fetched as separate sources and merged by
 `weather_all_rows()` into one 出行天气 tab, grouped by city then day.
 `today_rows()` skips weather sources so the interleaved Today feed stays news.
 
+### Tracked cities
+
+`cities` in `bundle/main.splash` is the single source of truth:
+
+```text
+["全部" "北京" "上海" "广州" "成都" "三亚"]
+```
+
+`全部` means every tracked city. `city_sel` holds the current selection and
+`weather_city_rows()` filters on `source.city`. The filter row is only shown on
+the 出行天气 tab in live mode.
+
+Frontend: build a real city picker on this list. The natural end state is a
+picker driven by schedule locations (`schedules[].location`), so the forecast
+cities follow the user's trips instead of a fixed set; that is a contract
+change and needs agreement, not a local edit.
+
 Adding a source means adding its id to `sources`, to `tabs`, to both `rows_by`
-and `failed_by`, and to the manifest host allowlist.
+and `failed_by`, and to the manifest host allowlist. Adding a city also means
+adding it to `cities`.
 
 ## Runtime constraints that shaped this
 

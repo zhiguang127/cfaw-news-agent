@@ -470,6 +470,32 @@ fn weather_all_rows(){
     out
 }
 
+// Cities the app tracks forecasts for. Kept in one place so the filter row,
+// the data contract and a future schedule-driven picker agree on the list.
+let cities = ["全部" "北京" "上海" "广州" "成都" "三亚"]
+let city_sel = "全部"
+
+// Forecast rows for the selected city only. "全部" keeps every city so a
+// multi-stop trip still reads top to bottom.
+fn weather_city_rows(){
+    let out = []
+    for s in sources {
+        if s.kind != "weather" { continue }
+        if city_sel != "全部" && s.city != city_sel { continue }
+        let rows = rows_by[s.id]
+        for i in 7 {
+            if i < rows.len() { out.push(rows[i]) }
+        }
+    }
+    out
+}
+
+fn pick_city(name){
+    city_sel = name
+    ui.city_row.render()
+    render_feed()
+}
+
 // News only. Weather sources are excluded so five city forecasts cannot
 // crowd the interleaved Today feed; they have their own tab.
 fn today_rows(){
@@ -601,7 +627,7 @@ fn visible_rows(){
     if demo_mode { rows = demo_rows }
     else if page == "saved" { rows = saved }
     else if tab == "today" { rows = today_rows() }
-    else if tab == "weather_all" { rows = weather_all_rows() }
+    else if tab == "weather_all" { rows = weather_city_rows() }
     else { rows = rows_by[tab] }
     let out = []
     let re = regex(escape(query), "i")
@@ -712,6 +738,7 @@ fn render_main(){
     ui.tile_list.render()
     // render reapplies declaration properties; visibility must be set afterward.
     ui.tabbar.set_visible(page == "feed")
+    ui.city_row.set_visible(page == "feed" && !demo_mode && tab == "weather_all")
     ui.search_box.set_visible(page != "schedule")
     ui.feed_list.set_visible(page != "schedule")
     ui.schedule_page.set_visible(page == "schedule")
@@ -741,7 +768,9 @@ fn pick(id){
     if demo_mode { related_only = id == "related" }
     else { tab = id }
     ui.tabbar.render()
+    ui.city_row.render()
     render_feed()
+    ui.city_row.set_visible(page == "feed" && !demo_mode && tab == "weather_all")
     sync_status()
 }
 fn set_query(text){
@@ -940,6 +969,12 @@ HostedView{width: Fill height: Fill
                 }
             }}
             page_note := Small{visible: false text: "" padding: Inset{left: 18 right: 18 top: 14 bottom: 8}}
+            city_row := View{visible: false width: Fill height: 40 flow: Right padding: Inset{left: 12 right: 12 bottom: 4} spacing: 4 on_render: || {
+                for c in cities {
+                    if c == city_sel { FilterActive{text: c on_click: || pick_city(c)} }
+                    else { Filter{text: c on_click: || pick_city(c)} }
+                }
+            }}
             search_box := View{width: Fill height: Fit padding: Inset{left: 18 right: 18 top: 4 bottom: 8}
                 search := Search{on_change: |text| set_query(text)}
             }
