@@ -13,6 +13,7 @@ let sources = [
     {id: "weather" label: "北京天气" kind: "weather" city: "北京" url: "https://api.open-meteo.com/v1/forecast?latitude=39.9042&longitude=116.4074&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=7&timezone=Asia%2FShanghai"}
     {id: "hefeng" label: "和风逐小时" kind: "hefeng" city: "北京" needs_key: true url: "https://nb73jtmvn7.re.qweatherapi.com/v7/weather/24h?location=101010100"}
     {id: "hefeng_warn" label: "天气预警" kind: "hefeng_warn" city: "北京" needs_key: true url: "https://nb73jtmvn7.re.qweatherapi.com/weatheralert/v1/current/39.90/116.40?localTime=true"}
+    {id: "airchina" label: "国航" kind: "digest" url: "https://www.airchinagroup.com/cnah/include/xwzx/news_rss.xml"}
 ]
 let tabs = [
     {id: "today" label: "Today"}
@@ -22,10 +23,11 @@ let tabs = [
     {id: "weather" label: "天气"}
     {id: "hefeng" label: "和风"}
     {id: "hefeng_warn" label: "预警"}
+    {id: "airchina" label: "国航"}
     {id: "saved" label: "Saved"}
 ]
-let rows_by = {hn: [] techmeme: [] google: [] weather: [] hefeng: [] hefeng_warn: []}
-let failed_by = {hn: false techmeme: false google: false weather: false hefeng: false hefeng_warn: false}
+let rows_by = {hn: [] techmeme: [] google: [] weather: [] hefeng: [] hefeng_warn: [] airchina: []}
+let failed_by = {hn: false techmeme: false google: false weather: false hefeng: false hefeng_warn: false airchina: false}
 let saved = []
 let tab = "today"
 let query = ""

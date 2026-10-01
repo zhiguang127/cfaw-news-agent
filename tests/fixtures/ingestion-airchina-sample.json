@@ -1,0 +1,22 @@
+{
+  "_note": "Ingestion sample for the Air China source (branch feat/ingestion-weather). Real RSS entries, UTF-8. pubDate has no timezone, parse as Asia/Shanghai. Descriptions are full-length summaries usable as evidence text.",
+  "source_id": "airchina",
+  "endpoint": "https://www.airchinagroup.com/cnah/include/xwzx/news_rss.xml",
+  "fetched_at": "2026-10-01T09:00:00+08:00",
+  "rows": [
+    {
+      "title": "中航集团亮相第四届中国航协（CATA）航空大会  多领域数智化创新成果集中展示",
+      "link": "http://www.airchinagroup.com/cnah/xwzx/zhxw/09/703527.shtml",
+      "source": "国航",
+      "published": "2026-09-18 10:14:11",
+      "summary": "全文摘要见原文链接（约1000字）。"
+    },
+    {
+      "title": "中航集团在第九届中央企业QC小组成果发表赛中首获一等奖",
+      "link": "http://www.airchinagroup.com/cnah/xwzx/zhxw/09/703470.shtml",
+      "source": "国航",
+      "published": "2026-09-17 11:00:10",
+      "summary": "全文摘要见原文链接（约500字）。"
+    }
+  ]
+}
