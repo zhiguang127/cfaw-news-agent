@@ -732,6 +732,7 @@ fn render_main(){
     if page == "schedule" { text = "应用内日程 · MOCK 示例" }
     ui.page_note.set_text(text)
     ui.tabbar.render()
+    ui.city_row.render()
     ui.navigation.render()
     render_feed()
     sync_schedule()
