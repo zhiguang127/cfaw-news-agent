@@ -15,6 +15,10 @@ let sources = [
     {id: "google" label: "Google News" kind: "google" city: "" needs_key: false url: "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"}
     {id: "airchina" label: "国航" kind: "digest" city: "" needs_key: false url: "https://www.airchinagroup.com/cnah/include/xwzx/news_rss.xml"}
     {id: "weather" label: "北京天气" kind: "weather" city: "北京" needs_key: false url: "https://api.open-meteo.com/v1/forecast?latitude=39.9042&longitude=116.4074&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=7&timezone=Asia%2FShanghai"}
+    {id: "weather_sh" label: "上海天气" kind: "weather" city: "上海" needs_key: false url: "https://api.open-meteo.com/v1/forecast?latitude=31.2304&longitude=121.4737&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=7&timezone=Asia%2FShanghai"}
+    {id: "weather_gz" label: "广州天气" kind: "weather" city: "广州" needs_key: false url: "https://api.open-meteo.com/v1/forecast?latitude=23.1291&longitude=113.2644&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=7&timezone=Asia%2FShanghai"}
+    {id: "weather_cd" label: "成都天气" kind: "weather" city: "成都" needs_key: false url: "https://api.open-meteo.com/v1/forecast?latitude=30.5728&longitude=104.0668&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=7&timezone=Asia%2FShanghai"}
+    {id: "weather_sy" label: "三亚天气" kind: "weather" city: "三亚" needs_key: false url: "https://api.open-meteo.com/v1/forecast?latitude=18.2528&longitude=109.5119&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=7&timezone=Asia%2FShanghai"}
     {id: "hefeng" label: "和风逐小时" kind: "hefeng" city: "北京" needs_key: true url: "https://nb73jtmvn7.re.qweatherapi.com/v7/weather/24h?location=101010100"}
     {id: "hefeng_warn" label: "天气预警" kind: "hefeng_warn" city: "北京" needs_key: true url: "https://nb73jtmvn7.re.qweatherapi.com/weatheralert/v1/current/39.90/116.40?localTime=true"}
 ]
@@ -23,14 +27,16 @@ let tabs = [
     {id: "hn" label: "HN"}
     {id: "techmeme" label: "TechMeme"}
     {id: "google" label: "Google"}
-    {id: "weather" label: "天气"}
+    {id: "weather_all" label: "出行天气"}
     {id: "hefeng" label: "和风"}
     {id: "hefeng_warn" label: "预警"}
     {id: "airchina" label: "国航"}
     {id: "saved" label: "Saved"}
 ]
-let rows_by = {hn: [] techmeme: [] google: [] weather: [] hefeng: [] hefeng_warn: [] airchina: []}
-let failed_by = {hn: false techmeme: false google: false weather: false hefeng: false hefeng_warn: false airchina: false}
+// Every source id must appear in both maps: reading a key the map does not
+// declare yields nil, and a nil has no len().
+let rows_by = {hn: [] techmeme: [] google: [] airchina: [] weather: [] weather_sh: [] weather_gz: [] weather_cd: [] weather_sy: [] hefeng: [] hefeng_warn: []}
+let failed_by = {hn: false techmeme: false google: false airchina: false weather: false weather_sh: false weather_gz: false weather_cd: false weather_sy: false hefeng: false hefeng_warn: false}
 let saved = []
 let tab = "today"
 let query = ""
@@ -449,10 +455,28 @@ fn load_state(){
 
 
 // Keep the original news sources and local bookmarks available in live mode.
+// All weather sources in one list, grouped by city then day, so a trip with
+// several stops reads top to bottom. Rows already carry city in the title and
+// the forecast day in `day`.
+fn weather_all_rows(){
+    let out = []
+    for s in sources {
+        if s.kind != "weather" { continue }
+        let rows = rows_by[s.id]
+        for i in 7 {
+            if i < rows.len() { out.push(rows[i]) }
+        }
+    }
+    out
+}
+
+// News only. Weather sources are excluded so five city forecasts cannot
+// crowd the interleaved Today feed; they have their own tab.
 fn today_rows(){
     let out = []
     for i in 30 {
         for s in sources {
+            if s.kind == "weather" { continue }
             let rows = rows_by[s.id]
             if i < rows.len() { out.push(rows[i]) }
         }
@@ -577,6 +601,7 @@ fn visible_rows(){
     if demo_mode { rows = demo_rows }
     else if page == "saved" { rows = saved }
     else if tab == "today" { rows = today_rows() }
+    else if tab == "weather_all" { rows = weather_all_rows() }
     else { rows = rows_by[tab] }
     let out = []
     let re = regex(escape(query), "i")

@@ -129,6 +129,26 @@ Degradation chain once those exist: `hybrid` → `keyword` → `fallback_recent`
 empty. Any step down sets `degraded: true`, and the flag travels with the
 evidence so the model never mistakes "not retrieved" for "nothing happened".
 
+## Sources
+
+| id | label | kind | needs key |
+| --- | --- | --- | --- |
+| `hn` | Hacker News | json (Algolia) | no |
+| `techmeme` | TechMeme | digest | no |
+| `google` | Google News (en-US) | rss | no |
+| `airchina` | 国航 | rss | no |
+| `weather` | 北京天气 | weather | no |
+| `weather_sh` `weather_gz` `weather_cd` `weather_sy` | 上海 / 广州 / 成都 / 三亚天气 | weather | no |
+| `hefeng` | 和风逐小时 | hefeng | **yes** |
+| `hefeng_warn` | 天气预警 | hefeng | **yes** |
+
+Five city forecasts are fetched as separate sources and merged by
+`weather_all_rows()` into one 出行天气 tab, grouped by city then day.
+`today_rows()` skips weather sources so the interleaved Today feed stays news.
+
+Adding a source means adding its id to `sources`, to `tabs`, to both `rows_by`
+and `failed_by`, and to the manifest host allowlist.
+
 ## Runtime constraints that shaped this
 
 The splash runtime's real method surface is small. Verified from
@@ -148,7 +168,10 @@ Two further runtime rules found the hard way:
 
 1. Reading a field a record does not declare is a **runtime error**, not `nil`.
    Every record must declare the same field set.
-2. `octoscript check` is stricter than the splash runtime and reports false
+2. The same holds for maps: a key absent from `rows_by` / `failed_by` reads as
+   `nil`, and `nil` has no `len()`. Adding a source means adding its id to the
+   `sources` list **and** to both maps, or the feed dies on the first fetch.
+3. `octoscript check` is stricter than the splash runtime and reports false
    positives for Makepad extensions (`#x` colors, `+:`, two-variable `for`).
    It also rejects `.len()` on strings, which the runtime accepts. Use it for
    syntax only, and confirm behavior with `card-host`.
