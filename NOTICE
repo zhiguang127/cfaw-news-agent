@@ -28,3 +28,12 @@ Changes: Rinx callback requests/timeouts, empty-state rendering, feed-summary
 reader, standalone app identity and minimal local-import packaging.
 This repository does not include the wallpaper or window-manager assets
 mentioned in the original upstream notice above.
+
+Public source catalog reference
+-------------------------------
+News feed URLs and source choices were cross-checked against World Monitor
+(https://github.com/koala73/worldmonitor), particularly src/config/feeds.ts
+and server/worldmonitor/news/v1/_feeds.ts. No World Monitor implementation
+code is incorporated. Application ingestion and storage are implemented here.
+Article content remains attributable to its original publishers; the app
+retains source links and displays feed summaries, not complete articles.

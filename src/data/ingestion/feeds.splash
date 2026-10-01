@@ -1,0 +1,153 @@
+// One owner for cache/status and refresh generation. No widget access.
+let feed_rows_by_source = {}
+let feed_status_by_source = {}
+let feed_generation = 0
+let feed_task = nil
+let feed_build_revision = 0
+
+fn feed_cache_valid(value, source){
+    if !record_object(value) || value.schema_version != 1 || value.source_id != source.id || !record_number(value.retrieved_at) || !record_array(value.items) { return false }
+    for row in value.items { if !news_record_valid(row) || row.source_id != source.id { return false } }
+    value.items.len() <= news_config.items_per_source
+}
+fn feed_initialize(){
+    for source in news_sources {
+        feed_rows_by_source[source.id] = []
+        feed_status_by_source[source.id] = {state: "not_loaded" retrieved_at: 0 error: "" count: 0}
+    }
+}
+fn feed_read_cache(source){
+    let path = "news_cache_v1_" + source.id + ".json"
+    try {
+        if fs.exists(path) {
+            let cached = fs.read(path).parse_json()
+            if feed_cache_valid(cached, source) {
+                feed_rows_by_source[source.id] = cached.items
+                feed_status_by_source[source.id] = {state: "cached" retrieved_at: cached.retrieved_at error: "" count: cached.items.len()}
+            } else { feed_status_by_source[source.id].error = "缓存格式无效，等待重新获取" }
+        }
+    } { feed_status_by_source[source.id].error = "缓存读取失败" }
+}
+fn feed_load_cache(){
+    feed_initialize()
+    for source in news_sources { feed_read_cache(source) }
+}
+fn feed_restore_cache(index, generation, complete){
+    // Each native entry has a 64 ms wall budget. Yield between source files.
+    if generation != feed_generation { return }
+    if index >= news_sources.len() { complete() return }
+    feed_read_cache(news_sources[index])
+    start_timeout(0.01, || feed_restore_cache(index + 1, generation, complete))
+}
+fn feed_all_rows(enabled_ids){
+    let groups = []
+    for id in enabled_ids { if feed_rows_by_source[id] != nil { groups.push(feed_rows_by_source[id]) } }
+    news_merge(groups)
+}
+fn feed_accept(source, result, retrieved_at){
+    let status = feed_status_by_source[source.id]
+    if !result.success { status.state = "error" status.error = result.error return false }
+    let rows = nil
+    try { rows = news_parse(result.body, source, retrieved_at) } { rows = nil }
+    if rows == nil { status.state = "error" status.error = "响应不是可解析的 RSS/Atom 或新闻 JSON" return false }
+    feed_rows_by_source[source.id] = rows
+    status.state = "fresh"
+    status.error = ""
+    status.count = rows.len()
+    status.retrieved_at = retrieved_at
+    try {
+        fs.write("news_cache_v1_" + source.id + ".json", {schema_version: 1 source_id: source.id retrieved_at: retrieved_at items: rows}.to_json())
+    } { status.error = "新闻已获取，但缓存保存失败" }
+    true
+}
+fn feed_build_rows(enabled_ids, complete){
+    feed_build_revision = feed_build_revision + 1
+    let groups = []
+    for id in enabled_ids { if feed_rows_by_source[id] != nil { groups.push(feed_rows_by_source[id]) } }
+    let work = {revision: feed_build_revision generation: feed_generation groups: groups group_index: 0 row_index: 0
+        rows: [] indexed: {} width: 1 start: 0 left: 0 right: 0 middle: 0 end: 0 next: [] complete: complete}
+    feed_collect_step(work)
+}
+fn feed_work_current(work){ work.revision == feed_build_revision && work.generation == feed_generation }
+fn feed_collect_step(work){
+    if !feed_work_current(work) { return }
+    let processed = 0
+    while work.group_index < work.groups.len() && processed < news_config.work_batch_items {
+        let rows = work.groups[work.group_index]
+        if work.row_index >= rows.len() { work.group_index = work.group_index + 1 work.row_index = 0 }
+        else {
+            news_append_unique(work.rows, work.indexed, rows[work.row_index])
+            work.row_index = work.row_index + 1 processed = processed + 1
+        }
+    }
+    if work.group_index < work.groups.len() { start_timeout(0.01, || feed_collect_step(work)) }
+    else { start_timeout(0.01, || feed_sort_step(work)) }
+}
+fn feed_sort_step(work){
+    if !feed_work_current(work) { return }
+    if work.width >= work.rows.len() {
+        let limited = []
+        for row in work.rows { if limited.len() < news_config.max_feed_items { limited.push(row) } }
+        start_timeout(0.01, || { if feed_work_current(work) { work.complete(limited) } })
+        return
+    }
+    let processed = 0
+    while work.start < work.rows.len() && processed < news_config.work_batch_items {
+        if work.end == 0 {
+            work.left = work.start
+            work.middle = min(work.start + work.width, work.rows.len())
+            work.right = work.middle
+            work.end = min(work.start + work.width + work.width, work.rows.len())
+        }
+        if work.left < work.middle && (work.right >= work.end || !news_newer(work.rows[work.right], work.rows[work.left])) {
+            work.next.push(work.rows[work.left]) work.left = work.left + 1
+        } else { work.next.push(work.rows[work.right]) work.right = work.right + 1 }
+        processed = processed + 1
+        if work.left >= work.middle && work.right >= work.end { work.start = work.end work.end = 0 }
+    }
+    if work.start >= work.rows.len() {
+        work.rows = work.next work.next = [] work.start = 0 work.end = 0 work.width = work.width + work.width
+    }
+    start_timeout(0.01, || feed_sort_step(work))
+}
+fn feed_pump(task){
+    if task.generation != feed_generation { return }
+    while task.active < news_config.max_parallel_requests && task.next < task.sources.len() {
+        let source = task.sources[task.next]
+        task.next = task.next + 1
+        task.active = task.active + 1
+        feed_status_by_source[source.id].state = "loading"
+        let completed = false
+        task.request(source.url, 0, fn(result){
+            if completed || task.generation != feed_generation { return }
+            completed = true
+            if feed_accept(source, result, time_now()) { task.successes = task.successes + 1 }
+            task.active = task.active - 1
+            task.completed = task.completed + 1
+            task.on_update()
+            feed_pump(task)
+        })
+    }
+    if task.active == 0 && task.next >= task.sources.len() && !task.done {
+        task.done = true
+        task.on_done(task.successes)
+    }
+}
+fn feed_refresh(enabled_ids, on_update, on_done, request){
+    feed_generation = feed_generation + 1
+    let sources = []
+    for source in news_sources { if record_contains(enabled_ids, source.id) { sources.push(source) } }
+    let task = {generation: feed_generation sources: sources next: 0 active: 0 completed: 0 successes: 0 done: false
+        on_update: on_update on_done: on_done request: request}
+    feed_task = task
+    feed_pump(task)
+}
+fn feed_cancel(){
+    feed_generation = feed_generation + 1
+    feed_build_revision = feed_build_revision + 1
+    if feed_task != nil { feed_task.done = true }
+    for source in news_sources {
+        let status = feed_status_by_source[source.id]
+        if status.state == "loading" { status.state = "cached" status.error = "刷新已取消" }
+    }
+}

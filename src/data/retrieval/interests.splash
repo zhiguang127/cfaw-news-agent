@@ -1,0 +1,44 @@
+// Lexical matching only. These reasons describe user rules, never Agent judgment.
+let interest_keyword_matchers = {}
+fn interest_reset_matchers(){ interest_keyword_matchers = {} }
+fn literal_pattern(text){
+    let out = text
+    for c in ["\\" "." "*" "+" "?" "(" ")" "[" "]" "{" "}" "|" "^" "$"] { out = out.replace(c, "\\" + c) }
+    out
+}
+fn category_label(id){
+    if id == "tech" { return "科技" }
+    if id == "ai" { return "AI 与研究" }
+    if id == "world" { return "国际" }
+    if id == "finance" { return "财经" }
+    if id == "china" { return "中文资讯" }
+    "其他"
+}
+fn interest_matches(row, interests){
+    let out = []
+    for item in interests {
+        if !item.enabled { continue }
+        if item.kind == "source" && item.value == row.source { out.push("关注来源：" + item.value) }
+        if item.kind == "category" && item.value == row.category { out.push("关注主题：" + category_label(item.value)) }
+        if item.kind == "keyword" {
+            let matcher = interest_keyword_matchers[item.interest_id]
+            if matcher == nil {
+                matcher = regex(literal_pattern(item.value), "i")
+                interest_keyword_matchers[item.interest_id] = matcher
+            }
+            if matcher.test(row.title) || matcher.test(row.summary) { out.push("匹配关键词：" + item.value) }
+        }
+    }
+    out
+}
+fn news_filter(rows, interests, category, followed_only, query){
+    let out = []
+    let matcher = regex(literal_pattern(query), "i")
+    for row in rows {
+        if category != "all" && row.category != category { continue }
+        if followed_only && interest_matches(row, interests).len() == 0 { continue }
+        if query != "" && !matcher.test(row.title) && !matcher.test(row.summary) && !matcher.test(row.source) { continue }
+        out.push(row)
+    }
+    out
+}

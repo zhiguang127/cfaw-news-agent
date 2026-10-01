@@ -1,0 +1,55 @@
+fn news_request_allowed(url){
+    if !record_string(url) { return false }
+    let parts = url.split("/")
+    parts.len() >= 3 && parts[0] == "https:" && parts[1] == "" && record_contains(news_hosts, parts[2])
+}
+fn news_redirect_url(current, location){
+    if !record_string(location) { return nil }
+    if regex("^https://").test(location) { return location }
+    if regex("^//").test(location) { return "https:" + location }
+    if regex("^/").test(location) { return "https://" + current.split("/")[2] + location }
+    nil
+}
+fn news_http_finish(context, result){
+    if context.done { return }
+    context.done = true
+    stop_timer(context.timer)
+    context.callback(result)
+}
+fn news_http_request(url, redirects, callback){
+    let context = {done: false timer: nil callback: callback}
+    context.timer = start_timeout(news_config.request_timeout_seconds, || {
+        news_http_finish(context, {success: false error: "请求超时" category: "timeout"})
+    })
+    news_http_step(url, redirects, context)
+}
+fn news_http_step(url, redirects, context){
+    if context.done { return }
+    if !news_request_allowed(url) { news_http_finish(context, {success: false error: "请求或重定向域名未获许可" category: "permission"}); return }
+    try {
+        net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET
+            max_response_body_bytes: news_config.max_response_bytes
+            // The pinned Windows backend owns User-Agent; overriding it is refused.
+            headers: {"Accept": ["application/rss+xml, application/atom+xml, application/json, text/xml, */*"]}}) do net.HttpEvents{
+            on_response: |response| {
+                if context.done { return }
+                let status = response.status_code
+                if status == 301 || status == 302 || status == 303 || status == 307 || status == 308 {
+                    let locations = response.headers["location"]
+                    if locations == nil { locations = response.headers["Location"] }
+                    let target = nil
+                    if locations != nil && locations.len() > 0 { target = news_redirect_url(url, locations[0]) }
+                    if target == nil || redirects >= news_config.max_redirects { news_http_finish(context, {success: false error: "重定向无效或次数超限" category: "redirect"}); return }
+                    news_http_step(target, redirects + 1, context)
+                } else if status != 200 { news_http_finish(context, {success: false error: "HTTP " + status category: "http"}) }
+                else if response.body == nil { news_http_finish(context, {success: false error: "响应缺少正文" category: "body"}) }
+                else { news_http_finish(context, {success: true body: response.body.to_string()}) }
+            }
+            on_error: |error| {
+                news_http_finish(context, {success: false error: error.message category: "network"})
+            }
+        }
+    } {
+        news_http_finish(context, {success: false error: "宿主拒绝或无法发起网络请求" category: "host"})
+    }
+}

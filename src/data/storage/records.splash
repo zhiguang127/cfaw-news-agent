@@ -1,0 +1,221 @@
+// The repository owns user records. The host exposes read/write/exists, no rename.
+// Keep a previous valid snapshot before replacing a primary file.
+let user_bookmarks = []
+let user_interests = []
+let enabled_source_ids = []
+let tracking_state = {schema_version: 1 last_checked_at: 0 seen_ids: [] unread_ids: []}
+let tracking_unread_index = {}
+fn records_index_unread(){
+    tracking_unread_index = {}
+    for id in tracking_state.unread_ids { tracking_unread_index[id] = true }
+}
+fn records_is_unread(id){ tracking_unread_index[id] == true }
+let records_warning = ""
+let bookmark_file = {path: "bookmarks_v1.json" writable: true recovered: false}
+let interest_file = {path: "interests_v1.json" writable: true recovered: false}
+let tracking_file = {path: "tracking_state_v1.json" writable: true recovered: false}
+
+fn records_warn(message){
+    if records_warning != "" { records_warning = records_warning + "；" }
+    records_warning = records_warning + message
+}
+fn records_document_valid(value, kind){
+    if !record_object(value) || value["schema_version"] != 1 { return false }
+    if kind == "tracking" {
+        if !record_number(value["last_checked_at"]) || !record_array(value["seen_ids"]) || !record_array(value["unread_ids"]) { return false }
+        if value["seen_ids"].len() > news_config.max_seen_ids || value["unread_ids"].len() > news_config.max_seen_ids { return false }
+        for id in value["seen_ids"] { if !record_string(id) { return false } }
+        for id in value["unread_ids"] { if !record_string(id) { return false } }
+        return true
+    }
+    if !record_array(value["items"]) { return false }
+    if kind == "bookmarks" && value["items"].len() > news_config.max_bookmarks { return false }
+    if kind == "interests" && value["items"].len() > news_config.max_interests { return false }
+    for item in value["items"] {
+        if kind == "bookmarks" && (!news_record_valid(item) || !record_number(item["bookmarked_at"])) { return false }
+        if kind == "interests" && !interest_record_valid(item) { return false }
+    }
+    if kind == "interests" {
+        if !record_array(value["enabled_source_ids"]) { return false }
+        if value["enabled_source_ids"].len() > news_sources.len() { return false }
+        for id in value["enabled_source_ids"] { if !record_string(id) { return false } }
+    }
+    true
+}
+fn records_read(file, kind){
+    let exists = false
+    try { exists = fs.exists(file.path) } { file.writable = false records_warn(file.path + "：无法检查存储") }
+    if exists {
+        let value = nil
+        try { value = fs.read(file.path).parse_json() } { value = nil }
+        if records_document_valid(value, kind) { return value }
+        if record_object(value) && value["schema_version"] != nil && value["schema_version"] != 1 {
+            file.writable = false
+            records_warn(file.path + "：不支持的版本，原记录已保留；当前修改仅在会话内保留")
+            return nil
+        }
+        // An unknown schema or broken file is never replaced by defaults.
+        file.writable = false
+        records_warn(file.path + "：格式无效，原文件已保留")
+    }
+    let backup = nil
+    try {
+        if fs.exists(file.path + ".backup") { backup = fs.read(file.path + ".backup").parse_json() }
+    } { records_warn(file.path + "：备份读取失败") }
+    if records_document_valid(backup, kind) {
+        file.recovered = true
+        records_warn(file.path + "：已从备份恢复；修改继续保存到备份")
+        return backup
+    }
+    nil
+}
+fn records_write(file, value, kind){
+    if !records_document_valid(value, kind) { return "记录未通过校验，未保存" }
+    if !file.writable && !file.recovered { return "原存储文件无法读取，本次修改仅在会话内保留" }
+    let error = ""
+    try {
+        if file.recovered {
+            fs.write(file.path + ".backup", value.to_json())
+        } else {
+            if fs.exists(file.path) {
+                let previous = fs.read(file.path).parse_json()
+                if !records_document_valid(previous, kind) {
+                    file.writable = false
+                    error = "存储文件发生变化，原文件已保留"
+                } else { fs.write(file.path + ".backup", previous.to_json()) }
+            }
+            if error == "" { fs.write(file.path, value.to_json()) }
+        }
+    } { error = "本地存储写入失败，可能空间不足；本次修改仍在会话内保留" }
+    error
+}
+fn records_load(){
+    user_bookmarks = []
+    user_interests = []
+    enabled_source_ids = []
+    tracking_state = {schema_version: 1 last_checked_at: 0 seen_ids: [] unread_ids: []}
+    records_warning = ""
+    for source in news_sources { if source.enabled { enabled_source_ids.push(source.id) } }
+    let bookmarks = records_read(bookmark_file, "bookmarks")
+    if bookmarks != nil { user_bookmarks = bookmarks.items }
+    else if bookmark_file.writable {
+        try { if !fs.exists(bookmark_file.path) { records_migrate_bookmarks() } }
+        { bookmark_file.writable = false records_warn("旧收藏迁移检查失败，原文件已保留") }
+    }
+    let interests = records_read(interest_file, "interests")
+    if interests != nil {
+        user_interests = interests.items enabled_source_ids = []
+        for id in interests.enabled_source_ids { if news_source(id) != nil && !record_contains(enabled_source_ids, id) { enabled_source_ids.push(id) } }
+    }
+    let tracking = records_read(tracking_file, "tracking")
+    if tracking != nil { tracking_state = tracking }
+    records_index_unread()
+}
+fn records_migrate_bookmarks(){
+    if !fs.exists("saved.json") { return false }
+    let migrated = []
+    let valid = true
+    let legacy = nil
+    try { legacy = fs.read("saved.json").parse_json() } { legacy = nil }
+    if !record_array(legacy) { valid = false }
+    else { migrated = records_convert_legacy(legacy) if migrated == nil { valid = false } }
+    if !valid {
+        bookmark_file.writable = false
+        records_warn("旧收藏 saved.json 无法完整迁移；文件已保留")
+        return false
+    }
+    user_bookmarks = migrated
+    let error = records_save_bookmarks()
+    if error != "" { records_warn("旧收藏已读取；" + error) }
+    return error == ""
+}
+fn records_convert_legacy(legacy){
+    if legacy.len() > news_config.max_bookmarks { return nil }
+    let migrated = []
+    let migrated_ids = []
+    for item in legacy {
+        let source = {id: "legacy" label: "历史收藏" kind: "rss" category: "other" language: "" url: ""}
+        if record_string(item["source"]) { source.label = item["source"] }
+        let row = news_normalize(item, source, 0)
+        if row == nil { return nil }
+        if !record_contains(migrated_ids, row.news_id) { row.bookmarked_at = 0 migrated.push(row) migrated_ids.push(row.news_id) }
+    }
+    return migrated
+}
+fn records_save_bookmarks(){
+    records_write(bookmark_file, {schema_version: 1 items: user_bookmarks}, "bookmarks")
+}
+fn records_save_interests(){
+    records_write(interest_file, {schema_version: 1 items: user_interests enabled_source_ids: enabled_source_ids}, "interests")
+}
+fn records_save_tracking(){ records_write(tracking_file, tracking_state, "tracking") }
+fn records_is_bookmarked(id){
+    for item in user_bookmarks { if item.news_id == id { return true } }
+    false
+}
+fn records_toggle_bookmark(row){
+    if records_is_bookmarked(row.news_id) { user_bookmarks.retain(|item| item.news_id != row.news_id) }
+    else {
+        if user_bookmarks.len() >= news_config.max_bookmarks { return "收藏已达上限，请先整理已有收藏" }
+        // Store an independent snapshot; refreshing or evicting the feed cannot erase it.
+        let snapshot = row.to_json().parse_json()
+        snapshot.bookmarked_at = time_now()
+        user_bookmarks.push(snapshot)
+    }
+    records_save_bookmarks()
+}
+fn records_has_interest(kind, value){
+    for item in user_interests { if item.kind == kind && item.value == value && item.enabled { return true } }
+    false
+}
+fn records_add_interest(kind, value){
+    value = value.trim()
+    if value == "" || value.len() > 200 { return "请输入 1–200 字节的来源、主题或关键词" }
+    for item in user_interests { if item.kind == kind && item.value == value { return "已在追踪列表中" } }
+    if user_interests.len() >= news_config.max_interests { return "追踪已达上限，请先整理已有规则" }
+    let item = {interest_id: kind + ":" + value kind: kind value: value enabled: true created_at: time_now()}
+    if !interest_record_valid(item) { return "追踪规则无效" }
+    user_interests.push(item)
+    interest_reset_matchers()
+    records_save_interests()
+}
+fn records_remove_interest(id){
+    user_interests.retain(|item| item.interest_id != id)
+    interest_reset_matchers()
+    records_save_interests()
+}
+fn records_toggle_source(id){
+    if record_contains(enabled_source_ids, id) { enabled_source_ids.retain(|value| value != id) }
+    else { enabled_source_ids.push(id) }
+    records_save_interests()
+}
+fn records_check_tracking(rows, interests, checked_at){
+    let baseline = tracking_state.last_checked_at == 0
+    let seen = tracking_state.seen_ids
+    let unread = tracking_state.unread_ids
+    let seen_index = {}
+    let unread_index = {}
+    for id in seen { seen_index[id] = true }
+    for id in unread { unread_index[id] = true }
+    for row in rows {
+        let new = seen_index[row.news_id] != true
+        if new {
+            seen.push(row.news_id)
+            seen_index[row.news_id] = true
+            if !baseline && interest_matches(row, interests).len() > 0 && unread_index[row.news_id] != true { unread.push(row.news_id) unread_index[row.news_id] = true }
+        }
+    }
+    while seen.len() > news_config.max_seen_ids { seen.remove(0) }
+    seen_index = {}
+    for id in seen { seen_index[id] = true }
+    unread.retain(|id| seen_index[id] == true)
+    tracking_state.last_checked_at = checked_at
+    records_index_unread()
+    records_save_tracking()
+}
+fn records_mark_read(id){
+    if !record_contains(tracking_state.unread_ids, id) { return "" }
+    tracking_state.unread_ids.retain(|value| value != id)
+    tracking_unread_index[id] = false
+    records_save_tracking()
+}

@@ -1,0 +1,110 @@
+fn news_source(id){
+    for s in news_sources { if s.id == id { return s } }
+    nil
+}
+fn news_identity(url){ return url.split("#")[0] }
+fn news_normalize(item, source, retrieved_at){
+    if !record_object(item) || !record_string(item["title"]) || item.title.trim() == "" || !record_url(item["link"]) { return nil }
+    let publisher = source.label
+    if record_string(item["source"]) && item.source != "" { publisher = item.source }
+    let summary = ""
+    if record_string(item["summary"]) { summary = item.summary }
+    let published_at = nil
+    if record_number(item["published"]) && item.published > 0 { published_at = item.published }
+    let kind = "rss_summary"
+    let timestamp_kind = "published"
+    if source.kind == "hn" {
+        kind = "hn_submission"
+        timestamp_kind = "submitted"
+    }
+    let row = {news_id: news_identity(item.link) title: item.title.trim() source: publisher
+        source_id: source.id source_url: item.link feed_url: source.url category: source.category
+        language: source.language summary: summary published_at: published_at retrieved_at: retrieved_at
+        evidence_kind: kind timestamp_kind: timestamp_kind
+        references: [{source_id: source.id source: publisher source_url: item.link feed_url: source.url}]}
+    if !news_record_valid(row) { return nil }
+    return row
+}
+fn news_hn_items(body){
+    let data = nil
+    try { data = body.parse_json() } { data = nil }
+    if !record_object(data) || !record_array(data["hits"]) { return nil }
+    let items = []
+    for hit in data.hits {
+        if !record_object(hit) || !record_string(hit["objectID"]) { continue }
+        let link = "https://news.ycombinator.com/item?id=" + hit.objectID
+        if record_url(hit["url"]) { link = hit.url }
+        items.push({title: hit["title"] link: link source: "Hacker News" summary: "" published: hit["created_at_i"]})
+    }
+    return items
+}
+fn news_parse(body, source, retrieved_at){
+    let items = nil
+    if source.kind == "hn" { items = news_hn_items(body) }
+    else {
+        // The pinned native parser has no return value for unsupported XML.
+        if !regex("<(rss|feed|rdf:RDF)([ >\\r\\n\\t])").test(body) { return nil }
+        try { items = body.parse_feed(source.kind) } { items = nil }
+    }
+    if items == nil { return nil }
+    let rows = []
+    for item in items {
+        if rows.len() >= news_config.items_per_source { break }
+        let row = news_normalize(item, source, retrieved_at)
+        if row != nil { rows.push(row) }
+    }
+    return rows
+}
+fn news_newer(a, b){
+    if a.published_at == nil { return false }
+    if b.published_at == nil { return true }
+    a.published_at > b.published_at
+}
+fn news_sort(rows){
+    // Bottom-up merge sort bounds work when all cached sources load together.
+    let width = 1
+    while width < rows.len() {
+        let next = []
+        let start = 0
+        while start < rows.len() {
+            let left = start
+            let middle = min(start + width, rows.len())
+            let right = middle
+            let end = min(start + width + width, rows.len())
+            while left < middle || right < end {
+                if left < middle && (right >= end || !news_newer(rows[right], rows[left])) {
+                    next.push(rows[left]) left = left + 1
+                } else { next.push(rows[right]) right = right + 1 }
+            }
+            start = end
+        }
+        rows = next
+        width = width + width
+    }
+    return rows
+}
+fn news_append_unique(out, indexed, row){
+    let existing_index = indexed[row.news_id]
+    if existing_index != nil {
+        let existing = out[existing_index]
+        let ids = []
+        for ref in existing.references { ids.push(ref.source_id) }
+        if !record_contains(ids, row.source_id) {
+            let snapshot = existing.to_json().parse_json()
+            snapshot.references.push(row.references[0])
+            out[existing_index] = snapshot
+        }
+        return true
+    }
+    indexed[row.news_id] = out.len()
+    out.push(row)
+    return true
+}
+fn news_merge(groups){
+    let out = []
+    let indexed = {}
+    for rows in groups { for row in rows { news_append_unique(out, indexed, row) } }
+    let limited = []
+    for row in news_sort(out) { if limited.len() < news_config.max_feed_items { limited.push(row) } }
+    limited
+}
