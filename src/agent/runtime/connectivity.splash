@@ -28,6 +28,7 @@ fn test_octos(){
         let stopping = true
         let stop_timer_id = start_timeout(10, || {
             if stopping {
+                stopping = false octos_testing = false analysis_needs_reopen = true
                 set_octos_message("Octos timed out; stop was not acknowledged. Close and reopen this app before retrying.")
             }
         })
@@ -39,6 +40,7 @@ fn test_octos(){
                 octos_testing = false
                 set_octos_message("Octos timed out; request stopped. Check the host/model connection, then retry.")
             } else {
+                octos_testing = false analysis_needs_reopen = true
                 set_octos_message("Octos timed out; close and reopen this app. Stop error: " + stopped.error)
             }
         })

@@ -31,6 +31,7 @@ ORDER = [
     'src/frontend/pages/bookmarks.splash',
     'src/frontend/pages/schedule.splash',
     'src/frontend/pages/detail.splash',
+    'src/frontend/pages/results.splash',
     'src/frontend/pages/settings.splash',
     'src/frontend/app_view.splash',
     'src/app/startup.splash',

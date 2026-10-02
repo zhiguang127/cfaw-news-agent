@@ -1,0 +1,190 @@
+// Native OctoScript scenarios. Only host/model replies are substituted.
+let logic_row = nil
+let logic_reply = nil
+let logic_interrupt = nil
+fn logic_prepare(){
+    analysis_history = [] suggestion_history = [] user_schedules = []
+    user_interests = [{interest_id: "keyword:Fixture" kind: "keyword" value: "Fixture" enabled: true created_at: 1}]
+    logic_row = news_normalize({title: "Fixture" summary: "A" link: "https://example.invalid/logic"}, news_sources[0], time_now())
+    feed_initialize()
+    feed_rows_by_source[news_sources[0].id] = [logic_row]
+    app_feed_rows = [logic_row]
+    analysis_busy = false analysis_terminal = false analysis_needs_reopen = false analysis_batch_busy = false
+    reading = nil detail_kind = ""
+    analysis_host_has = |name| true
+    analysis_host_request = |name, data, callback| {
+        if name == "octos.session.open" { callback({is_ok: true}) }
+        if name == "octos.turn.start" { logic_reply = callback }
+        if name == "octos.turn.interrupt" { logic_interrupt = callback }
+    }
+}
+fn logic_no_change(){ {is_ok: true data: {turn_id: "fixture-turn" text: {schema_version: 1 outcome: "no_change" explanation: "Fixture: no change" suggestions: []}.to_json()}} }
+fn logic_test_history(){
+    print("stage logic history")
+    logic_prepare()
+    let result = {outcome: "no_change" explanation: "A" suggestions: []}
+    history_record_analysis(logic_row, "a", 1, "t", result)
+    agent_assert(history_changed_rows([logic_row]).len() == 0, "same successful input skipped")
+    start_timeout(0.02, || {
+    logic_row.summary = "B"
+    agent_assert(history_changed_rows([logic_row]).len() == 1, "A to B detected")
+    history_record_analysis(logic_row, "b", 1, "t", result)
+    logic_row.summary = "A"
+    agent_assert(history_changed_rows([logic_row]).len() == 1, "B to A compares latest analysis")
+    start_timeout(0.02, || {
+    history_record_analysis(logic_row, "a-again", 1, "t", result)
+    user_interests[0].enabled = false
+    agent_assert(history_changed_rows([logic_row]).len() == 1, "changed interests reconsider unchanged news")
+    user_interests[0].enabled = true
+    let suggestion = {goal_key: "review" interest_ids: ["keyword:Fixture"] evidence_ids: [logic_row.news_id] schedule_id: nil schedule_version: nil change_summary: "Review" rationale: "Fixture" uncertainties: [] proposed_action: nil}
+    let second = suggestion.to_json().parse_json() second.goal_key = "call" second.change_summary = "Call"
+    history_record_analysis(logic_row, "siblings", 1, "t", {outcome: "suggestions" explanation: "Fixture" suggestions: [suggestion second]})
+    agent_assert(suggestion_history.len() == 2, "different business goals retained")
+    start_timeout(0.02, || {
+    history_record_analysis(logic_row, "missing", 1, "t", {outcome: "insufficient_evidence" explanation: "Missing" suggestions: []})
+    agent_assert(suggestion_history[0].state == "needs_review" && suggestion_history[1].state == "needs_review", "insufficient evidence preserves pending decisions for review")
+    agent_assert(!history_confirm_suggestion(suggestion_history[0].suggestion_id).success, "needs review cannot execute")
+    let k1 = analysis_suggestion_key({interest_ids: ["b" "a"] evidence_ids: ["e"] goal_key: "x" schedule_id: nil schedule_version: nil proposed_action: nil})
+    let k2 = analysis_suggestion_key({interest_ids: ["a" "b"] evidence_ids: ["e"] goal_key: "x" schedule_id: nil schedule_version: nil proposed_action: nil})
+    agent_assert(k1 == k2, "identifier order does not change identity")
+    start_timeout(0.02, || logic_test_evidence())
+    })
+    })
+    })
+}
+fn logic_cache(row){ fs.write("news_cache_v1_" + news_sources[0].id + ".json", {schema_version: 1 source_id: news_sources[0].id retrieved_at: row.retrieved_at items: [row]}.to_json()) }
+fn logic_test_evidence(){
+    print("stage logic evidence")
+    logic_prepare()
+    let proposal = {interest_ids: ["keyword:Fixture"] evidence_versions: [history_evidence_version(logic_row)]}
+    logic_cache(logic_row)
+    agent_assert(history_revalidate_evidence(proposal) == "", "fresh persisted evidence confirmed")
+    logic_row.summary = "Changed" logic_cache(logic_row)
+    agent_assert(history_revalidate_evidence(proposal) != "", "changed evidence blocked before confirmation")
+    logic_row.summary = "A" logic_row.retrieved_at = time_now() - 8000 logic_cache(logic_row)
+    agent_assert(history_revalidate_evidence(proposal) != "", "old cache blocked before confirmation")
+    let copy = logic_row.to_json().parse_json() copy.retrieved_at = time_now() copy.summary = "Newest"
+    let merged = news_merge([[logic_row], [copy]])
+    agent_assert(merged[0].summary == "Newest" && logic_row.summary == "A", "merge uses latest without mutating source")
+    merged[0].references.push({source_id: "extra"})
+    agent_assert(copy.references.len() == 1 && logic_row.references.len() == 1, "merged references owned separately")
+    start_timeout(0.02, || logic_test_runtime())
+}
+fn logic_test_runtime(){
+    print("stage logic runtime")
+    logic_prepare()
+    analysis_start(logic_row)
+    agent_assert(analysis_busy, "analysis started without open detail")
+    reading = {news_id: "different"}
+    logic_reply(logic_no_change())
+    agent_assert(analysis_state == "succeeded" && analysis_history.len() == 1, "navigation does not reject valid analysis")
+    logic_reply(logic_no_change())
+    agent_assert(analysis_history.len() == 1, "duplicate completion ignored")
+    analysis_start(logic_row)
+    let old_reply = logic_reply
+    analysis_cancel()
+    agent_assert(analysis_busy && analysis_terminal, "cancel waits for stop acknowledgment")
+    logic_interrupt({is_ok: true})
+    agent_assert(!analysis_busy && analysis_state == "cancelled", "cancel acknowledgment ends request")
+    analysis_start(logic_row)
+    old_reply(logic_no_change())
+    agent_assert(analysis_busy, "late old completion cannot finish new request")
+    logic_row.summary = "New evidence"
+    logic_reply(logic_no_change())
+    agent_assert(analysis_error_category == "stale_context", "changed input rejects in-flight result")
+    start_timeout(0.02, || logic_test_storage())
+}
+fn logic_test_storage(){
+    print("stage logic storage")
+    logic_prepare()
+    analysis_start(logic_row)
+    analysis_history_file.writable = false
+    logic_reply(logic_no_change())
+    agent_assert(analysis_state == "failed" && analysis_error_category == "storage_error" && history_dirty, "storage failure never reports analysis success")
+    analysis_history_file.writable = true
+    agent_assert(history_retry_save() == "" && !history_dirty, "explicit retry saves session result")
+    analysis_start(logic_row)
+    analysis_timeout()
+    analysis_stop_ack(analysis_request_id, false)
+    agent_assert(!analysis_busy && analysis_needs_reopen, "unacknowledged timeout blocks later requests")
+    start_timeout(0.02, || logic_test_batch())
+}
+fn logic_test_batch(){
+    print("stage logic batch")
+    logic_prepare()
+    app_feed_rows = []
+    for i in 12 {
+        let row = news_normalize({title: "Fixture " + i summary: "A" link: "https://example.invalid/batch/" + i}, news_sources[0], time_now())
+        app_feed_rows.push(row)
+    }
+    analyze_changes()
+    start_timeout(0.10, || {
+        agent_assert(analysis_batch_rows.len() == 8 && analysis_batch_skipped == 4, "batch lexical selection capped at eight")
+        agent_assert(analysis_busy && analysis_batch_busy, "batch starts first request without detail")
+        analysis_cancel()
+        agent_assert(!analysis_batch_busy && analysis_batch_skipped == 11, "cancel stops whole batch")
+        logic_interrupt({is_ok: true})
+        start_timeout(0.03, || {
+            agent_assert(!analysis_busy && !analysis_batch_busy, "cancelled batch does not restart")
+            start_timeout(0.02, || logic_test_batch_results())
+        })
+    })
+}
+fn logic_test_batch_results(){
+    logic_prepare()
+    let other = news_normalize({title: "Fixture second" summary: "A" link: "https://example.invalid/second"}, news_sources[0], time_now())
+    app_feed_rows = [logic_row other]
+    feed_rows_by_source[news_sources[0].id] = app_feed_rows
+    analyze_changes()
+    start_timeout(0.08, || {
+        logic_reply(logic_no_change())
+        start_timeout(0.04, || {
+            logic_reply({is_ok: true data: {text: "invalid-json"}})
+            start_timeout(0.04, || {
+                agent_assert(!analysis_batch_busy && analysis_batch_done == 1 && analysis_batch_failed == 1, "batch accounts for success and failure and finishes")
+                start_timeout(0.02, || logic_test_capacity())
+            })
+        })
+    })
+}
+fn logic_test_capacity(){
+    logic_prepare()
+    let baseline = analysis_input_key(logic_row)
+    user_schedules.push({schedule_id: "capacity-schedule" version: 1 title: "Fixture plan" content: "" location: ""
+        start: "2026-10-05T09:00:00+08:00" end: "2026-10-05T10:00:00+08:00" timezone: "Asia/Shanghai" status: "active" allow_reschedule: false})
+    agent_assert(analysis_input_key(logic_row) != baseline, "schedule edits change analysis input identity")
+    let limited = []
+    for i in 20 {
+        let item = user_schedules[0].to_json().parse_json() item.schedule_id = "capacity-" + i limited.push(item)
+    }
+    user_schedules = limited
+    let snapshot = analysis_make_snapshot(logic_row)
+    agent_assert(snapshot.schedules.len() == 8 && snapshot.omitted_schedules == 12 && analysis_snapshot_text(snapshot) != nil, "context bounded with explicit omitted plan count")
+    let previous_limit = history_max_analyses
+    history_max_analyses = 2
+    history_record_analysis(logic_row, "capacity-1", 1, "t", {outcome: "no_change" explanation: "Fixture" suggestions: []})
+    start_timeout(0.02, || {
+        history_record_analysis(logic_row, "capacity-2", 1, "t", {outcome: "no_change" explanation: "Fixture" suggestions: []})
+        start_timeout(0.02, || {
+            history_record_analysis(logic_row, "capacity-3", 1, "t", {outcome: "no_change" explanation: "Fixture" suggestions: []})
+            agent_assert(analysis_history.len() == 2 && analysis_history[0].request_id == "capacity-2", "analysis summaries keep latest bounded history")
+            history_max_analyses = previous_limit
+            let key = analysis_input_key(logic_row)
+            suggestion_history.push({news_id: logic_row.news_id state: "dismissed" suggestion_id: "decision" user_decision: true})
+            agent_assert(analysis_input_key(logic_row) != key, "explicit user decisions change input identity")
+            start_timeout(0.02, || logic_test_results_view())
+        })
+    })
+}
+fn logic_test_results_view(){
+    logic_prepare()
+    logic_row.title = "合成回归场景：证据已离开列表"
+    history_record_analysis(logic_row, "ui-fixture", 1, "fixture", {outcome: "suggestions" explanation: "合成测试：这里只验证结果恢复与用户确认入口，非真实新闻或模型结论。"
+        suggestions: [{goal_key: "review" interest_ids: ["keyword:Fixture"] evidence_ids: [logic_row.news_id] schedule_id: nil schedule_version: nil
+            change_summary: "核对这条合成证据" rationale: "结果应在来源移除后仍可查看。" uncertainties: ["仅有摘要；来源需重新刷新"] proposed_action: nil}]})
+    feed_rows_by_source[news_sources[0].id] = [] app_feed_rows = []
+    show_analysis_results()
+    start_timeout(0.03, || {
+        fs.write("runtime-report.json", {passed: agent_validation_passes failed: agent_validation_failures stage: "complete"}.to_json())
+    })
+}

@@ -1,3 +1,5 @@
+let results_pending_offset = 0
+let suggestion_focus_id = nil
 // UI actions connect repository/retrieval/ingestion; mutable navigation lives here.
 let page = "feed"
 let category = "all"
@@ -25,6 +27,9 @@ let schedule_timezone_draft = "Asia/Shanghai"
 let schedule_next_day = false
 let schedule_custom_date = false
 let schedule_edit_error = ""
+let schedule_saved_view = false
+let schedule_allow_draft = false
+let schedule_original = nil
 let schedule_confirmation_id = nil
 let category_filters = [{id: "all" label: "全部"} {id: "tech" label: "科技"}
     {id: "ai" label: "AI"} {id: "world" label: "国际"} {id: "finance" label: "财经"} {id: "china" label: "中文"}]
@@ -158,6 +163,7 @@ fn select_page(id){
     }
 }
 fn schedule_begin_new(){
+    schedule_saved_view = false schedule_original = nil schedule_allow_draft = false
     schedule_edit_id = nil schedule_edit_version = nil
     schedule_title_draft = "" schedule_content_draft = "" schedule_location_draft = ""
     schedule_timezone_draft = "Asia/Shanghai"
@@ -169,6 +175,19 @@ fn schedule_begin_new(){
     ui.schedule_editor.render()
 }
 fn schedule_pick_zone(zone){
+    if schedule_edit_id != nil && zone != schedule_timezone_draft {
+        let start = schedule_entry_timestamp(schedule_date_draft, schedule_start_hour_draft, schedule_start_minute_draft, schedule_timezone_draft)
+        let end_date = schedule_date_draft
+        if schedule_next_day { end_date = schedule_end_date_draft }
+        let end = schedule_entry_timestamp(end_date, schedule_end_hour_draft, schedule_end_minute_draft, schedule_timezone_draft)
+        if !start.valid || !end.valid { schedule_edit_error = "请先填写有效时间，再切换时区。" ui.schedule_editor.render() return }
+        let converted_start = schedule_entry_parts(start.timestamp, zone)
+        let converted_end = schedule_entry_parts(end.timestamp, zone)
+        schedule_date_draft = converted_start.date schedule_end_date_draft = converted_end.date
+        schedule_start_hour_draft = converted_start.hour schedule_start_minute_draft = converted_start.minute
+        schedule_end_hour_draft = converted_end.hour schedule_end_minute_draft = converted_end.minute
+        schedule_next_day = converted_start.date != converted_end.date
+    }
     schedule_timezone_draft = zone schedule_edit_error = ""
     if schedule_edit_id == nil && !schedule_custom_date {
         schedule_date_draft = schedule_date_at(schedule_zone_seconds(time_now(), zone))
@@ -194,6 +213,8 @@ fn schedule_pick_end_day(next_day){
 fn schedule_begin_edit(id){
     let item = schedule_find(id)
     if item == nil { notice("找不到日程，请刷新") return }
+    schedule_saved_view = false schedule_original = item.to_json().parse_json()
+    schedule_allow_draft = item["allow_reschedule"] == true
     schedule_edit_id = id schedule_edit_version = item.version
     schedule_title_draft = item.title schedule_content_draft = "" schedule_location_draft = ""
     if record_string(item["content"]) { schedule_content_draft = item.content }
@@ -222,8 +243,23 @@ fn schedule_save_draft(){
         ui.schedule_editor.render() return
     }
     let result = nil
-    if schedule_edit_id == nil { result = schedule_create_details(schedule_title_draft, schedule_content_draft, schedule_location_draft, start.timestamp, end.timestamp, schedule_timezone_draft, nil) }
-    else { result = schedule_update_details(schedule_edit_id, schedule_edit_version, schedule_title_draft, schedule_content_draft, schedule_location_draft, start.timestamp, end.timestamp, schedule_timezone_draft, nil) }
+    let stored_start = start.timestamp
+    let stored_end = end.timestamp
+    let stored_zone = schedule_timezone_draft
+    // Preserve seconds and original timezone when visible minute values did not change.
+    if schedule_original != nil {
+        let old_start = schedule_entry_parts(schedule_original.start, schedule_timezone_draft)
+        let old_end = schedule_entry_parts(schedule_original.end, schedule_timezone_draft)
+        if old_start.date == schedule_date_draft && old_start.hour.to_f64() == schedule_start_hour_draft.trim().to_f64() && old_start.minute.to_f64() == schedule_start_minute_draft.trim().to_f64() {
+            stored_start = schedule_original.start
+        }
+        if old_end.date == end_date && old_end.hour.to_f64() == schedule_end_hour_draft.trim().to_f64() && old_end.minute.to_f64() == schedule_end_minute_draft.trim().to_f64() {
+            stored_end = schedule_original.end
+        }
+        if stored_start == schedule_original.start && stored_end == schedule_original.end { stored_zone = schedule_original.timezone }
+    }
+    if schedule_edit_id == nil { result = schedule_create_options(schedule_title_draft, schedule_content_draft, schedule_location_draft, stored_start, stored_end, stored_zone, nil, schedule_allow_draft) }
+    else { result = schedule_update_options(schedule_edit_id, schedule_edit_version, schedule_title_draft, schedule_content_draft, schedule_location_draft, stored_start, stored_end, stored_zone, nil, schedule_allow_draft) }
     if !result.success {
         schedule_edit_error = result.error
         if result.error == "Schedule conflict" { schedule_edit_error = "该时间段与已有日程冲突，请调整开始或结束时间。" }
@@ -232,6 +268,14 @@ fn schedule_save_draft(){
     }
     notice("日程已保存（版本 " + result.item.version + "）")
     schedule_edit_id = result.item.schedule_id schedule_edit_version = result.item.version
+    schedule_saved_view = true schedule_original = result.item.to_json().parse_json()
+    ui.schedule_list.render() ui.schedule_editor.render()
+}
+fn schedule_change_status(id, version, status){
+    let error = schedule_set_status(id, version, status)
+    if error != "" { notice(error) }
+    else { notice("日程状态已更新") }
+    if schedule_edit_id == id { schedule_saved_view = true }
     ui.schedule_list.render() ui.schedule_editor.render()
 }
 fn schedule_begin_confirm(id){
@@ -279,20 +323,95 @@ fn refresh(){
     }, news_http_request)
     sync_status()
 }
+fn analysis_batch_summary(){
+    "成功 " + analysis_batch_done + " · 失败 " + analysis_batch_failed + " · 跳过 " + analysis_batch_skipped
+}
+fn analysis_status_for_news(id){
+    if analysis_active_row_id == id {
+        if analysis_busy && !analysis_terminal { return "正在分析…可取消或继续浏览。" }
+        if analysis_busy { return "正在等待中断确认…" }
+        if analysis_state == "failed" || analysis_state == "cancelled" { return analysis_error }
+    }
+    let latest = history_latest_analysis(id)
+    if latest == nil { return "尚未分析" }
+    if latest["session_unsaved"] == true { return "分析已返回，尚未完整保存。" }
+    "已保存最近的分析结果。"
+}
+fn analysis_row_relevant(row){
+    if interest_matches(row, user_interests).len() > 0 { return true }
+    for schedule in user_schedules {
+        if schedule_active(schedule) {
+            let matcher = regex(literal_pattern(schedule.title), "i")
+            if matcher.test(row.title) || matcher.test(row.summary) { return true }
+        }
+    }
+    false
+}
 fn analyze_changes(){
-    if analysis_batch_busy { notice("变化分析正在进行，请等待完成。") return }
-    analysis_batch_rows = history_changed_rows(app_feed_rows)
-    if analysis_batch_rows.len() == 0 { notice("没有检测到尚未分析或内容已更新的新闻。") return }
-    analysis_batch_busy = true analysis_batch_index = 0 analysis_batch_done = 0
-    notice("开始分析本次变化：" + analysis_batch_rows.len() + " 条")
-    analysis_batch_next()
+    if analysis_batch_busy { analysis_cancel() return }
+    if analysis_busy || octos_testing || analysis_needs_reopen { notice("已有请求正在进行或中断未确认，请先结束请求。") return }
+    analysis_batch_rows = [] analysis_batch_done = 0 analysis_batch_failed = 0 analysis_batch_skipped = 0
+    analysis_batch_busy = true analysis_batch_index = 0
+    analysis_batch_generation = analysis_batch_generation + 1
+    let work = {generation: analysis_batch_generation index: 0 rows: app_feed_rows}
+    ui.filters.render()
+    start_timeout(0.01, || analysis_batch_select(work))
+}
+fn analysis_batch_select(work){
+    if !analysis_batch_busy || work.generation != analysis_batch_generation { return }
+    let count = 0
+    while work.index < work.rows.len() && count < 5 {
+        let row = work.rows[work.index] work.index = work.index + 1 count = count + 1
+        if analysis_batch_rows.len() >= 8 || !analysis_row_relevant(row) { analysis_batch_skipped = analysis_batch_skipped + 1 continue }
+        if history_changed_rows([row]).len() > 0 { analysis_batch_rows.push(row) }
+        else { analysis_batch_skipped = analysis_batch_skipped + 1 }
+    }
+    if work.index < work.rows.len() { start_timeout(0.01, || analysis_batch_select(work)) return }
+    if analysis_batch_rows.len() == 0 {
+        analysis_batch_busy = false ui.filters.render() notice("没有相关且输入已变化的新闻。" + analysis_batch_summary()) return
+    }
+    analysis_batch_next_if(work.generation)
+}
+fn analysis_batch_next_if(generation){
+    if generation == analysis_batch_generation { analysis_batch_next() }
 }
 fn analysis_batch_next(){
     if !analysis_batch_busy { return }
-    if analysis_batch_index >= analysis_batch_rows.len() { analysis_batch_busy = false notice("本次变化分析完成：" + analysis_batch_done + " 条") return }
+    if analysis_batch_index >= analysis_batch_rows.len() {
+        analysis_batch_busy = false notice("本次变化分析完成：" + analysis_batch_summary()) ui.filters.render() return
+    }
+    if analysis_busy || octos_testing || analysis_needs_reopen {
+        analysis_batch_skipped = analysis_batch_skipped + analysis_batch_rows.len() - analysis_batch_index
+        analysis_batch_busy = false notice("本次分析停止：" + analysis_batch_summary()) ui.filters.render() return
+    }
     let row = analysis_batch_rows[analysis_batch_index]
     analysis_batch_index = analysis_batch_index + 1
+    notice("正在分析 " + analysis_batch_index + "/" + analysis_batch_rows.len() + " · " + analysis_batch_summary())
     analysis_start(row)
+}
+fn show_analysis_results(){ results_pending_offset = 0 schedule_confirmation_id = nil show_detail("results", "分析与建议") }
+fn retry_analysis_save(){
+    let error = history_retry_save()
+    if error == "" { notice("历史已保存") } else { notice(error) }
+    ui.results_content.render()
+}
+fn open_analysis_record(id){
+    let item = history_find_analysis(id)
+    if item == nil { return }
+    let row = analysis_current_row(item.news_id)
+    if row == nil { row = item["news_snapshot"] }
+    if row == nil { notice("旧分析没有新闻快照；请刷新来源重新查找。") return }
+    open_story(row)
+}
+fn open_suggestion_record(id){
+    let item = history_find_suggestion(id)
+    if item == nil { return }
+    let row = analysis_current_row(item.news_id)
+    if row == nil { row = item["news_snapshot"] }
+    if row == nil { open_analysis_record(item.analysis_id) return }
+    open_story(row)
+    suggestion_focus_id = id
+    ui.story_content.render()
 }
 fn toggle_follow(row){
     let error = ""
@@ -317,6 +436,8 @@ fn render_detail(){
     ui.story_panel.set_visible(detail_kind == "story")
     ui.settings_panel.set_visible(detail_kind == "settings")
     ui.tracking_panel.set_visible(detail_kind == "tracking")
+    ui.results_panel.set_visible(detail_kind == "results")
+    if detail_kind == "results" { ui.results_content.render() }
 }
 fn show_detail(kind, title){
     detail_kind = kind
@@ -326,9 +447,9 @@ fn show_detail(kind, title){
     render_detail()
 }
 fn open_story(row){
+    suggestion_focus_id = nil
     schedule_confirmation_id = nil
-    analysis_result = nil
-    analysis_state = "idle"
+    if !analysis_busy { analysis_result = nil analysis_state = "idle" }
     reading = row
     let error = records_mark_read(row.news_id)
     notice(error)

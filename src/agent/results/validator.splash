@@ -39,6 +39,7 @@ fn analysis_valid_action(action, suggestion, snapshot){
         if action.kind != "reschedule" { return "proposed_action.kind 无效" }
     }
     if !record_string(action.title) || action.title.trim() == "" { return "proposed_action 时间或标题无效" }
+    if action.title.len() > 200 { return "日程标题超过200字" }
     if !schedule_interval(action.start, action.end) { return "proposed_action 时间或标题无效" }
     if !record_string(action.timezone) || action.timezone.trim() == "" { return "proposed_action 时间或标题无效" }
     if action.kind == "create" {
@@ -51,12 +52,15 @@ fn analysis_valid_action(action, suggestion, snapshot){
         let schedule = analysis_snapshot_schedule(snapshot, action.schedule_id)
         if schedule == nil { return "reschedule 的 schedule 版本不匹配" }
         if schedule.version != action.schedule_version { return "reschedule 的 schedule 版本不匹配" }
+        if !schedule_active(schedule) || schedule["allow_reschedule"] != true { return "该日程未允许 Agent 改期，或已取消/完成" }
     }
     ""
 }
 
 fn analysis_validate_suggestion(suggestion, snapshot){
     if !record_object(suggestion) { return "suggestion 必须是对象" }
+    if suggestion.to_json().len() > 4000 { return "建议内容过长" }
+    if suggestion["goal_key"] != nil { if !record_string(suggestion.goal_key) || suggestion.goal_key.trim() == "" || suggestion.goal_key.len() > 120 { return "goal_key 无效" } }
     if !record_array(suggestion["interest_ids"]) { return "interest_ids 必须非空" }
     if suggestion["interest_ids"].len() == 0 { return "interest_ids 必须非空" }
     if !record_array(suggestion["evidence_ids"]) { return "evidence_ids 必须非空" }
@@ -95,6 +99,7 @@ fn analysis_validate_suggestion(suggestion, snapshot){
 
 fn analysis_validate_model_text(text, snapshot){
     if !record_string(text) || text.trim() == "" { return analysis_failure("invalid_json", "模型没有返回文本") }
+    if text.len() > 10000 { return analysis_failure("invalid_schema", "模型输出过长") }
     let clean = text.trim()
     if !regex("^\\{").test(clean) || !regex("\\}$").test(clean) { return analysis_failure("invalid_json", "只接受一个完整 JSON 对象") }
     let output = nil
@@ -104,6 +109,7 @@ fn analysis_validate_model_text(text, snapshot){
         return analysis_failure("invalid_schema", "结果缺少必需字段或包含不支持的 outcome")
     }
     if output["outcome"] == "suggestions" && output["suggestions"].len() == 0 { return analysis_failure("invalid_schema", "suggestions outcome 必须包含建议") }
+    if output.suggestions.len() > 6 || output.explanation.len() > 2000 { return analysis_failure("invalid_schema", "结果超过容量限制") }
     if output["outcome"] != "suggestions" && output["suggestions"].len() != 0 { return analysis_failure("invalid_schema", "非 suggestions outcome 不得包含建议") }
     for suggestion in output["suggestions"] {
         let error = analysis_validate_suggestion(suggestion, snapshot)

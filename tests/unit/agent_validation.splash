@@ -4,7 +4,7 @@ fn agent_assert(condition, message){
     if condition { agent_validation_passes = agent_validation_passes + 1 }
     else { agent_validation_failures = agent_validation_failures + 1; print("FAIL agent: " + message) }
 }
-fn agent_test_validation(){
+fn agent_test_validation(complete){
     let beijing = schedule_entry_timestamp("2026-10-02", "9", "5", "Asia/Shanghai")
     agent_assert(beijing.valid && beijing.timestamp == "2026-10-02T09:05:00+08:00", "simple Beijing clock input")
     agent_assert(!schedule_entry_timestamp("2026-10-02", "24", "0", "Asia/Shanghai").valid, "24-hour input rejects hour 24")
@@ -61,6 +61,7 @@ fn agent_test_validation(){
     let version_a = history_evidence_version({news_id: "https://example.invalid/item" title: "Title" summary: "Old summary" retrieved_at: 10})
     let version_b = history_evidence_version({news_id: "https://example.invalid/item" title: "Title" summary: "New summary" retrieved_at: 11})
     agent_assert(version_a.evidence_id == version_b.evidence_id && version_a.content_hash != version_b.content_hash, "same-link content versioning")
+    start_timeout(0.02, || {
     user_schedules = []
     let created = schedule_create("Demo review", "2026-10-03T09:00:00+08:00", "2026-10-03T10:00:00+08:00", "Asia/Shanghai", nil)
     agent_assert(created.success, "schedule create")
@@ -68,20 +69,28 @@ fn agent_test_validation(){
     agent_assert(!conflict.success && conflict.error == "Schedule conflict", "schedule conflict check")
     let stale = schedule_update(created.item.schedule_id, 0, "Changed", "2026-10-03T11:00:00+08:00", "2026-10-03T12:00:00+08:00", "Asia/Shanghai", nil)
     agent_assert(!stale.success && stale.stale == true, "schedule version recheck")
+    start_timeout(0.02, || {
     let updated = schedule_update(created.item.schedule_id, 1, "Changed", "2026-10-03T11:00:00+08:00", "2026-10-03T12:00:00+08:00", "Asia/Shanghai", nil)
     agent_assert(updated.success && updated.item.version == 2, "schedule edit increments version")
     let offset_overlap = schedule_create("UTC overlap", "2026-10-03T03:30:00Z", "2026-10-03T04:30:00Z", "UTC", nil)
     agent_assert(!offset_overlap.success && offset_overlap.conflicts.len() > 0, "offset-equivalent conflict")
+    start_timeout(0.02, || {
     let unique = schedule_create("Confirmed proposal", "2026-10-04T09:00:00+08:00", "2026-10-04T10:00:00+08:00", "Asia/Shanghai", "suggestion-fixture-1")
     let duplicate = schedule_create("Confirmed proposal", "2026-10-04T09:00:00+08:00", "2026-10-04T10:00:00+08:00", "Asia/Shanghai", "suggestion-fixture-1")
     agent_assert(unique.success && duplicate.success && duplicate.idempotent && user_schedules.len() == 2, "duplicate create confirmation idempotent")
+    start_timeout(0.02, || {
     let proposed = schedule_update(created.item.schedule_id, 2, "Proposed change", "2026-10-05T11:00:00+08:00", "2026-10-05T12:00:00+08:00", "Asia/Shanghai", "suggestion-fixture-2")
     let replay = schedule_update(created.item.schedule_id, 2, "Proposed change", "2026-10-05T11:00:00+08:00", "2026-10-05T12:00:00+08:00", "Asia/Shanghai", "suggestion-fixture-2")
     agent_assert(proposed.success && replay.success && replay.idempotent && replay.item.version == 3, "duplicate reschedule confirmation idempotent")
     schedules_load()
     agent_assert(user_schedules.len() == 2 && schedule_find(created.item.schedule_id).version == 3, "schedule reload persistence")
+    complete()
+    })
+    })
+    })
+    })
 }
-fn agent_test_confirmation(){
+fn agent_test_confirmation(complete){
     let detailed = schedule_create_details("日程字段测试", "讨论项目", "线上", "2026-10-10T09:00:00+08:00", "2026-10-10T10:00:00+08:00", "Asia/Shanghai", nil)
     agent_assert(detailed.success && detailed.item.content == "讨论项目" && detailed.item.location == "线上", "schedule content and location saved")
     schedules_load()
@@ -89,10 +98,14 @@ fn agent_test_confirmation(){
     agent_assert(restored.content == "讨论项目" && restored.location == "线上", "schedule details survive reload")
     let rescheduled = schedule_update(restored.schedule_id, restored.version, restored.title, "2026-10-10T11:00:00+08:00", "2026-10-10T12:00:00+08:00", restored.timezone, "details-reschedule")
     agent_assert(rescheduled.success && rescheduled.item.content == "讨论项目" && rescheduled.item.location == "线上", "Agent reschedule preserves user details")
+    start_timeout(0.02, || {
     let action = {kind: "create" title: "User confirmed" start: "2026-10-06T13:00:00+08:00" end: "2026-10-06T14:00:00+08:00" timezone: "Asia/Shanghai"}
+    let evidence_row = news_normalize({title: "Fixture evidence" link: "https://example.invalid/confirm" summary: "Fixture"}, news_sources[0], time_now())
+    user_interests = [{interest_id: "keyword:Fixture" kind: "keyword" value: "Fixture" enabled: true created_at: 1}]
+    fs.write("news_cache_v1_" + news_sources[0].id + ".json", {schema_version: 1 source_id: news_sources[0].id retrieved_at: time_now() items: [evidence_row]}.to_json())
     suggestion_history = [{suggestion_id: "confirm-fixture" deduplication_key: "fixture" state: "pending" created_at: 1
-        analysis_id: "analysis-fixture" news_id: "fixture" interest_ids: ["interest"] evidence_ids: ["evidence"]
-        evidence_versions: [] schedule_id: nil schedule_version: nil change_summary: "Fixture" rationale: "Fixture"
+        analysis_id: "analysis-fixture" news_id: evidence_row.news_id interest_ids: ["keyword:Fixture"] evidence_ids: [evidence_row.news_id]
+        evidence_versions: [history_evidence_version(evidence_row)] schedule_id: nil schedule_version: nil change_summary: "Fixture" rationale: "Fixture"
         uncertainties: [] proposed_action: action decision_reason: "fixture" applied_key: nil}]
     agent_assert(history_write(suggestion_history_file, suggestion_history, "suggestion") == "", "persist pending proposal")
     let count_before = user_schedules.len()
@@ -100,16 +113,19 @@ fn agent_test_confirmation(){
     agent_assert(confirmed.success && user_schedules.len() == count_before + 1 && suggestion_history[0].state == "accepted", "confirmed action and decision saved")
     let again = history_confirm_suggestion("confirm-fixture")
     agent_assert(again.success && again.idempotent && user_schedules.len() == count_before + 1, "duplicate confirmation unchanged")
+    start_timeout(0.02, || {
     history_load() schedules_load()
     agent_assert(suggestion_history[0].state == "accepted" && user_schedules.len() == count_before + 1, "confirmation survives restart")
     suggestion_history[0].state = "pending"
     history_write(suggestion_history_file, suggestion_history, "suggestion")
+    start_timeout(0.02, || {
     analysis_history_file.writable = false
     let failed_history = history_confirm_suggestion("confirm-fixture")
     agent_assert(!failed_history.success && suggestion_history[0].state == "pending" && user_schedules.len() == count_before + 1, "failed decision write does not duplicate schedule")
     analysis_history_file.writable = true
     let recovered_confirm = history_confirm_suggestion("confirm-fixture")
     agent_assert(recovered_confirm.success && user_schedules.len() == count_before + 1, "retry recovers decision without second action")
+    start_timeout(0.02, || {
     let versioned_id = user_schedules[0].schedule_id
     let version_before = user_schedules[0].version
     let stale_proposal = schedule_update(versioned_id, 0, "Wrong version", "2026-10-08T09:00:00+08:00", "2026-10-08T10:00:00+08:00", "Asia/Shanghai", "stale-fixture")
@@ -119,4 +135,67 @@ fn agent_test_confirmation(){
     let refused = schedule_create("Read-only", "2026-10-09T09:00:00+08:00", "2026-10-09T10:00:00+08:00", "Asia/Shanghai", nil)
     agent_assert(!refused.success && user_schedules.len() == before_count, "read-only storage refuses schedule write")
     schedule_file.writable = true
+    complete()
+    })
+    })
+    })
+    })
+}
+fn agent_test_schedule_optimization(complete){
+    let made = schedule_create_options("约束测试", "内容", "地点", "2026-10-12T09:00:30+08:00", "2026-10-12T10:00:45+08:00", "Asia/Shanghai", nil, false)
+    agent_assert(made.success && !made.item.allow_reschedule, "new schedules default to locked")
+    let same = schedule_update_details(made.item.schedule_id, 1, made.item.title, "内容", "地点", made.item.start, made.item.end, made.item.timezone, nil)
+    agent_assert(same.success && same.item.version == 1 && same.item.start == "2026-10-12T09:00:30+08:00", "unchanged save preserves version and seconds")
+    let action = {kind: "reschedule" schedule_id: made.item.schedule_id schedule_version: 1 title: "约束测试" start: "2026-10-12T11:00:00+08:00" end: "2026-10-12T12:00:00+08:00" timezone: "Asia/Shanghai"}
+    agent_assert(!schedule_apply_action(action, "locked-test").success, "locked schedule blocks Agent execution")
+    start_timeout(0.02, || {
+    let permitted = schedule_update_options(made.item.schedule_id, 1, made.item.title, "内容", "地点", made.item.start, made.item.end, made.item.timezone, nil, true)
+    action.schedule_version = permitted.item.version
+    agent_assert(schedule_apply_action(action, "allowed-test").success, "opted-in schedule can be confirmed")
+    start_timeout(0.02, || {
+    let current = schedule_find(made.item.schedule_id)
+    agent_assert(schedule_set_status(current.schedule_id, current.version, "cancelled") == "", "cancel schedule persisted")
+    start_timeout(0.02, || {
+    let replacement = schedule_create("可用时段", "2026-10-12T11:00:00+08:00", "2026-10-12T12:00:00+08:00", "Asia/Shanghai", nil)
+    agent_assert(replacement.success, "cancelled schedule does not occupy time")
+    agent_assert(schedule_set_status(replacement.item.schedule_id, 1, "completed") == "", "complete schedule persisted")
+    schedules_load()
+    agent_assert(!schedule_active(schedule_find(replacement.item.schedule_id)), "completed status survives reload")
+    complete()
+    })
+    })
+    })
+}
+fn agent_test_history_optimization(){
+    let row = news_normalize({title: "News" summary: "First" link: "https://example.invalid/history-fixture"}, news_sources[0], 100)
+    let suggestion = {goal_key: "review-update" interest_ids: ["a"] evidence_ids: [row.news_id] schedule_id: nil schedule_version: nil change_summary: "建议" rationale: "依据" uncertainties: [] proposed_action: nil}
+    let result = {outcome: "suggestions" explanation: "说明" suggestions: [suggestion]}
+    suggestion_history = [] analysis_history = []
+    history_record_analysis(row, "history-1", 1, "turn", result)
+    start_timeout(0.02, || {
+    history_record_analysis(row, "history-2", 1, "turn", result)
+    agent_assert(suggestion_history.len() == 1, "actual persistence suppresses identical pending suggestion")
+    start_timeout(0.02, || {
+    history_update_suggestion_state(suggestion_history[0].suggestion_id, "dismissed")
+    suggestion.change_summary = "同一建议的新措辞"
+    history_record_analysis(row, "history-3", 1, "turn", result)
+    agent_assert(suggestion_history.len() == 1 && suggestion_history[0].state == "dismissed", "dismissed suggestion stays suppressed despite rewording")
+    start_timeout(0.02, || {
+    row.summary = "New evidence"
+    history_record_analysis(row, "history-4", 1, "turn", result)
+    agent_assert(suggestion_history.len() == 2 && suggestion_history[1].state == "pending", "changed same-link evidence can be reconsidered")
+    start_timeout(0.02, || {
+    history_record_analysis(row, "history-5", 1, "turn", {outcome: "no_change" explanation: "无需调整" suggestions: []})
+    agent_assert(suggestion_history[1].state == "withdrawn", "no_change withdraws obsolete pending suggestion")
+    start_timeout(0.02, || {
+    suggestion_history[0].state = "accepted"
+    row.summary = "First"
+    history_record_analysis(row, "history-6", 1, "turn", result)
+    agent_assert(suggestion_history[0].state == "accepted", "accepted history never automatically reverted")
+    start_timeout(0.02, || logic_test_history())
+    })
+    })
+    })
+    })
+    })
 }

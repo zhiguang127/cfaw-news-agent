@@ -16,6 +16,7 @@ def run():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', type=Path, help='Pinned card-host executable')
     parser.add_argument('--agent-only', action='store_true', help='Run isolated agent validation tests')
+    parser.add_argument('--inspect-ui', action='store_true', help='Capture and exercise the fixture results/detail UI (agent-only)')
     args = parser.parse_args()
     lock = json.loads((ROOT / 'dev-dependencies.lock.json').read_text())
     checkout = ROOT / next(r['relative_checkout'] for r in lock['repositories'] if r['name'] == 'OctoSense-App-Hub')
@@ -25,7 +26,7 @@ def run():
     work = ROOT / '.test-state' / ('runtime-' + uuid4().hex[:12])
     bundle = work / 'bundle'
     bundle.mkdir(parents=True)
-    paths = ORDER[:3] + ['src/data/storage/schedules.splash', 'src/data/storage/schedule_time.splash', 'src/agent/context.splash', 'src/agent/history.splash', 'src/agent/results/validator.splash', 'src/agent/results/change.splash'] if args.agent_only else ORDER[:ORDER.index('src/agent/context.splash')] + ['src/agent/context.splash', 'src/agent/history.splash', 'src/agent/results/validator.splash', 'src/agent/results/change.splash']
+    paths = ORDER[:-1] if args.agent_only else ORDER[:ORDER.index('src/agent/runtime/connectivity.splash')]
     source, _ = assemble(paths=paths)
     for name, file in [('fixture_rss', 'news-rss.xml'), ('fixture_atom', 'news-atom.xml'), ('fixture_hn', 'news-hn.json'),
                        ('fixture_analysis_no_change', 'analysis-no-change.json'),
@@ -35,8 +36,18 @@ def run():
         source += '\nlet ' + name + ' = ' + json.dumps((ROOT / 'tests/fixtures' / file).read_text(encoding='utf-8'), ensure_ascii=False) + '\n'
     source += (ROOT / 'tests/unit/agent_validation.splash').read_text(encoding='utf-8')
     if args.agent_only:
-        source += '\nHostedView{full: View{Label{text: "Agent fixture tests"}}}\n'
-        source += 'start_timeout(0.05, || { agent_test_validation() start_timeout(0.02, || { agent_test_confirmation() fs.write("runtime-report.json", {passed: agent_validation_passes failed: agent_validation_failures stage: "complete"}.to_json()) }) })\n'
+        source += (ROOT / 'tests/scenarios/analysis_runtime.splash').read_text(encoding='utf-8')
+        source += '''
+start_timeout(0.05, || agent_test_validation(|| {
+    start_timeout(0.02, || agent_test_confirmation(|| {
+        start_timeout(0.02, || agent_test_schedule_optimization(|| {
+            start_timeout(0.02, || agent_test_history_optimization())
+        }))
+    }))
+}))
+'''
+
+
     else:
         source += (ROOT / 'tests/unit/news_runtime.splash').read_text(encoding='utf-8')
     (bundle / 'main.splash').write_text(source, encoding='utf-8')
@@ -65,6 +76,52 @@ def run():
             if not report_path.exists():
                 raise SystemExit(f'Runtime did not produce a report; inspect {work / "host.log"}')
             report = json.loads(report_path.read_text(encoding='utf-8'))
+            if args.inspect_ui and args.agent_only:
+                time.sleep(1)
+                with urlopen(f'http://127.0.0.1:{port}/snap', timeout=3) as response:
+                    snapshot = json.load(response)
+                (work / 'results-ui.json').write_text(json.dumps(snapshot, ensure_ascii=False), encoding='utf-8')
+                with urlopen(f'http://127.0.0.1:{port}/g?raw=1', timeout=3) as response:
+                    (work / 'results-ui.png').write_bytes(response.read())
+                buttons = [w for w in snapshot['s'] if w.get('t') == '查看证据与建议']
+                if not buttons:
+                    raise SystemExit('Results entry missing in native UI snapshot')
+                x, y, width, height = buttons[0]['r']
+                with urlopen(f'http://127.0.0.1:{port}/click?x={x + width / 2}&y={y + height / 2}&wait=1', timeout=3):
+                    pass
+                time.sleep(0.3)
+                with urlopen(f'http://127.0.0.1:{port}/m?k=scroll&x=200&y=650&dy=460&wait=1', timeout=3):
+                    pass
+                time.sleep(0.3)
+                with urlopen(f'http://127.0.0.1:{port}/snap', timeout=3) as response:
+                    detail = json.load(response)
+                (work / 'detail-ui.json').write_text(json.dumps(detail, ensure_ascii=False), encoding='utf-8')
+                if not any(w.get('t') == '接受' for w in detail['s']):
+                    raise SystemExit('Persisted suggestion cannot be opened from results')
+                with urlopen(f'http://127.0.0.1:{port}/g?raw=1', timeout=3) as response:
+                    (work / 'detail-ui.png').write_bytes(response.read())
+                accept = next(w for w in detail['s'] if w.get('t') == '接受')
+                x, y, width, height = accept['r']
+                with urlopen(f'http://127.0.0.1:{port}/click?x={x + width / 2}&y={y + height / 2}&wait=1', timeout=3):
+                    pass
+                with urlopen(f'http://127.0.0.1:{port}/m?k=scroll&x=200&y=650&dy=600&wait=1', timeout=3):
+                    pass
+                time.sleep(0.3)
+                with urlopen(f'http://127.0.0.1:{port}/snap', timeout=3) as response:
+                    preview = json.load(response)
+                confirm = next(w for w in preview['s'] if w.get('t') == '确认并保存')
+                x, y, width, height = confirm['r']
+                with urlopen(f'http://127.0.0.1:{port}/click?x={x + width / 2}&y={y + height / 2}&wait=1', timeout=3):
+                    pass
+                time.sleep(0.3)
+                with urlopen(f'http://127.0.0.1:{port}/snap', timeout=3) as response:
+                    refused = json.load(response)
+                if not any('重新分析' in w.get('t', '') and w.get('ty') == 'Label' for w in refused['s']):
+                    raise SystemExit('Evidence rejection missing from confirmation UI')
+                decisions = json.loads((report_path.parent / 'suggestions_v1.json').read_text(encoding='utf-8'))
+                if decisions['items'][0]['state'] != 'pending':
+                    raise SystemExit('Stale evidence confirmation changed the user decision')
+                print(f'Native UI checked: {work}')
             print(json.dumps(report, ensure_ascii=False, indent=2))
             print(f'Report: {report_path}')
             if report['failed']:

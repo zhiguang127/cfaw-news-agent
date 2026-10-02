@@ -1,0 +1,37 @@
+fn results_pending_page(offset){ results_pending_offset = offset ui.results_content.render() }
+let AnalysisResultsPage = View{visible: false width: Fill height: Fill flow: Down
+    results_content := ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 12 on_render: || {
+        Section{text: "待处理建议与最近分析"}
+        Small{text: "分析不会自动修改日程；打开证据详情后确认。"}
+        if analysis_busy { Small{text: "分析正在进行，可继续浏览其他页面。"} SecondaryButton{text: "取消分析" on_click: || analysis_cancel()} }
+        if history_dirty { Small{text: "历史尚未完整保存，重开应用可能丢失本次结果。" draw_text.color: accent} SecondaryButton{text: "重试保存" on_click: || retry_analysis_save()} }
+        if analysis_history_warning != "" { Small{text: analysis_history_warning draw_text.color: accent} }
+        let pending = 0
+        for item in suggestion_history {
+            if item.state == "pending" || item.state == "needs_review" {
+                pending = pending + 1
+                if pending > results_pending_offset && pending <= results_pending_offset + 20 {
+                Small{text: history_state_label(item.state)}
+                Text{text: item.change_summary}
+                SecondaryButton{text: "查看证据与建议" on_click: || open_suggestion_record(item.suggestion_id)}
+                }
+            }
+        }
+        if results_pending_offset > 0 { SecondaryButton{text: "上一页建议" on_click: || results_pending_page(max(0, results_pending_offset - 20))} }
+        if pending > results_pending_offset + 20 { SecondaryButton{text: "下一页建议" on_click: || results_pending_page(results_pending_offset + 20)} }
+        if pending == 0 { Small{text: "暂无待处理建议。"} }
+        Divider{}
+        Section{text: "最近分析"}
+        if analysis_history.len() == 0 { Small{text: "尚无分析记录；可在新闻详情或动态页开始分析。"} }
+        for i in analysis_history.len() {
+            let item = analysis_history[analysis_history.len() - 1 - i]
+            if i < 30 {
+                if item["news_snapshot"] != nil { Text{text: item.news_snapshot.title} }
+                Small{text: history_outcome_label(item.outcome) + " · " + age_label(item.created_at)}
+                Text{text: item.explanation}
+                SecondaryButton{text: "查看详情" on_click: || open_analysis_record(item.analysis_id)}
+                Divider{}
+            }
+        }
+    }}
+}

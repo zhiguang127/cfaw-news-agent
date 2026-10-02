@@ -87,19 +87,21 @@ fn news_append_unique(out, indexed, row){
     let existing_index = indexed[row.news_id]
     if existing_index != nil {
         let existing = out[existing_index]
+        let references = existing.references
+        if row.retrieved_at > existing.retrieved_at {
+            existing = row.to_json().parse_json()
+            existing.references = references
+            out[existing_index] = existing
+        }
         let ids = []
         for ref in existing.references { ids.push(ref.source_id) }
-        if !record_contains(ids, row.source_id) {
-            // OctoScript objects/arrays are reference values, so mutating
-            // `existing.references` updates the entry in `out` in place. The
-            // previous to_json().parse_json() deep copy is both unnecessary and
-            // a wall-budget hazard when many rows collide.
-            existing.references.push(row.references[0])
+        for ref in row.references {
+            if !record_contains(ids, ref.source_id) { existing.references.push(ref.to_json().parse_json()) ids.push(ref.source_id) }
         }
         return true
     }
     indexed[row.news_id] = out.len()
-    out.push(row)
+    out.push(row.to_json().parse_json())
     return true
 }
 fn news_merge(groups){

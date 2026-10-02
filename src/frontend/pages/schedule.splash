@@ -12,13 +12,28 @@ let SchedulePage = View{visible: false width: Fill height: Fill flow: Down
                     if record_string(item["location"]) && item.location != "" { Small{text: "地点：" + item.location} }
                     Small{text: schedule_display_time(item.start, item.timezone) + " → " + schedule_display_time(item.end, item.timezone)}
                     Small{text: schedule_zone_label(item.timezone) + " · 24 小时制"}
+                    Small{text: schedule_status_label(item)}
                     QuietButton{text: "编辑" on_click: || schedule_begin_edit(item.schedule_id)}
+                    if schedule_active(item) {
+                        View{width: Fill height: Fit flow: Right spacing: 8
+                            QuietButton{text: "标记完成" on_click: || schedule_change_status(item.schedule_id, item.version, "completed")}
+                            QuietButton{text: "取消日程" on_click: || schedule_change_status(item.schedule_id, item.version, "cancelled")}
+                        }
+                    }
                 }
                 Divider{}
             }
         }}
         Divider{}
         schedule_editor := View{width: Fill height: Fit flow: Down spacing: 7 on_render: || {
+            if schedule_saved_view {
+                Section{text: "日程已保存"}
+                Small{text: "可在上方查看安排，或添加下一条日程。"}
+                View{width: Fill height: Fit flow: Right spacing: 8
+                    Primary{text: "添加另一条" on_click: || schedule_begin_new()}
+                    QuietButton{text: "继续编辑" on_click: || schedule_begin_edit(schedule_edit_id)}
+                }
+            } else {
             if schedule_edit_id == nil { Section{text: "录入日程"} }
             else { Section{text: "编辑日程"} }
             Small{text: "日程标题"}
@@ -67,9 +82,13 @@ let SchedulePage = View{visible: false width: Fill height: Fill flow: Down
             }
             if schedule_next_day { Search{text: schedule_end_date_draft empty_text: "结束日期：年-月-日" on_change: |value| {schedule_end_date_draft = value}} }
             if schedule_edit_error != "" { Small{text: schedule_edit_error draw_text.color: accent} }
+            if schedule_allow_draft { Pill{text: "✓ 允许 Agent 提议改期" on_click: || {schedule_allow_draft = false ui.schedule_editor.render()}} }
+            else { SecondaryButton{text: "允许 Agent 提议改期（未开启）" on_click: || {schedule_allow_draft = true ui.schedule_editor.render()}} }
+            Small{text: "默认不允许改期；开启后仍须你确认，Agent 才能保存变更。"}
             View{width: Fill height: Fit flow: Right spacing: 8
                 Primary{text: "保存日程" on_click: || schedule_save_draft()}
                 if schedule_edit_id != nil { QuietButton{text: "新建" on_click: || schedule_begin_new()} }
+            }
             }
         }}
     }

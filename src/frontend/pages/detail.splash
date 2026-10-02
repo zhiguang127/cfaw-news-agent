@@ -28,26 +28,24 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
             Divider{}
             Section{text: "Agent 影响分析"}
             Small{text: "分析仅使用此条新闻的标题和摘要；日程变更须经用户确认。"}
-            agent_status := Small{text: "尚未分析"}
-            if analysis_state == "succeeded" && analysis_result != nil && analysis_active_row_id == reading.news_id {
-                if analysis_result.outcome == "no_change" { Small{text: "结论：目前无需调整"} }
-                else if analysis_result.outcome == "insufficient_evidence" { Small{text: "结论：现有证据不足"} }
-                else { Small{text: "结论：值得关注；建议不自动修改日程"} }
-                Text{text: analysis_result.explanation}
-                for suggestion in analysis_result.suggestions {
-                    Text{text: suggestion.change_summary}
-                    Text{text: suggestion.rationale}
-                    for uncertainty in suggestion.uncertainties { Small{text: "不确定性：" + uncertainty} }
-                    for id in suggestion.evidence_ids { Small{text: "证据：" + id} }
-                }
+            agent_status := Small{text: analysis_status_for_news(reading.news_id)}
+            let latest = history_latest_analysis(reading.news_id)
+            if latest != nil {
+                Small{text: "最近分析：" + history_outcome_label(latest.outcome) + " · " + age_label(latest.created_at)}
+                Text{text: latest.explanation}
+                if latest["session_unsaved"] == true { Small{text: "本次结果尚未完整保存，请到建议页重试保存。" draw_text.color: accent} }
             }
             let saved_suggestions = history_suggestions_for_news(reading.news_id)
             if saved_suggestions.len() > 0 {
                 Divider{}
                 Section{text: "建议历史"}
-                for saved in saved_suggestions {
+                if saved_suggestions.len() > 30 { Small{text: "显示最近30条建议；较早待处理项可从顶部建议入口打开。"} }
+                for i saved in saved_suggestions {
+                    if i >= saved_suggestions.len() - 30 || saved.suggestion_id == suggestion_focus_id {
                     Small{text: history_state_label(saved.state)}
                     Text{text: saved.change_summary}
+                    Text{text: saved.rationale}
+                    for uncertainty in saved.uncertainties { Small{text: "不确定性：" + uncertainty} }
                     if saved.proposed_action != nil {
                         Small{text: "拟议日程：" + saved.proposed_action.kind + " · " + saved.proposed_action.title}
                         Small{text: saved.proposed_action.start + " → " + saved.proposed_action.end + " · " + saved.proposed_action.timezone}
@@ -58,6 +56,10 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
                             SecondaryButton{text: "忽略" on_click: || update_suggestion_state(saved.suggestion_id, "dismissed")}
                             SecondaryButton{text: "撤回" on_click: || update_suggestion_state(saved.suggestion_id, "withdrawn")}
                         }
+                    }
+                    if saved.state == "needs_review" {
+                        Small{text: "最新证据不足，接受已暂停；请重新分析。"}
+                        SecondaryButton{text: "忽略" on_click: || update_suggestion_state(saved.suggestion_id, "dismissed")}
                     }
                     if schedule_confirmation_id == saved.suggestion_id {
                         Section{text: "用户确认 · 日程写入预览"}
@@ -72,6 +74,7 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
                             Primary{text: "确认并保存" on_click: || schedule_confirm()}
                             QuietButton{text: "取消" on_click: || schedule_cancel_confirm()}
                         }
+                    }
                     }
                 }
             }
