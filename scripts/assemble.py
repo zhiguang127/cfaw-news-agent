@@ -13,6 +13,7 @@ ORDER = [
     'src/data/ingestion/normalize.splash',
     'src/data/storage/records.splash',
     'src/data/storage/schedules.splash',
+    'src/data/storage/schedule_time.splash',
     'src/data/retrieval/interests.splash',
     'src/data/ingestion/http.splash',
     'src/data/ingestion/feeds.splash',

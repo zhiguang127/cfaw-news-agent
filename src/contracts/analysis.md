@@ -74,6 +74,14 @@ as UTC instants; overlapping entries block create and reschedule. The schedule
 page permits manual creation and version-checked editing. This is an in-app
 schedule, not a system-calendar integration or notification service.
 
+Manual entry also stores `content` and `location` strings. These are optional
+in existing version-1 files (missing means empty), and are included in Agent
+snapshots with the schedule. Rescheduling preserves these user-authored fields.
+The UI defaults to Beijing time and today's date, accepts separate 24-hour
+hour/minute fields, and also offers New York time with US DST rules from 2007.
+It constructs offset timestamps internally; users do not type RFC 3339.
+Nonexistent spring hours and ambiguous autumn hours are rejected explicitly.
+
 The validator accepts `create` with null schedule reference and `reschedule`
 only with matching snapshot `schedule_id` and `schedule_version`. A model
 proposal never writes automatically. The detail view previews the action,

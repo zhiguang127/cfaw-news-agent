@@ -5,6 +5,20 @@ fn agent_assert(condition, message){
     else { agent_validation_failures = agent_validation_failures + 1; print("FAIL agent: " + message) }
 }
 fn agent_test_validation(){
+    let beijing = schedule_entry_timestamp("2026-10-02", "9", "5", "Asia/Shanghai")
+    agent_assert(beijing.valid && beijing.timestamp == "2026-10-02T09:05:00+08:00", "simple Beijing clock input")
+    agent_assert(!schedule_entry_timestamp("2026-10-02", "24", "0", "Asia/Shanghai").valid, "24-hour input rejects hour 24")
+    agent_assert(!schedule_entry_timestamp("2026-10-02", "9", "60", "Asia/Shanghai").valid, "clock input rejects minute 60")
+    agent_assert(!schedule_entry_timestamp("2026-02-30", "9", "0", "Asia/Shanghai").valid, "clock input rejects impossible date")
+    agent_assert(!schedule_entry_timestamp("2026-10-02", "", "0", "Asia/Shanghai").valid, "clock input requires hour")
+    agent_assert(schedule_entry_timestamp("2026-07-01", "9", "0", "America/New_York").timestamp == "2026-07-01T09:00:00-04:00", "New York summer offset")
+    agent_assert(schedule_entry_timestamp("2026-01-01", "9", "0", "America/New_York").timestamp == "2026-01-01T09:00:00-05:00", "New York winter offset")
+    agent_assert(!schedule_entry_timestamp("2026-03-08", "2", "30", "America/New_York").valid, "DST spring missing hour rejected")
+    agent_assert(!schedule_entry_timestamp("2026-11-01", "1", "30", "America/New_York").valid, "DST autumn repeated hour rejected")
+    agent_assert(schedule_entry_timestamp("2026-03-08", "3", "0", "America/New_York").timestamp == "2026-03-08T03:00:00-04:00", "DST spring boundary offset")
+    agent_assert(schedule_entry_timestamp("2026-11-01", "2", "0", "America/New_York").timestamp == "2026-11-01T02:00:00-05:00", "DST autumn boundary offset")
+    let old_clock = schedule_entry_parts("2026-07-01T13:00:00Z", "America/New_York")
+    agent_assert(old_clock.date == "2026-07-01" && old_clock.hour == "09", "existing timestamps edit in selected zone")
     agent_assert(analysis_epoch_rfc3339(0) == nil, "unknown timestamp")
     agent_assert(analysis_epoch_rfc3339(86400) == "1970-01-02T00:00:00Z", "UTC date conversion")
     let no_change = fixture_analysis_no_change.parse_json()
@@ -68,6 +82,13 @@ fn agent_test_validation(){
     agent_assert(user_schedules.len() == 2 && schedule_find(created.item.schedule_id).version == 3, "schedule reload persistence")
 }
 fn agent_test_confirmation(){
+    let detailed = schedule_create_details("日程字段测试", "讨论项目", "线上", "2026-10-10T09:00:00+08:00", "2026-10-10T10:00:00+08:00", "Asia/Shanghai", nil)
+    agent_assert(detailed.success && detailed.item.content == "讨论项目" && detailed.item.location == "线上", "schedule content and location saved")
+    schedules_load()
+    let restored = schedule_find(detailed.item.schedule_id)
+    agent_assert(restored.content == "讨论项目" && restored.location == "线上", "schedule details survive reload")
+    let rescheduled = schedule_update(restored.schedule_id, restored.version, restored.title, "2026-10-10T11:00:00+08:00", "2026-10-10T12:00:00+08:00", restored.timezone, "details-reschedule")
+    agent_assert(rescheduled.success && rescheduled.item.content == "讨论项目" && rescheduled.item.location == "线上", "Agent reschedule preserves user details")
     let action = {kind: "create" title: "User confirmed" start: "2026-10-06T13:00:00+08:00" end: "2026-10-06T14:00:00+08:00" timezone: "Asia/Shanghai"}
     suggestion_history = [{suggestion_id: "confirm-fixture" deduplication_key: "fixture" state: "pending" created_at: 1
         analysis_id: "analysis-fixture" news_id: "fixture" interest_ids: ["interest"] evidence_ids: ["evidence"]
