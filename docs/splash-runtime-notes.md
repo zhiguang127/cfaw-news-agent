@@ -38,6 +38,23 @@ Consequences worth remembering:
 
 Indexing `array[i]` works, including on arrays returned by `parse_json()`.
 
+Iterating a **map yields its values, not its keys**. `for entry in some_map`
+binds the stored record; `some_map[entry]` is then an unknown key and reads
+back as `nil`. To test keys, iterate the key list separately.
+
+A `let` with a name that another file also declares **silently shadows** the
+earlier one rather than erroring. Two modules declaring `weather_days` — one as
+a list of day-of-month strings, one as a forecast horizon — produced a cascade
+of "variable not found" errors far from the cause. Keep top-level names unique
+across the assembled bundle; `assemble.py` emits its own, so check both sides.
+
+A map key first written after the literal starts empty, and `push` onto a
+global array from inside a function, do not reliably read back. Prefer carrying
+the value through a return value.
+
+`&&` / `||` cannot be assumed to short-circuit. Do not rely on `a != nil &&
+a["field"]` to protect a dereference; check in separate statements.
+
 ## Two rules that fail silently
 
 ### Reading an undeclared field throws

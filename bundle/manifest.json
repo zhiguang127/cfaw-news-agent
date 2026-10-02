@@ -13,13 +13,14 @@
   },
   "id": "dev.cfaw.news",
   "integrity": {
-    "bundle_blake3": "a82162a3eb4952dc5478ef38b266b3801d6e3ed2bfc550d96b161060b62dcfae"
+    "bundle_blake3": "83cf1568a0eea3c8627fd63e4a3c19d28e66b8fe5fd8e32e903d0c5793e7657a"
   },
   "name": "CFAW News",
   "network": {
     "hosts": [
       "api.open-meteo.com",
       "arstechnica.com",
+      "cdn.jsdelivr.net",
       "export.arxiv.org",
       "feeds.arstechnica.com",
       "feeds.bbci.co.uk",

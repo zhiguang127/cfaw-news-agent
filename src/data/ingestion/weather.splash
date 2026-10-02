@@ -245,3 +245,27 @@ fn weather_year_stamp(value){
     if text.len() >= 4 { return text }
     "0" + text
 }
+
+// The inverse of weather_day_stamp: a local calendar day back to a UTC
+// timestamp at the configured offset, at midnight. Used to turn a stored date
+// such as "2026-10-02" into something comparable with an event start.
+fn weather_time_stamp(day){
+    let parts = day.split("-")
+    if parts.len() != 3 { return 0 }
+    let y = weather_number(parts[0])
+    let m = weather_number(parts[1])
+    let d = weather_number(parts[2])
+    if m <= 2 { y = y - 1 }
+    let era = floor(y / 400)
+    let yoe = y - era * 400
+    let shifted = m
+    if m > 2 { shifted = m - 3 } else { shifted = m + 9 }
+    let doy = floor((153 * shifted + 2) / 5) + d - 1
+    let doe = yoe * 365 + floor(yoe / 4) - floor(yoe / 100) + doy
+    let z = era * 146097 + doe - 719468
+    z * 86400 - weather_utc_offset_seconds
+}
+// There is no integer parse; to_f64 is the only numeric conversion on a
+// string. Callers only ever pass a validated YYYY-MM-DD, and weather_day_valid
+// keeps anything else out before this is reached.
+fn weather_number(value){ value.to_f64() }

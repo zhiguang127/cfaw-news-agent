@@ -1,0 +1,65 @@
+// Pure shared checks for the statutory holiday calendar.
+//
+// A date the calendar does not cover is `known: false`, never "a normal
+// working day". The State Council publishes the following year around
+// November, so an app running in October genuinely does not know whether
+// 2027-01-01 is a holiday. Assuming it does would put invented working days
+// into a schedule, which is the failure this contract exists to prevent.
+let holiday_max_days = 60
+
+fn holiday_day_valid(d){
+    if !record_object(d) { return false }
+    if !weather_day_valid(d["date"]) { return false }
+    if d["is_off_day"] != true && d["is_off_day"] != false { return false }
+    if !record_string(d["name"]) || d["name"] == "" || d["name"].len() > 40 { return false }
+    // The date must survive a round trip through the calendar conversion, which
+    // rejects values the parser would otherwise pass through unchanged.
+    d["date"] == weather_day_stamp(weather_time_stamp(d["date"]))
+}
+
+fn holiday_catalog_valid(value){
+    if !record_object(value) || value["schema_version"] != 1 { return false }
+    if !record_string(value["year"]) || !regex("^[0-9]{4}$").test(value["year"]) { return false }
+    if !record_array(value["days"]) { return false }
+    if value["days"].len() == 0 || value["days"].len() > holiday_max_days { return false }
+    for d in value["days"] { if !holiday_day_valid(d) { return false } }
+    if !record_array(value["papers"]) || value["papers"].len() > 8 { return false }
+    for paper in value["papers"] { if !record_url(paper) { return false } }
+    value["year"] == value["days"][0]["date"].split("-")[0]
+}
+
+// The upstream file is an object with a numeric `year`, `papers` and camelCase
+// `days`. Normalize the days to this module's own field names; an `isOffDay`
+// that is not a boolean becomes nil and is then refused, never coerced.
+fn holiday_normalize_days(value){
+    if !record_object(value) { return nil }
+    if !record_array(value["days"]) { return nil }
+    let days = []
+    for d in value["days"] {
+        if !record_object(d) { return nil }
+        let is_off = nil
+        if d["isOffDay"] == true { is_off = true }
+        if d["isOffDay"] == false { is_off = false }
+        days.push({date: d["date"] is_off_day: is_off name: d["name"]})
+    }
+    days
+}
+
+fn holiday_normalize_papers(value){
+    let papers = []
+    if !record_object(value) || !record_array(value["papers"]) { return papers }
+    for paper in value["papers"] { if record_url(paper) { papers.push(paper) } }
+    papers
+}
+
+// The upstream `year` is a JSON number and there is no integer parse to compare
+// it with, so the year that was requested is used instead: holiday_catalog_valid
+// requires the first day to start with it, so a file served for the wrong year is
+// still refused.
+fn holiday_catalog_from_upstream(value, year){
+    let days = holiday_normalize_days(value)
+    if days == nil { return nil }
+    let catalog = {schema_version: 1 year: year days: days papers: holiday_normalize_papers(value)}
+    if !holiday_catalog_valid(catalog) { return nil }
+    catalog
+}

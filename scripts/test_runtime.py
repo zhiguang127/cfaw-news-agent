@@ -31,6 +31,8 @@ def run():
     source, _ = assemble(paths=paths)
     for name, file in [('fixture_rss', 'news-rss.xml'), ('fixture_atom', 'news-atom.xml'), ('fixture_hn', 'news-hn.json'),
                        ('fixture_weather', 'weather-daily.json'),
+                       ('fixture_holiday_2026', 'holiday-cn-2026.json'),
+                       ('fixture_holiday_empty', 'holiday-cn-unpublished.json'),
                        ('fixture_analysis_no_change', 'analysis-no-change.json'),
                        ('fixture_analysis_create', 'analysis-create.json'),
                        ('fixture_analysis_suggestion', 'analysis-suggestion.json'),
@@ -43,6 +45,7 @@ def run():
     else:
         source += (ROOT / 'tests/unit/news_runtime.splash').read_text(encoding='utf-8')
         source += (ROOT / 'tests/unit/weather_runtime.splash').read_text(encoding='utf-8')
+        source += (ROOT / 'tests/unit/holiday_runtime.splash').read_text(encoding='utf-8')
     (bundle / 'main.splash').write_text(source, encoding='utf-8')
     manifest = json.loads((ROOT / 'bundle/manifest.json').read_text())
     manifest['id'] = 'dev.cfaw.runtime-tests'
@@ -59,6 +62,7 @@ def run():
         startup.wShowWindow = 0
     report_path = work / 'data' / manifest['id'] / 'runtime-report.json'
     weather_report_path = work / 'data' / manifest['id'] / 'weather-report.json'
+    holiday_report_path = work / 'data' / manifest['id'] / 'holiday-report.json'
     with (work / 'host.log').open('w', encoding='utf-8') as log:
         process = subprocess.Popen([str(host), '--bundle', str(bundle), '--allow-unsigned', '--stamp', '--app-data', str(work / 'data'), '--remote', str(port)], cwd=host.parents[2], stdout=log, stderr=log, startupinfo=startup)
         try:
@@ -66,15 +70,16 @@ def run():
             # The weather module reports separately; either report is enough to
             # read results, and the totals are merged when both arrive.
             while time.monotonic() < deadline and process.poll() is None:
-                if report_path.exists() and (args.agent_only or weather_report_path.exists()):
+                secondary = holiday_report_path if weather_report_path.exists() else weather_report_path
+                if report_path.exists() and (args.agent_only or secondary.exists()):
                     break
                 if '[E]' in (work / 'host.log').read_text(encoding='utf-8', errors='replace'):
                     break
                 time.sleep(0.1)
-            if not report_path.exists() and not (args.agent_only and False) and not weather_report_path.exists():
+            if not report_path.exists() and not weather_report_path.exists() and not holiday_report_path.exists():
                 raise SystemExit(f'Runtime did not produce a report; inspect {work / "host.log"}')
             report = {'passed': 0, 'failed': 0, 'stages': {}}
-            for label, path in (('news', report_path), ('weather', weather_report_path)):
+            for label, path in (('news', report_path), ('weather', weather_report_path), ('holiday', holiday_report_path)):
                 if path.exists():
                     part = json.loads(path.read_text(encoding='utf-8'))
                     report['passed'] += part.get('passed', 0)
