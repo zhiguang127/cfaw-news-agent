@@ -1,0 +1,43 @@
+{
+  "latitude": 39.89455,
+  "longitude": 116.35983,
+  "generationtime_ms": 0.11038780212402344,
+  "utc_offset_seconds": 28800,
+  "timezone": "Asia/Shanghai",
+  "timezone_abbreviation": "GMT+8",
+  "elevation": 47.0,
+  "daily_units": {
+    "time": "iso8601",
+    "weather_code": "wmo code",
+    "temperature_2m_max": "°C",
+    "temperature_2m_min": "°C",
+    "precipitation_sum": "mm"
+  },
+  "daily": {
+    "time": [
+      "2026-10-02",
+      "2026-10-03",
+      "2026-10-04"
+    ],
+    "weather_code": [
+      2,
+      2,
+      3
+    ],
+    "temperature_2m_max": [
+      24.3,
+      25.1,
+      23.0
+    ],
+    "temperature_2m_min": [
+      15.5,
+      16.2,
+      15.0
+    ],
+    "precipitation_sum": [
+      0.0,
+      0.0,
+      0.0
+    ]
+  }
+}

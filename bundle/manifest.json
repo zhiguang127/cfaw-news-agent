@@ -18,6 +18,7 @@
   "name": "CFAW News",
   "network": {
     "hosts": [
+      "api.open-meteo.com",
       "arstechnica.com",
       "export.arxiv.org",
       "feeds.arstechnica.com",
@@ -28,6 +29,7 @@
       "rss.arxiv.org",
       "techcrunch.com",
       "venturebeat.com",
+      "www.airchinagroup.com",
       "www.cnbc.com",
       "www.techmeme.com",
       "www.theguardian.com",

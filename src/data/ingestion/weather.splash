@@ -1,0 +1,247 @@
+// City forecasts. One owner for cache, status and in-flight requests, in the
+// same shape as feeds.splash: no widget access, no writes to user records.
+//
+// Cities are fetched on demand. The supported list is data (cities.json), not
+// code, and a city is only requested once the user has actually looked at it.
+let weather_rows_by_city = {}
+let weather_status_by_city = {}
+let weather_tracked = []
+let weather_pending = 0
+let weather_generation = 0
+let weather_selection = ""
+
+// Same allowlist shape as news_request_allowed, over the forecast host only.
+fn weather_request_allowed(url){
+    if !record_string(url) { return false }
+    let parts = url.split("/")
+    parts.len() >= 3 && parts[0] == "https:" && parts[1] == "" && record_contains(weather_hosts, parts[2])
+}
+
+fn weather_city_by_cid(cid){ for c in weather_cities { if c.cid == cid { return c } } nil }
+fn weather_city_by_name(name){ for c in weather_cities { if c.name == name { return c } } nil }
+fn weather_is_tracked(cid){
+    for t in weather_tracked { if t == cid { return true } }
+    false
+}
+fn weather_initialize(){
+    for city in weather_cities {
+        weather_rows_by_city[city.cid] = []
+        weather_status_by_city[city.cid] = {state: "not_loaded" fetched_at: 0 error: "" count: 0}
+    }
+}
+
+// WMO code table, condensed to the text the product shows. Kept as a function
+// because the runtime has no lookup map literal with non-identifier keys.
+fn weather_condition(code){
+    if code == 0 { return "晴" }
+    if code == 1 || code == 2 { return "多云" }
+    if code == 3 { return "阴" }
+    if code == 45 || code == 48 { return "雾" }
+    if code == 51 || code == 53 || code == 55 { return "毛毛雨" }
+    if code == 56 || code == 57 { return "冻毛毛雨" }
+    if code == 61 { return "小雨" }
+    if code == 63 { return "中雨" }
+    if code == 65 { return "大雨" }
+    if code == 66 || code == 67 { return "冻雨" }
+    if code == 71 { return "小雪" }
+    if code == 73 { return "中雪" }
+    if code == 75 || code == 77 { return "大雪" }
+    if code == 80 || code == 81 { return "阵雨" }
+    if code == 82 { return "暴雨" }
+    if code == 85 || code == 86 { return "阵雪" }
+    if code == 95 || code == 96 || code == 99 { return "雷暴" }
+    "天气变化"
+}
+
+fn weather_url(city){
+    weather_endpoint
+    + "?latitude=" + city.lat
+    + "&longitude=" + city.lon
+    + "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum"
+    + "&forecast_days=" + weather_days
+    + "&timezone=Asia%2FShanghai"
+}
+
+fn weather_parse(city, body, fetched_at){
+    let out = []
+    // parse_json traps on a body that is not JSON; a bad response must be a
+    // refusal, not a crash.
+    let data = nil
+    try { data = body.parse_json() } { data = nil }
+    if !record_object(data) || !record_object(data["daily"]) || !record_array(data.daily["time"]) { return nil }
+    let days = data.daily.time
+    for i in days.len() {
+        let code = 0
+        if record_array(data.daily["weather_code"]) && i < data.daily.weather_code.len() && data.daily.weather_code[i] != nil { code = data.daily.weather_code[i] }
+        let tmax = nil
+        if record_array(data.daily["temperature_2m_max"]) && i < data.daily.temperature_2m_max.len() { tmax = data.daily.temperature_2m_max[i] }
+        let tmin = nil
+        if record_array(data.daily["temperature_2m_min"]) && i < data.daily.temperature_2m_min.len() { tmin = data.daily.temperature_2m_min[i] }
+        let precip = 0
+        if record_array(data.daily["precipitation_sum"]) && i < data.daily.precipitation_sum.len() && data.daily.precipitation_sum[i] != nil { precip = data.daily.precipitation_sum[i] }
+        let row = {forecast_id: city.cid + ":" + days[i] city_id: city.cid city_name: city.name
+            day: days[i] code: code condition: weather_condition(code)
+            temp_min_c: tmin temp_max_c: tmax precipitation_mm: precip fetched_at: fetched_at}
+        if !forecast_valid(row) { return nil }
+        out.push(row)
+    }
+    if out.len() == 0 { return nil }
+    out
+}
+
+fn weather_cache_valid(value, city){
+    if !record_object(value) || value["schema_version"] != 1 || value["city_id"] != city.cid { return false }
+    if !record_number(value["fetched_at"]) || !record_array(value["items"]) { return false }
+    for row in value["items"] { if !forecast_valid(row) || row["city_id"] != city.cid { return false } }
+    value["items"].len() <= weather_days
+}
+
+fn weather_read_cache(city){
+    let path = "weather_v1_" + city.cid + ".json"
+    if !fs.exists(path) { return }
+    try {
+        let cached = fs.read(path).parse_json()
+        if weather_cache_valid(cached, city) {
+            weather_rows_by_city[city.cid] = cached.items
+            weather_status_by_city[city.cid] = {state: "cached" fetched_at: cached.fetched_at error: "" count: cached.items.len()}
+        } else { weather_status_by_city[city.cid].error = "缓存格式无效，等待重新获取" }
+    } { weather_status_by_city[city.cid].error = "缓存读取失败" }
+}
+
+fn weather_load_cache(){
+    weather_initialize()
+    for city in weather_cities { weather_read_cache(city) }
+}
+
+fn weather_accept(city, result, fetched_at){
+    let status = weather_status_by_city[city.cid]
+    if !result.success { status.state = "error" status.error = result.error return false }
+    let rows = nil
+    try { rows = weather_parse(city, result.body, fetched_at) } { rows = nil }
+    if rows == nil { status.state = "error" status.error = "响应不是可解析的逐日预报" return false }
+    weather_rows_by_city[city.cid] = rows
+    status.state = "fresh"
+    status.error = ""
+    status.count = rows.len()
+    status.fetched_at = fetched_at
+    try {
+        fs.write("weather_v1_" + city.cid + ".json", {schema_version: 1 city_id: city.cid fetched_at: fetched_at items: rows}.to_json())
+    } { status.error = "预报已获取，但缓存保存失败" }
+    true
+}
+
+// One request per city, issued only when a city is actually looked at. These
+// run outside the news busy flag: a slow city must not stall the feed, and
+// thirty cities must not cost thirty serial round trips.
+fn weather_fetch_city(cid, generation){
+    let city = weather_city_by_cid(cid)
+    if city == nil { return }
+    if !weather_request_allowed(weather_url(city)) { return }
+    weather_status_by_city[cid].state = "loading"
+    weather_status_by_city[cid].error = ""
+    weather_pending = weather_pending + 1
+    news_http_request(weather_url(city), 0, fn(result){
+        if generation != weather_generation { return }
+        weather_pending = weather_pending - 1
+        weather_accept(city, result, time_now())
+        if weather_pending <= 0 { weather_pending = 0 }
+    })
+}
+
+fn weather_fetch_cities(cids, generation){
+    for cid in cids {
+        let city = weather_city_by_cid(cid)
+        if city == nil { continue }
+        if weather_status_by_city[cid].state == "loading" { continue }
+        if weather_status_by_city[cid].state == "fresh" { continue }
+        weather_fetch_city(cid, generation)
+    }
+}
+
+fn weather_track(cid, generation){
+    if weather_is_tracked(cid) { return }
+    if weather_tracked.len() >= weather_max_cities { return }
+    weather_tracked.push(cid)
+    weather_fetch_city(cid, generation)
+}
+
+fn weather_select(name){
+    weather_selection = name
+    if name == "" || name == weather_all_label { return }
+    let city = weather_city_by_name(name)
+    if city == nil { return }
+    if weather_is_tracked(city.cid) { return }
+    weather_tracked.push(city.cid)
+    weather_fetch_city(city.cid, weather_generation)
+}
+
+fn weather_cities_ready(){
+    let ready = 0
+    for cid in weather_tracked {
+        if weather_rows_by_city[cid].len() > 0 { ready = ready + 1 }
+    }
+    ready
+}
+
+// Tracked cities in the order they were added, filtered by the current
+// selection. Forecasts are grouped by city, then by day, so a trip with several
+// stops reads top to bottom.
+fn weather_rows(){
+    let out = []
+    for cid in weather_tracked {
+        let city = weather_city_by_cid(cid)
+        if city == nil { continue }
+        if weather_selection != "" && weather_selection != weather_all_label && city.name != weather_selection { continue }
+        for row in weather_rows_by_city[cid] { out.push(row) }
+    }
+    out
+}
+
+// A plain rule, not an importance judgement: does any forecast for the day of
+// an event carry rain or a severe condition? The Agent decides what that means.
+// Optional fields are read with bracket access on purpose: `event.start` traps
+// when the field is absent, `event["start"]` yields nil.
+fn weather_event_risk(event){
+    if !record_object(event) || !record_number(event["start"]) { return nil }
+    let day = weather_day_stamp(event["start"])
+    let wet = 0
+    let severe = nil
+    for row in weather_rows() {
+        if row["day"] != day { continue }
+        if row["precipitation_mm"] >= weather_alert_precipitation { wet = wet + 1 }
+        if row["code"] >= 95 { severe = row["condition"] }
+    }
+    if wet == 0 && severe == nil { return nil }
+    {day: day wet_cities: wet severe: severe}
+}
+
+// Local calendar day from a UTC timestamp. The host offset is explicit rather
+// than taken from the runtime clock, so the conversion is deterministic and
+// testable. Days-to-civil uses the standard 1970-epoch shift, with March as
+// the first month so leap days land at the end of the cycle.
+fn weather_day_stamp(epoch){
+    let local = floor((epoch + weather_utc_offset_seconds) / 86400)
+    let z = local + 719468
+    let era = floor(z / 146097)
+    let doe = z - era * 146097
+    let yoe = floor((doe - floor(doe / 1460) + floor(doe / 36524) - floor(doe / 146096)) / 365)
+    let y = yoe + era * 400
+    let doy = doe - (365 * yoe + floor(yoe / 4) - floor(yoe / 100))
+    let mp = floor((5 * doy + 2) / 153)
+    let d = doy - floor((153 * mp + 2) / 5) + 1
+    // March-based month index, shifted back into a January-based year.
+    let m = mp + 3
+    if m > 12 { m = m - 12 }
+    if m <= 2 { y = y + 1 }
+    weather_year_stamp(y) + "-" + weather_two(m) + "-" + weather_two(d)
+}
+fn weather_two(value){
+    let text = "" + value
+    if text.len() >= 2 { return text }
+    "0" + text
+}
+fn weather_year_stamp(value){
+    let text = "" + value
+    if text.len() >= 4 { return text }
+    "0" + text
+}

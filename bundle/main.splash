@@ -42,8 +42,66 @@ fn interest_record_valid(r){
 }
 // END src/contracts/news.splash
 
+// BEGIN src/contracts/weather.splash
+// Pure shared checks for city forecasts. A forecast has no publication
+// timestamp, so it is deliberately not a news_record: see
+// src/contracts/weather.md for why the two contracts are separate.
+fn weather_number_text(value){ regex("^-?[0-9]{1,3}(\\.[0-9]+)?$").test(value) }
+
+// Coordinate ranges are enforced by scripts/assemble.py when the catalog is
+// read; the runtime only checks the shape, because it has no float parse.
+
+// Range checks as string membership: the runtime has no integer parse, and
+// comparing the provider's own zero-padded text avoids a conversion entirely.
+// The digit pattern alone would accept 2026-13-45, so month and day are
+// checked separately and a nonsense date is refused rather than shown.
+let weather_months = ["01" "02" "03" "04" "05" "06" "07" "08" "09" "10" "11" "12"]
+let weather_day_numbers = ["01" "02" "03" "04" "05" "06" "07" "08" "09" "10" "11" "12" "13" "14" "15" "16" "17" "18" "19" "20" "21" "22" "23" "24" "25" "26" "27" "28" "29" "30" "31"]
+fn weather_day_valid(day){
+    if !record_string(day) { return false }
+    let parts = day.split("-")
+    if parts.len() != 3 { return false }
+    parts[0].len() == 4 && record_contains(weather_months, parts[1]) && record_contains(weather_day_numbers, parts[2])
+}
+fn city_valid(city){
+    if !record_object(city) { return false }
+    if !record_string(city["cid"]) || city["cid"] == "" { return false }
+    // Splash map keys must be ASCII identifiers; see docs/splash-runtime-notes.md.
+    if !regex("^[A-Za-z][A-Za-z0-9_]*$").test(city["cid"]) { return false }
+    if !record_string(city["name"]) || city["name"] == "" { return false }
+    if !record_string(city["lat"]) || !record_string(city["lon"]) { return false }
+    if !weather_number_text(city["lat"]) || !weather_number_text(city["lon"]) { return false }
+    true
+}
+fn forecast_valid(f){
+    if !record_object(f) { return false }
+    if !record_string(f["forecast_id"]) || f["forecast_id"] == "" { return false }
+    if !record_string(f["city_id"]) || !record_string(f["city_name"]) { return false }
+    if !weather_day_valid(f["day"]) { return false }
+    if !record_string(f["condition"]) { return false }
+    if !record_number(f["precipitation_mm"]) { return false }
+    if f["temp_min_c"] != nil && !record_number(f["temp_min_c"]) { return false }
+    if f["temp_max_c"] != nil && !record_number(f["temp_max_c"]) { return false }
+    if !record_number(f["code"]) { return false }
+    if !record_number(f["fetched_at"]) { return false }
+    if f["precipitation_mm"] < 0 { return false }
+    // 400 is beyond the WMO code table; a value outside it means the payload
+    // was not the forecast shape we asked for.
+    f["code"] <= 100 && f["forecast_id"] == f["city_id"] + ":" + f["day"]
+}
+fn weather_tracked_valid(cids){
+    if !record_array(cids) || cids.len() > weather_max_cities { return false }
+    for cid in cids {
+        if !record_string(cid) { return false }
+        if !record_contains(weather_cities_ids, cid) { return false }
+    }
+    true
+}
+// END src/contracts/weather.splash
+
 // BEGIN src/data/ingestion/sources.json
 let news_sources = [
+    {id: "airchina" label: "国航 · 民航出行" category: "travel" language: "zh" kind: "rss" enabled: true url: "https://www.airchinagroup.com/cnah/include/xwzx/news_rss.xml"}
     {id: "hn" label: "Hacker News" category: "tech" language: "en" kind: "hn" enabled: true url: "https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=20"}
     {id: "techmeme" label: "TechMeme" category: "tech" language: "en" kind: "digest" enabled: true url: "https://www.techmeme.com/feed.xml"}
     {id: "verge" label: "The Verge" category: "tech" language: "en" kind: "rss" enabled: true url: "https://www.theverge.com/rss/index.xml"}
@@ -62,8 +120,51 @@ let news_sources = [
     {id: "ap" label: "AP News · Google News" category: "world" language: "en" kind: "google" enabled: false url: "https://news.google.com/rss/search?q=site:apnews.com+when:1d&hl=en-US&gl=US&ceid=US:en"}
     {id: "mofcom" label: "商务部 · Google News" category: "china" language: "zh" kind: "google" enabled: false url: "https://news.google.com/rss/search?q=site:mofcom.gov.cn+when:7d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"}
 ]
-let news_hosts = ["arstechnica.com", "export.arxiv.org", "feeds.arstechnica.com", "feeds.bbci.co.uk", "hn.algolia.com", "news.google.com", "news.mit.edu", "rss.arxiv.org", "techcrunch.com", "venturebeat.com", "www.cnbc.com", "www.techmeme.com", "www.theguardian.com", "www.theverge.com"]
+let news_hosts = ["arstechnica.com", "export.arxiv.org", "feeds.arstechnica.com", "feeds.bbci.co.uk", "hn.algolia.com", "news.google.com", "news.mit.edu", "rss.arxiv.org", "techcrunch.com", "venturebeat.com", "www.airchinagroup.com", "www.cnbc.com", "www.techmeme.com", "www.theguardian.com", "www.theverge.com"]
 // END src/data/ingestion/sources.json
+
+// BEGIN src/data/ingestion/cities.json
+let weather_cities = [
+    {cid: "w01" name: "北京" lat: 39.9042 lon: 116.4074}
+    {cid: "w02" name: "上海" lat: 31.2304 lon: 121.4737}
+    {cid: "w03" name: "广州" lat: 23.1291 lon: 113.2644}
+    {cid: "w04" name: "深圳" lat: 22.5431 lon: 114.0579}
+    {cid: "w05" name: "成都" lat: 30.5728 lon: 104.0668}
+    {cid: "w06" name: "重庆" lat: 29.563 lon: 106.5516}
+    {cid: "w07" name: "杭州" lat: 30.2741 lon: 120.1551}
+    {cid: "w08" name: "南京" lat: 32.0603 lon: 118.7969}
+    {cid: "w09" name: "武汉" lat: 30.5928 lon: 114.3055}
+    {cid: "w10" name: "西安" lat: 34.3416 lon: 108.9398}
+    {cid: "w11" name: "天津" lat: 39.3434 lon: 117.3616}
+    {cid: "w12" name: "苏州" lat: 31.2989 lon: 120.5853}
+    {cid: "w13" name: "郑州" lat: 34.7466 lon: 113.6254}
+    {cid: "w14" name: "长沙" lat: 28.2282 lon: 112.9388}
+    {cid: "w15" name: "青岛" lat: 36.0671 lon: 120.3826}
+    {cid: "w16" name: "沈阳" lat: 41.8057 lon: 123.4315}
+    {cid: "w17" name: "大连" lat: 38.914 lon: 121.6147}
+    {cid: "w18" name: "哈尔滨" lat: 45.8038 lon: 126.5349}
+    {cid: "w19" name: "长春" lat: 43.8171 lon: 125.3235}
+    {cid: "w20" name: "济南" lat: 36.6512 lon: 117.1201}
+    {cid: "w21" name: "合肥" lat: 31.8206 lon: 117.2272}
+    {cid: "w22" name: "福州" lat: 26.0745 lon: 119.2965}
+    {cid: "w23" name: "厦门" lat: 24.4798 lon: 118.0894}
+    {cid: "w24" name: "南昌" lat: 28.682 lon: 115.8579}
+    {cid: "w25" name: "昆明" lat: 25.0389 lon: 102.7183}
+    {cid: "w26" name: "贵阳" lat: 26.647 lon: 106.6302}
+    {cid: "w27" name: "南宁" lat: 22.817 lon: 108.3665}
+    {cid: "w28" name: "海口" lat: 20.0444 lon: 110.1999}
+    {cid: "w29" name: "三亚" lat: 18.2528 lon: 109.5119}
+    {cid: "w30" name: "兰州" lat: 36.0611 lon: 103.8343}
+]
+let weather_cities_ids = ["w01", "w02", "w03", "w04", "w05", "w06", "w07", "w08", "w09", "w10", "w11", "w12", "w13", "w14", "w15", "w16", "w17", "w18", "w19", "w20", "w21", "w22", "w23", "w24", "w25", "w26", "w27", "w28", "w29", "w30"]
+let weather_endpoint = "https://api.open-meteo.com/v1/forecast"
+let weather_hosts = ["api.open-meteo.com"]
+let weather_days = 7
+let weather_max_cities = 12
+let weather_utc_offset_seconds = 28800
+let weather_alert_precipitation = 5.0
+let weather_all_label = "全部"
+// END src/data/ingestion/cities.json
 
 // BEGIN src/data/ingestion/normalize.splash
 fn news_source(id){
@@ -578,6 +679,80 @@ fn schedule_apply_action(action, suggestion_id){
 }
 // END src/data/storage/schedules.splash
 
+// BEGIN src/data/storage/weather.splash
+// Persisted city selection. Follows the conventions in records.splash: one
+// writer, {schema_version, ...} on disk, a warning string instead of a thrown
+// error, and the in-memory value stays usable when the write fails.
+//
+// Forecasts themselves are cache, not user records: weather_read_cache owns
+// those files and a corrupt cache degrades to "not loaded" without touching
+// anything the user authored.
+let weather_file = {path: "weather_selection_v1.json" writable: true recovered: false}
+let weather_warning = ""
+
+fn weather_warn(text){
+    if weather_warning != "" {
+        weather_warning = weather_warning + "; "
+    }
+    weather_warning = weather_warning + text
+}
+
+fn weather_selection_document_valid(value){
+    if !record_object(value) || value["schema_version"] != 1 { return false }
+    if !record_array(value["tracked"]) { return false }
+    weather_tracked_valid(value["tracked"])
+}
+
+fn weather_selection_read(){
+    if !fs.exists(weather_file["path"]) {
+        return
+    }
+    // fs.read and parse_json are isolated in their own try, as in
+    // records.splash: a trap inside a larger try body is not dependable.
+    let raw = ""
+    try { raw = fs.read(weather_file["path"]) } { raw = "" }
+    if raw == "" {
+        weather_warn("城市设置读取失败，本次使用默认值")
+        return
+    }
+    let parsed = nil
+    try { parsed = raw.parse_json() } { parsed = nil }
+    if parsed == nil {
+        weather_warn("城市设置不是有效 JSON，本次使用默认值")
+        weather_file.writable = false
+        return
+    }
+    if !weather_selection_document_valid(parsed) {
+        weather_warn("城市设置格式不受支持，本次使用默认值；原文件未覆盖")
+        return
+    }
+    weather_tracked = []
+    for cid in parsed["tracked"] { weather_track(cid, weather_generation) }
+}
+
+fn weather_selection_write(){
+    if !weather_file.writable {
+        weather_warn("城市设置只读，本次选择仅在当前会话有效")
+        return
+    }
+    try {
+        fs.write(weather_file["path"], {schema_version: 1 tracked: weather_tracked}.to_json())
+        weather_warning = ""
+    } {
+        weather_warn("城市设置保存失败，本次选择仅在当前会话有效")
+    }
+}
+
+fn weather_load(){
+    weather_file.writable = true
+    weather_file.recovered = false
+    weather_warning = ""
+    weather_initialize()
+    weather_selection_read()
+    for city in weather_cities { weather_read_cache(city) }
+}
+// END src/data/storage/weather.splash
+
 // BEGIN src/data/retrieval/interests.splash
 // Lexical matching only. These reasons describe user rules, never Agent judgment.
 let interest_keyword_matchers = {}
@@ -626,10 +801,15 @@ fn news_filter(rows, interests, category, followed_only, query){
 // END src/data/retrieval/interests.splash
 
 // BEGIN src/data/ingestion/http.splash
+// One allowlist for every outbound request. News feeds use news_hosts; city
+// forecasts use weather_hosts. Both are generated by scripts/assemble.py from
+// the data files, so a host cannot be requested without being declared there
+// and listed in bundle/manifest.json.
 fn news_request_allowed(url){
     if !record_string(url) { return false }
     let parts = url.split("/")
-    parts.len() >= 3 && parts[0] == "https:" && parts[1] == "" && record_contains(news_hosts, parts[2])
+    if parts.len() < 3 || parts[0] != "https:" || parts[1] != "" { return false }
+    record_contains(news_hosts, parts[2]) || record_contains(weather_hosts, parts[2])
 }
 fn news_redirect_url(current, location){
     if !record_string(location) { return nil }
@@ -846,6 +1026,256 @@ fn feed_cancel(){
     }
 }
 // END src/data/ingestion/feeds.splash
+
+// BEGIN src/data/ingestion/weather.splash
+// City forecasts. One owner for cache, status and in-flight requests, in the
+// same shape as feeds.splash: no widget access, no writes to user records.
+//
+// Cities are fetched on demand. The supported list is data (cities.json), not
+// code, and a city is only requested once the user has actually looked at it.
+let weather_rows_by_city = {}
+let weather_status_by_city = {}
+let weather_tracked = []
+let weather_pending = 0
+let weather_generation = 0
+let weather_selection = ""
+
+// Same allowlist shape as news_request_allowed, over the forecast host only.
+fn weather_request_allowed(url){
+    if !record_string(url) { return false }
+    let parts = url.split("/")
+    parts.len() >= 3 && parts[0] == "https:" && parts[1] == "" && record_contains(weather_hosts, parts[2])
+}
+
+fn weather_city_by_cid(cid){ for c in weather_cities { if c.cid == cid { return c } } nil }
+fn weather_city_by_name(name){ for c in weather_cities { if c.name == name { return c } } nil }
+fn weather_is_tracked(cid){
+    for t in weather_tracked { if t == cid { return true } }
+    false
+}
+fn weather_initialize(){
+    for city in weather_cities {
+        weather_rows_by_city[city.cid] = []
+        weather_status_by_city[city.cid] = {state: "not_loaded" fetched_at: 0 error: "" count: 0}
+    }
+}
+
+// WMO code table, condensed to the text the product shows. Kept as a function
+// because the runtime has no lookup map literal with non-identifier keys.
+fn weather_condition(code){
+    if code == 0 { return "晴" }
+    if code == 1 || code == 2 { return "多云" }
+    if code == 3 { return "阴" }
+    if code == 45 || code == 48 { return "雾" }
+    if code == 51 || code == 53 || code == 55 { return "毛毛雨" }
+    if code == 56 || code == 57 { return "冻毛毛雨" }
+    if code == 61 { return "小雨" }
+    if code == 63 { return "中雨" }
+    if code == 65 { return "大雨" }
+    if code == 66 || code == 67 { return "冻雨" }
+    if code == 71 { return "小雪" }
+    if code == 73 { return "中雪" }
+    if code == 75 || code == 77 { return "大雪" }
+    if code == 80 || code == 81 { return "阵雨" }
+    if code == 82 { return "暴雨" }
+    if code == 85 || code == 86 { return "阵雪" }
+    if code == 95 || code == 96 || code == 99 { return "雷暴" }
+    "天气变化"
+}
+
+fn weather_url(city){
+    weather_endpoint
+    + "?latitude=" + city.lat
+    + "&longitude=" + city.lon
+    + "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum"
+    + "&forecast_days=" + weather_days
+    + "&timezone=Asia%2FShanghai"
+}
+
+fn weather_parse(city, body, fetched_at){
+    let out = []
+    // parse_json traps on a body that is not JSON; a bad response must be a
+    // refusal, not a crash.
+    let data = nil
+    try { data = body.parse_json() } { data = nil }
+    if !record_object(data) || !record_object(data["daily"]) || !record_array(data.daily["time"]) { return nil }
+    let days = data.daily.time
+    for i in days.len() {
+        let code = 0
+        if record_array(data.daily["weather_code"]) && i < data.daily.weather_code.len() && data.daily.weather_code[i] != nil { code = data.daily.weather_code[i] }
+        let tmax = nil
+        if record_array(data.daily["temperature_2m_max"]) && i < data.daily.temperature_2m_max.len() { tmax = data.daily.temperature_2m_max[i] }
+        let tmin = nil
+        if record_array(data.daily["temperature_2m_min"]) && i < data.daily.temperature_2m_min.len() { tmin = data.daily.temperature_2m_min[i] }
+        let precip = 0
+        if record_array(data.daily["precipitation_sum"]) && i < data.daily.precipitation_sum.len() && data.daily.precipitation_sum[i] != nil { precip = data.daily.precipitation_sum[i] }
+        let row = {forecast_id: city.cid + ":" + days[i] city_id: city.cid city_name: city.name
+            day: days[i] code: code condition: weather_condition(code)
+            temp_min_c: tmin temp_max_c: tmax precipitation_mm: precip fetched_at: fetched_at}
+        if !forecast_valid(row) { return nil }
+        out.push(row)
+    }
+    if out.len() == 0 { return nil }
+    out
+}
+
+fn weather_cache_valid(value, city){
+    if !record_object(value) || value["schema_version"] != 1 || value["city_id"] != city.cid { return false }
+    if !record_number(value["fetched_at"]) || !record_array(value["items"]) { return false }
+    for row in value["items"] { if !forecast_valid(row) || row["city_id"] != city.cid { return false } }
+    value["items"].len() <= weather_days
+}
+
+fn weather_read_cache(city){
+    let path = "weather_v1_" + city.cid + ".json"
+    if !fs.exists(path) { return }
+    try {
+        let cached = fs.read(path).parse_json()
+        if weather_cache_valid(cached, city) {
+            weather_rows_by_city[city.cid] = cached.items
+            weather_status_by_city[city.cid] = {state: "cached" fetched_at: cached.fetched_at error: "" count: cached.items.len()}
+        } else { weather_status_by_city[city.cid].error = "缓存格式无效，等待重新获取" }
+    } { weather_status_by_city[city.cid].error = "缓存读取失败" }
+}
+
+fn weather_load_cache(){
+    weather_initialize()
+    for city in weather_cities { weather_read_cache(city) }
+}
+
+fn weather_accept(city, result, fetched_at){
+    let status = weather_status_by_city[city.cid]
+    if !result.success { status.state = "error" status.error = result.error return false }
+    let rows = nil
+    try { rows = weather_parse(city, result.body, fetched_at) } { rows = nil }
+    if rows == nil { status.state = "error" status.error = "响应不是可解析的逐日预报" return false }
+    weather_rows_by_city[city.cid] = rows
+    status.state = "fresh"
+    status.error = ""
+    status.count = rows.len()
+    status.fetched_at = fetched_at
+    try {
+        fs.write("weather_v1_" + city.cid + ".json", {schema_version: 1 city_id: city.cid fetched_at: fetched_at items: rows}.to_json())
+    } { status.error = "预报已获取，但缓存保存失败" }
+    true
+}
+
+// One request per city, issued only when a city is actually looked at. These
+// run outside the news busy flag: a slow city must not stall the feed, and
+// thirty cities must not cost thirty serial round trips.
+fn weather_fetch_city(cid, generation){
+    let city = weather_city_by_cid(cid)
+    if city == nil { return }
+    if !weather_request_allowed(weather_url(city)) { return }
+    weather_status_by_city[cid].state = "loading"
+    weather_status_by_city[cid].error = ""
+    weather_pending = weather_pending + 1
+    news_http_request(weather_url(city), 0, fn(result){
+        if generation != weather_generation { return }
+        weather_pending = weather_pending - 1
+        weather_accept(city, result, time_now())
+        if weather_pending <= 0 { weather_pending = 0 }
+    })
+}
+
+fn weather_fetch_cities(cids, generation){
+    for cid in cids {
+        let city = weather_city_by_cid(cid)
+        if city == nil { continue }
+        if weather_status_by_city[cid].state == "loading" { continue }
+        if weather_status_by_city[cid].state == "fresh" { continue }
+        weather_fetch_city(cid, generation)
+    }
+}
+
+fn weather_track(cid, generation){
+    if weather_is_tracked(cid) { return }
+    if weather_tracked.len() >= weather_max_cities { return }
+    weather_tracked.push(cid)
+    weather_fetch_city(cid, generation)
+}
+
+fn weather_select(name){
+    weather_selection = name
+    if name == "" || name == weather_all_label { return }
+    let city = weather_city_by_name(name)
+    if city == nil { return }
+    if weather_is_tracked(city.cid) { return }
+    weather_tracked.push(city.cid)
+    weather_fetch_city(city.cid, weather_generation)
+}
+
+fn weather_cities_ready(){
+    let ready = 0
+    for cid in weather_tracked {
+        if weather_rows_by_city[cid].len() > 0 { ready = ready + 1 }
+    }
+    ready
+}
+
+// Tracked cities in the order they were added, filtered by the current
+// selection. Forecasts are grouped by city, then by day, so a trip with several
+// stops reads top to bottom.
+fn weather_rows(){
+    let out = []
+    for cid in weather_tracked {
+        let city = weather_city_by_cid(cid)
+        if city == nil { continue }
+        if weather_selection != "" && weather_selection != weather_all_label && city.name != weather_selection { continue }
+        for row in weather_rows_by_city[cid] { out.push(row) }
+    }
+    out
+}
+
+// A plain rule, not an importance judgement: does any forecast for the day of
+// an event carry rain or a severe condition? The Agent decides what that means.
+// Optional fields are read with bracket access on purpose: `event.start` traps
+// when the field is absent, `event["start"]` yields nil.
+fn weather_event_risk(event){
+    if !record_object(event) || !record_number(event["start"]) { return nil }
+    let day = weather_day_stamp(event["start"])
+    let wet = 0
+    let severe = nil
+    for row in weather_rows() {
+        if row["day"] != day { continue }
+        if row["precipitation_mm"] >= weather_alert_precipitation { wet = wet + 1 }
+        if row["code"] >= 95 { severe = row["condition"] }
+    }
+    if wet == 0 && severe == nil { return nil }
+    {day: day wet_cities: wet severe: severe}
+}
+
+// Local calendar day from a UTC timestamp. The host offset is explicit rather
+// than taken from the runtime clock, so the conversion is deterministic and
+// testable. Days-to-civil uses the standard 1970-epoch shift, with March as
+// the first month so leap days land at the end of the cycle.
+fn weather_day_stamp(epoch){
+    let local = floor((epoch + weather_utc_offset_seconds) / 86400)
+    let z = local + 719468
+    let era = floor(z / 146097)
+    let doe = z - era * 146097
+    let yoe = floor((doe - floor(doe / 1460) + floor(doe / 36524) - floor(doe / 146096)) / 365)
+    let y = yoe + era * 400
+    let doy = doe - (365 * yoe + floor(yoe / 4) - floor(yoe / 100))
+    let mp = floor((5 * doy + 2) / 153)
+    let d = doy - floor((153 * mp + 2) / 5) + 1
+    // March-based month index, shifted back into a January-based year.
+    let m = mp + 3
+    if m > 12 { m = m - 12 }
+    if m <= 2 { y = y + 1 }
+    weather_year_stamp(y) + "-" + weather_two(m) + "-" + weather_two(d)
+}
+fn weather_two(value){
+    let text = "" + value
+    if text.len() >= 2 { return text }
+    "0" + text
+}
+fn weather_year_stamp(value){
+    let text = "" + value
+    if text.len() >= 4 { return text }
+    "0" + text
+}
+// END src/data/ingestion/weather.splash
 
 // BEGIN src/agent/context.splash
 // Build the bounded, application-owned snapshot passed to the single Agent.
