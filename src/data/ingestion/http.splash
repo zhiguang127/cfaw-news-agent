@@ -7,7 +7,7 @@ fn news_request_allowed(url){
     if !record_string(url) { return false }
     let parts = url.split("/")
     if parts.len() < 3 || parts[0] != "https:" || parts[1] != "" { return false }
-    record_contains(news_hosts, parts[2]) || record_contains(weather_hosts, parts[2]) || record_contains(holiday_hosts, parts[2])
+    record_contains(news_hosts, parts[2]) || record_contains(weather_hosts, parts[2]) || record_contains(holiday_hosts, parts[2]) || record_contains(fx_hosts, parts[2])
 }
 fn news_redirect_url(current, location){
     if !record_string(location) { return nil }

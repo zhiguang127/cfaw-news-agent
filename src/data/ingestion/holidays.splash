@@ -42,10 +42,10 @@ fn holiday_ingest(catalog){
     for d in catalog["days"] {
         holiday_by_day[d["date"]] = {date: d["date"] is_off_day: d["is_off_day"] name: d["name"] year: catalog["year"]}
     }
-    // Provenance is keyed by "<year>|<url>" instead of a nested map of arrays:
-    // a map key first written after the literal starts empty does not reliably
-    // read back, and pushing onto a global array from inside a function does
-    // not propagate either. A flat map write is the pattern that does work.
+    // Loaded years are tracked as their own flat array rather than as a nested
+    // map of year -> urls: a map key first written after the literal does not
+    // reliably read back, while a plain write to an existing top level
+    // collection does.
     holiday_years_loaded.push(catalog["year"])
     true
 }

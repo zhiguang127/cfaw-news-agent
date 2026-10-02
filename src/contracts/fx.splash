@@ -1,0 +1,69 @@
+// Pure shared checks for exchange rates. fx_code_valid lives here so every
+// module and test agrees on what a currency code is.
+fn fx_code_valid(code){ record_string(code) && regex("^[a-z]{3}$").test(code) }
+
+// Rates are quoted per 1 unit of the base currency, which is the direction a
+// traveller needs: it answers "what does 100 yuan buy" without the caller
+// inverting anything.
+fn fx_amount(table, code){
+    if !record_object(table) { return nil }
+    if !record_string(table["base"]) { return nil }
+    if !fx_code_valid(code) { return nil }
+    let source = table["source"]
+    if !record_object(source) { return nil }
+    let amount = source[code]
+    if !record_number(amount) { return nil }
+    if amount <= 0 { return nil }
+    amount
+}
+
+// A JSON object's members cannot be inspected in this runtime. Iterating it
+// yields values rather than keys, there are no keys()/entries()/values()
+// methods, and len() on it reports 0 regardless of how many members it has.
+// So fx_table_valid can only check what can be named, and the real gate is
+// fx_amount: every currency a caller asks for is checked for a valid ISO code
+// and a positive amount on the way out.
+fn fx_table_valid(table){
+    if !record_object(table) || table["schema_version"] != 1 { return false }
+    if !weather_day_valid(table["date"]) { return false }
+    if !record_string(table["base"]) || !fx_code_valid(table["base"]) { return false }
+    if !record_object(table["source"]) { return false }
+    if !record_number(table["fetched_at"]) { return false }
+    true
+}
+
+// The upstream file is {date, <base>: {<currency>: <amount>}} with flat numbers,
+// and it mixes crypto tickers such as "1inch" and "aave" into the same map.
+// The base object is carried through unchanged rather than copied into a
+// derived map: keys written into a map literal created inside a function do not
+// read back, so a filtered copy would silently come out empty. Callers reach
+// values through fx_amount(), which applies the currency-code filter and the
+// positive-amount rule.
+fn fx_table_from_upstream(value, base, expected_date){
+    if !record_object(value) { return nil }
+    if !weather_day_valid(value["date"]) { return nil }
+    if expected_date != "" && value["date"] != expected_date { return nil }
+    if !fx_code_valid(base) { return nil }
+    if !record_object(value[base]) { return nil }
+    // fetched_at is declared here, not added later: writing a field a record
+    // does not declare is a runtime error, not a nil.
+    let table = {schema_version: 1 date: value["date"] base: base source: value[base] fetched_at: 0}
+    if !fx_table_valid(table) { return nil }
+    table
+}
+
+fn fx_record_valid(r){
+    if !record_object(r) { return false }
+    if !fx_code_valid(r["currency"]) { return false }
+    if !weather_day_valid(r["rate_date"]) { return false }
+    if !record_number(r["per_cny"]) || r["per_cny"] <= 0 { return false }
+    if !record_number(r["fetched_at"]) { return false }
+    // change_ratio is nil when there is no earlier day to compare against, and
+    // it is never 0 as a stand-in for "no comparison": zero is a real, reportable
+    // movement and conflating the two would hide a stale rate.
+    if r["previous_per_cny"] != nil && !record_number(r["previous_per_cny"]) { return false }
+    if r["previous_per_cny"] != nil && r["previous_per_cny"] <= 0 { return false }
+    if r["change_ratio"] != nil && !record_number(r["change_ratio"]) { return false }
+    if r["change_ratio"] != nil && r["previous_per_cny"] == nil { return false }
+    true
+}

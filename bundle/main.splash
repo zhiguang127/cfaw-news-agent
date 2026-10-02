@@ -167,6 +167,78 @@ fn holiday_catalog_from_upstream(value, year){
 }
 // END src/contracts/holiday.splash
 
+// BEGIN src/contracts/fx.splash
+// Pure shared checks for exchange rates. fx_code_valid lives here so every
+// module and test agrees on what a currency code is.
+fn fx_code_valid(code){ record_string(code) && regex("^[a-z]{3}$").test(code) }
+
+// Rates are quoted per 1 unit of the base currency, which is the direction a
+// traveller needs: it answers "what does 100 yuan buy" without the caller
+// inverting anything.
+fn fx_amount(table, code){
+    if !record_object(table) { return nil }
+    if !record_string(table["base"]) { return nil }
+    if !fx_code_valid(code) { return nil }
+    let source = table["source"]
+    if !record_object(source) { return nil }
+    let amount = source[code]
+    if !record_number(amount) { return nil }
+    if amount <= 0 { return nil }
+    amount
+}
+
+// A JSON object's members cannot be inspected in this runtime. Iterating it
+// yields values rather than keys, there are no keys()/entries()/values()
+// methods, and len() on it reports 0 regardless of how many members it has.
+// So fx_table_valid can only check what can be named, and the real gate is
+// fx_amount: every currency a caller asks for is checked for a valid ISO code
+// and a positive amount on the way out.
+fn fx_table_valid(table){
+    if !record_object(table) || table["schema_version"] != 1 { return false }
+    if !weather_day_valid(table["date"]) { return false }
+    if !record_string(table["base"]) || !fx_code_valid(table["base"]) { return false }
+    if !record_object(table["source"]) { return false }
+    if !record_number(table["fetched_at"]) { return false }
+    true
+}
+
+// The upstream file is {date, <base>: {<currency>: <amount>}} with flat numbers,
+// and it mixes crypto tickers such as "1inch" and "aave" into the same map.
+// The base object is carried through unchanged rather than copied into a
+// derived map: keys written into a map literal created inside a function do not
+// read back, so a filtered copy would silently come out empty. Callers reach
+// values through fx_amount(), which applies the currency-code filter and the
+// positive-amount rule.
+fn fx_table_from_upstream(value, base, expected_date){
+    if !record_object(value) { return nil }
+    if !weather_day_valid(value["date"]) { return nil }
+    if expected_date != "" && value["date"] != expected_date { return nil }
+    if !fx_code_valid(base) { return nil }
+    if !record_object(value[base]) { return nil }
+    // fetched_at is declared here, not added later: writing a field a record
+    // does not declare is a runtime error, not a nil.
+    let table = {schema_version: 1 date: value["date"] base: base source: value[base] fetched_at: 0}
+    if !fx_table_valid(table) { return nil }
+    table
+}
+
+fn fx_record_valid(r){
+    if !record_object(r) { return false }
+    if !fx_code_valid(r["currency"]) { return false }
+    if !weather_day_valid(r["rate_date"]) { return false }
+    if !record_number(r["per_cny"]) || r["per_cny"] <= 0 { return false }
+    if !record_number(r["fetched_at"]) { return false }
+    // change_ratio is nil when there is no earlier day to compare against, and
+    // it is never 0 as a stand-in for "no comparison": zero is a real, reportable
+    // movement and conflating the two would hide a stale rate.
+    if r["previous_per_cny"] != nil && !record_number(r["previous_per_cny"]) { return false }
+    if r["previous_per_cny"] != nil && r["previous_per_cny"] <= 0 { return false }
+    if r["change_ratio"] != nil && !record_number(r["change_ratio"]) { return false }
+    if r["change_ratio"] != nil && r["previous_per_cny"] == nil { return false }
+    true
+}
+// END src/contracts/fx.splash
+
 // BEGIN src/data/ingestion/sources.json
 let news_sources = [
     {id: "airchina" label: "国航 · 民航出行" category: "travel" language: "zh" kind: "rss" enabled: true url: "https://www.airchinagroup.com/cnah/include/xwzx/news_rss.xml"}
@@ -968,7 +1040,7 @@ fn news_request_allowed(url){
     if !record_string(url) { return false }
     let parts = url.split("/")
     if parts.len() < 3 || parts[0] != "https:" || parts[1] != "" { return false }
-    record_contains(news_hosts, parts[2]) || record_contains(weather_hosts, parts[2]) || record_contains(holiday_hosts, parts[2])
+    record_contains(news_hosts, parts[2]) || record_contains(weather_hosts, parts[2]) || record_contains(holiday_hosts, parts[2]) || record_contains(fx_hosts, parts[2])
 }
 fn news_redirect_url(current, location){
     if !record_string(location) { return nil }
@@ -1505,10 +1577,10 @@ fn holiday_ingest(catalog){
     for d in catalog["days"] {
         holiday_by_day[d["date"]] = {date: d["date"] is_off_day: d["is_off_day"] name: d["name"] year: catalog["year"]}
     }
-    // Provenance is keyed by "<year>|<url>" instead of a nested map of arrays:
-    // a map key first written after the literal starts empty does not reliably
-    // read back, and pushing onto a global array from inside a function does
-    // not propagate either. A flat map write is the pattern that does work.
+    // Loaded years are tracked as their own flat array rather than as a nested
+    // map of year -> urls: a map key first written after the literal does not
+    // reliably read back, while a plain write to an existing top level
+    // collection does.
     holiday_years_loaded.push(catalog["year"])
     true
 }
@@ -1632,6 +1704,193 @@ fn holiday_event_conflict(event){
     return {day: day known: true kind: "makeup_workday" name: info["name"]}
 }
 // END src/data/ingestion/holidays.splash
+
+// BEGIN src/data/ingestion/fx.splash
+// Exchange rates for the base currency, quoted per 1 unit of it.
+//
+// One file per day covers every currency, so tracking N currencies still costs
+// one request per day. A small window of daily files is kept so a rate can be
+// compared with the previous available day; that comparison is what decides
+// whether a traveller is told anything at all, because rates drift a little
+// every single day and an unthresholded change is noise.
+let fx_base = "cny"
+let fx_hosts = ["cdn.jsdelivr.net"]
+let fx_source = "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@"
+let fx_license = "fawazahmed0/exchange-api, not central bank data"
+let fx_window_days = 3
+let fx_max_currencies = 8
+// A traveller is only told about a move larger than this. Below it the daily
+// drift is not information.
+let fx_alert_change_ratio = 0.02
+let fx_attribution = fx_license
+
+// Which currencies matter is the caller's decision, so the currency list is
+// passed in rather than kept as mutable module state. The newest and previous
+// loaded days are kept as scalars rather than by scanning a set.
+//
+// Days are ordered by their timestamp, never by comparing the strings: this
+// runtime returns false for < and > on text, so a lexicographic comparison of
+// two ISO dates silently never fires and every day looks like the oldest.
+let fx_tables_by_date = {}
+let fx_latest_day = ""
+let fx_latest_key = 0
+let fx_prior_day = ""
+let fx_pending = 0
+let fx_status = ""
+
+fn fx_request_allowed(url){
+    if !record_string(url) { return false }
+    let parts = url.split("/")
+    parts.len() >= 3 && parts[0] == "https:" && parts[1] == "" && record_contains(fx_hosts, parts[2])
+}
+fn fx_url(day){ fx_source + "@" + day + "/v1/currencies/" + fx_base + ".json" }
+fn fx_date_loaded(day){ return fx_tables_by_date[day] != nil }
+fn fx_currency_count(currencies){
+    if !record_array(currencies) { return 0 }
+    let seen = {}
+    let count = 0
+    for code in currencies {
+        if fx_code_valid(code) && seen[code] == nil {
+            seen[code] = true
+            count = count + 1
+        }
+    }
+    count
+}
+
+fn fx_ingest(table, fetched_at){
+    if !fx_table_valid(table) { return false }
+    table.fetched_at = fetched_at
+    let day = table["date"]
+    let key = weather_time_stamp(day)
+    if key > fx_latest_key {
+        fx_prior_day = fx_latest_day
+        fx_latest_day = day
+        fx_latest_key = key
+    }
+    fx_tables_by_date[day] = table
+    true
+}
+
+fn fx_newest_date(){ fx_latest_day }
+fn fx_previous_date(){ fx_prior_day }
+fn fx_reset(){
+    fx_tables_by_date = {}
+    fx_latest_day = ""
+    fx_latest_key = 0
+    fx_prior_day = ""
+    fx_pending = 0
+    fx_status = ""
+}
+
+fn fx_cache_path(day){ "fx_v1_" + fx_base + "_" + day + ".json" }
+
+fn fx_read_cache(day){
+    let path = fx_cache_path(day)
+    if !fs.exists(path) { return false }
+    let raw = ""
+    try { raw = fs.read(path) } { raw = "" }
+    if raw == "" { return false }
+    let value = nil
+    try { value = raw.parse_json() } { value = nil }
+    if value == nil { return false }
+    fx_ingest(value, 0)
+}
+
+fn fx_write_cache(table){
+    if table == nil { return }
+    try { fs.write(fx_cache_path(table["date"]), table.to_json()) } { fx_status = "汇率缓存保存失败，本次数据仅在当前会话有效" }
+}
+
+fn fx_fetch_day(day){
+    if fx_date_loaded(day) { return }
+    let url = fx_url(day)
+    if !fx_request_allowed(url) {
+        fx_status = "汇率数据源域名未获许可"
+        return
+    }
+    fx_pending = fx_pending + 1
+    news_http_request(url, 0, fn(result){
+        fx_pending = fx_pending - 1
+        if fx_pending < 0 { fx_pending = 0 }
+        if !result.success {
+            fx_status = day + " 汇率未发布或获取失败：是否变动未知"
+            return
+        }
+        let value = nil
+        try { value = result.body.parse_json() } { value = nil }
+        let table = fx_table_from_upstream(value, fx_base, day)
+        if table == nil {
+            fx_status = day + " 汇率响应不是预期结构：是否变动未知"
+            return
+        }
+        fx_status = ""
+        if fx_ingest(table, time_now()) { fx_write_cache(table) }
+    })
+}
+
+// The window ending at the given day. The caller passes the day so a test or a
+// replay can pin it; nothing here reads the runtime clock.
+fn fx_load(today){ fx_load_from(today, fx_window_days) }
+fn fx_load_from(today, days){
+    for i in days {
+        fx_fetch_day(weather_day_stamp(weather_time_stamp(today) - i * 86400))
+    }
+}
+
+// One rate record for one currency, with the change against the previous
+// available day. previous_per_cny and change_ratio stay nil when there is no
+// earlier day: an unchanging rate is a real observation, "no comparison" is not.
+fn fx_rate(currency){
+    let empty = {currency: currency rate_date: "" per_cny: nil previous_per_cny: nil change_ratio: nil fetched_at: 0}
+    if !fx_code_valid(currency) { return empty }
+    let newest = fx_newest_date()
+    if newest == "" { return empty }
+    let table = fx_tables_by_date[newest]
+    let amount = fx_amount(table, currency)
+    if amount == nil {
+        return {currency: currency rate_date: newest per_cny: nil previous_per_cny: nil change_ratio: nil fetched_at: table["fetched_at"]}
+    }
+    let previous = nil
+    let change = nil
+    let older = fx_previous_date()
+    if older != "" {
+        let before = fx_tables_by_date[older]
+        let prior = fx_amount(before, currency)
+        if prior != nil {
+            previous = prior
+            change = (amount - prior) / prior
+        }
+    }
+    {currency: currency rate_date: newest per_cny: amount previous_per_cny: previous change_ratio: change fetched_at: table["fetched_at"]}
+}
+
+// A rule, not a judgement: has any of the given currencies moved more than the
+// threshold since the previous available day? A nil change_ratio means there was
+// nothing to compare against and is reported as unknown, not as "no change".
+// The currency list is an argument: which currencies matter is the caller's
+// decision, and this module keeps no mutable collection of them.
+fn fx_movers(currencies){
+    let out = []
+    if !record_array(currencies) { return out }
+    if fx_currency_count(currencies) > fx_max_currencies { return out }
+    for code in currencies {
+        if !fx_code_valid(code) { continue }
+        let row = fx_rate(code)
+        if row["per_cny"] == nil { continue }
+        if row["change_ratio"] == nil {
+            out.push({currency: code known: false change_ratio: nil per_cny: row["per_cny"] rate_date: row["rate_date"]})
+            continue
+        }
+        let magnitude = row["change_ratio"]
+        if magnitude < 0 { magnitude = 0 - magnitude }
+        if magnitude >= fx_alert_change_ratio {
+            out.push({currency: code known: true change_ratio: row["change_ratio"] per_cny: row["per_cny"] rate_date: row["rate_date"]})
+        }
+    }
+    out
+}
+// END src/data/ingestion/fx.splash
 
 // BEGIN src/agent/context.splash
 // Build the bounded, application-owned snapshot passed to the single Agent.

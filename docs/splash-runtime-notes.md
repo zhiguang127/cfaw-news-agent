@@ -55,7 +55,7 @@ the value through a return value.
 `&&` / `||` cannot be assumed to short-circuit. Do not rely on `a != nil &&
 a["field"]` to protect a dereference; check in separate statements.
 
-## Two rules that fail silently
+## Rules that fail silently
 
 ### Reading an undeclared field throws
 
@@ -67,7 +67,10 @@ traps:
 ```
 
 Every record written in a literal must declare the same field set, with empty
-defaults, rather than relying on an optional field being absent.
+defaults, rather than relying on an optional field being absent. This also
+applies to a field you intend to assign later: `fx_ingest` writes
+`table.fetched_at`, so the table literal in `fx_table_from_upstream` has to
+declare it.
 
 ### An undeclared map key is nil, and nil has no len()
 
@@ -87,6 +90,48 @@ drift apart.
 
 `{w北京: []}` does not parse. Use `w01`, `w02`, … and resolve names through a
 lookup, as `cities.json` does with `cid`.
+
+### `<` and `>` on text are always false
+
+Only `==` and `!=` compare strings. Every ordering comparison against a text
+value returns `false`, silently:
+
+```text
+"b" > "a"                  -> false
+"2026-10-01" > "2026-09-30" -> false
+```
+
+ISO dates happen to sort correctly as text, which makes this the most expensive
+kind of bug: the code reads correctly and never fires. `fx_ingest` orders its
+loaded days by `weather_time_stamp(day)` instead, and numbers compare fine.
+Grep for `>` or `<` against anything that is not known to be a number before
+trusting it.
+
+### A JSON object is opaque
+
+A value from `parse_json()` cannot be inspected as a collection:
+
+- `obj.len()` reports `0` for any number of members. The real daily rate file
+  has 340 entries and still reports 0, so a size check built on `len()` accepts
+  an empty document and rejects a full one.
+- Iterating it yields values, not keys, and there is no `keys()`, `entries()`
+  or `values()` method — only `len` is registered for objects.
+
+So an upstream payload can only be validated on the keys you can name. `fx_table_valid`
+checks the date and the base, and `fx_amount` re-checks the ISO code and the
+positive amount on every read. Do not write a "is this table complete" check
+against an untrusted JSON object; it cannot be written.
+
+### Module state does propagate
+
+Verified directly, because an earlier note in `holidays.splash` claimed
+otherwise and was wrong: writing a map key, pushing onto a top level array, and
+assigning a top level scalar from inside a function are all visible afterwards,
+including after the global has been reassigned. `fx_reset` relies on this.
+
+The one real trap next to it is iteration order and content: iterating a map
+gives its values, so a set cannot be recovered by iterating a map keyed by
+id. Keep a plain array for anything that has to be walked.
 
 ## Widgets
 

@@ -1,0 +1,183 @@
+// Execute the exchange rate module under the pinned native runtime. Both
+// fixtures are real files from two consecutive days.
+//
+// Note the style used throughout: `&&` cannot be assumed to short-circuit in
+// this runtime, so a nil-guarded dereference is never chained. Each check is its
+// own statement.
+let fx_test_passes = 0
+let fx_test_failures = 0
+fn fx_test(condition, message){
+    if condition { fx_test_passes = fx_test_passes + 1 }
+    else {
+        fx_test_failures = fx_test_failures + 1
+        let previous = ""
+        if fs.exists("fx-failures.txt") { previous = fs.read("fx-failures.txt") }
+        fs.write("fx-failures.txt", previous + "FAIL fx: " + message + "\n")
+    }
+}
+
+fn fx_test_reset(){ fx_reset() }
+
+// Rates arrive as parsed decimals, so they are compared with a tolerance rather
+// than for equality: 0.14913723 and 0.149137 are the same rate at different
+// print precisions, and a test that fails on that teaches nothing.
+fn fx_close(a, b, tolerance){
+    if !record_number(a) || !record_number(b) { return false }
+    let gap = a - b
+    if gap < 0 { gap = 0 - gap }
+    gap <= tolerance
+}
+
+// The mover records a signed ratio, so a test can tell a rise from a fall.
+fn fx_rate_direction(m){
+    if !record_object(m) { return 0 }
+    if !record_number(m["change_ratio"]) { return 0 }
+    m["change_ratio"]
+}
+
+// Parsed fixtures. Fixtures arrive as text, exactly as an HTTP body would.
+fn fx_fixture(name){
+    let value = nil
+    try { value = name.parse_json() } { value = nil }
+    value
+}
+
+
+fn fx_test_run(){
+    let raw_new = fx_fixture(fixture_fx_new)
+    let raw_old = fx_fixture(fixture_fx_old)
+    fx_test(raw_new != nil, "newer fixture parses")
+    fx_test(raw_old != nil, "older fixture parses")
+
+    // --- record validity ---------------------------------------------------
+    fx_test(!fx_record_valid({}), "empty record refused")
+    let zero_rate = {currency: "usd" rate_date: "2026-10-01" per_cny: 0 fetched_at: 1}
+    fx_test(!fx_record_valid(zero_rate), "non-positive rate refused")
+    let upper_code = {currency: "USD" rate_date: "2026-10-01" per_cny: 0.1 fetched_at: 1}
+    fx_test(!fx_record_valid(upper_code), "non-lowercase code refused")
+    let bad_day = {currency: "usd" rate_date: "2026-13-45" per_cny: 0.1 fetched_at: 1}
+    fx_test(!fx_record_valid(bad_day), "impossible date refused")
+    let orphan_ratio = {currency: "usd" rate_date: "2026-10-01" per_cny: 0.1 previous_per_cny: nil change_ratio: 0.5 fetched_at: 1}
+    fx_test(!fx_record_valid(orphan_ratio), "a change ratio with no previous rate is refused")
+    let first_observation = {currency: "usd" rate_date: "2026-10-01" per_cny: 0.1 previous_per_cny: nil change_ratio: nil fetched_at: 1}
+    fx_test(fx_record_valid(first_observation), "a first observation with no comparison is valid")
+
+    // --- upstream normalization -------------------------------------------
+    let table_new = fx_table_from_upstream(raw_new, "cny", "2026-10-01")
+    fx_test(raw_new["cny"].len() == 0, "len() on a JSON object reports 0, so it cannot size-check one")
+    fx_test(table_new != nil, "newer upstream file parsed")
+    if table_new != nil {
+        fx_test(table_new["date"] == "2026-10-01", "table date carried")
+        fx_test(fx_close(fx_amount(table_new, "usd"), 0.14913367, 0.00000001), "usd rate read from the cny table")
+        fx_test(fx_close(fx_amount(table_new, "jpy"), 23.61117077, 0.00000001), "jpy rate read from the cny table")
+        fx_test(fx_amount(table_new, "1inch") == nil, "crypto tickers dropped")
+    }
+    fx_test(fx_table_from_upstream(raw_new, "usd", "2026-10-01") == nil, "a base the file does not carry is refused")
+    fx_test(fx_table_from_upstream(raw_new, "cny", "2026-10-02") == nil, "a date the file does not match is refused")
+    fx_test(fx_table_from_upstream("not json", "cny", "2026-10-01") == nil, "unparseable body refused")
+
+    // --- ingest, ordering and the comparison day --------------------------
+    fx_test_reset()
+    let table_old = fx_table_from_upstream(raw_old, "cny", "2026-09-30")
+    fx_test(fx_ingest(table_old, 100), "older day ingested")
+    fx_test(fx_ingest(fx_table_from_upstream(raw_new, "cny", "2026-10-01"), 200), "newer day ingested")
+    fx_test(fx_newest_date() == "2026-10-01", "newest date picked regardless of insert order")
+    fx_test(fx_previous_date() == "2026-09-30", "previous date is the earlier loaded day")
+
+    let usd = fx_rate("usd")
+    fx_test(usd["rate_date"] == "2026-10-01", "rate uses the newest day")
+    fx_test(fx_close(usd["previous_per_cny"], 0.14913723, 0.00000001), "previous rate carried")
+    fx_test(usd["change_ratio"] != nil, "change computed")
+    // 0.14913367 against 0.149137 is a fall of roughly 0.002%.
+    fx_test(usd["change_ratio"] < 0.001, "usd barely moved, signed below the threshold")
+    fx_test(usd["change_ratio"] > -0.001, "usd barely moved, not below the threshold")
+
+    let jpy = fx_rate("jpy")
+    fx_test(fx_close(jpy["previous_per_cny"], 23.43490682, 0.00000001), "jpy previous rate carried")
+    // 23.61117 against 23.43491 is a rise of roughly 0.75%.
+    fx_test(jpy["change_ratio"] > 0.007, "jpy rose by more than 0.7%")
+    fx_test(jpy["change_ratio"] < 0.008, "jpy rose by less than 0.8%")
+
+    // --- threshold ---------------------------------------------------------
+    // On the real data the largest single-day move among the tracked currencies
+    // is jpy at roughly 0.75%. That is a real move and still not worth an alert,
+    // which is the whole point of the threshold: the honest answer today is
+    // silence, and the module has to be able to give it.
+    fx_test(fx_alert_change_ratio == 0.02, "threshold is two percent")
+    let tracked = ["usd" "jpy" "eur" "krw"]
+    let movers = fx_movers(tracked)
+    fx_test(movers.len() == 0, "no real currency clears the threshold today")
+    let jpy_named = false
+    for m in movers {
+        if m["currency"] == "jpy" { jpy_named = true }
+    }
+    fx_test(!jpy_named, "a 0.75% move stays silent")
+    fx_test(jpy["change_ratio"] < fx_alert_change_ratio, "jpy is under the threshold, as recorded")
+
+    // --- the threshold fires when a real move happens -----------------------
+    fx_test_reset()
+    let jump_old = {schema_version: 1 date: "2026-09-30" base: "cny" source: {usd: 0.14 jpy: 24} fetched_at: 0}
+    let jump_new = {schema_version: 1 date: "2026-10-01" base: "cny" source: {usd: 0.15 jpy: 24} fetched_at: 0}
+    fx_test(fx_ingest(jump_old, 1), "synthetic earlier day accepted")
+    fx_test(fx_ingest(jump_new, 2), "synthetic later day accepted")
+    // 0.14 to 0.15 is a rise of roughly 7.1%; jpy does not move at all.
+    fx_test(fx_rate("usd")["change_ratio"] > 0.07, "the injected usd move is about 7%")
+    let jump_movers = fx_movers(["usd" "jpy"])
+    fx_test(jump_movers.len() == 1, "exactly one currency clears the threshold")
+    fx_test(jump_movers[0]["currency"] == "usd", "the mover is the currency that moved")
+    fx_test(jump_movers[0]["known"] == true, "a mover is known")
+    fx_test(fx_rate_direction(jump_movers[0]) > 0, "the mover records a rise")
+
+    // --- a single day cannot produce a change ------------------------------
+    fx_test_reset()
+    fx_ingest(fx_table_from_upstream(raw_new, "cny", "2026-10-01"), 200)
+    let lone = fx_rate("jpy")
+    fx_test(fx_close(lone["per_cny"], 23.61117077, 0.00000001), "rate available with one day")
+    fx_test(lone["previous_per_cny"] == nil, "no previous rate with one day")
+    fx_test(lone["change_ratio"] == nil, "no change with one day")
+    let lone_movers = fx_movers(tracked)
+    fx_test(lone_movers.len() == 4, "every tracked currency is returned when nothing can be compared")
+    let all_unknown = true
+    for m in lone_movers {
+        if m["known"] == true { all_unknown = false }
+        if m["change_ratio"] != nil { all_unknown = false }
+    }
+    fx_test(all_unknown, "single day movers are unknown, never zero")
+
+    // --- refusals ----------------------------------------------------------
+    fx_test(fx_rate("US")["per_cny"] == nil, "an uppercase code yields no rate")
+    fx_test(fx_rate("zzz")["per_cny"] == nil, "a code the table does not carry yields no rate")
+    fx_test(fx_rate("")["per_cny"] == nil, "an empty code yields no rate")
+    fx_test_reset()
+    fx_test(fx_rate("usd")["per_cny"] == nil, "no data at all yields no rate")
+
+    // --- the currency list belongs to the caller --------------------------
+    fx_test(fx_currency_count(["usd" "jpy"]) == 2, "two distinct codes counted")
+    fx_test(fx_currency_count(["usd" "usd" "jpy"]) == 2, "a repeated code is counted once")
+    fx_test(fx_currency_count(["usd" "US" "zz9"]) == 1, "malformed codes are not counted")
+    fx_test(fx_currency_count("usd") == 0, "a non-list is counted as none")
+    fx_test(fx_movers(tracked).len() == 0, "with no data loaded nothing is claimed")
+    fx_test(fx_movers(["usd" "jpy" "eur" "krw" "gbp" "chf" "aud" "cad" "thb"]).len() == 0, "an over-long list is refused outright")
+    fx_test(fx_movers("usd").len() == 0, "a non-list yields no movers")
+
+    // --- host admission ----------------------------------------------------
+    fx_test(fx_request_allowed(fx_url("2026-10-01")), "rate host admitted")
+    fx_test(!fx_request_allowed("https://example.invalid/x.json"), "unlisted host refused")
+    fx_test(!fx_request_allowed("http://cdn.jsdelivr.net/x.json"), "plain http refused")
+    fx_test(fx_attribution != "", "license recorded for display")
+
+    // --- the window is derived from a passed day, not the clock ------------
+    fx_test(weather_day_stamp(weather_time_stamp("2026-10-01") - 86400) == "2026-09-30", "one window step back")
+    fx_test(weather_day_stamp(weather_time_stamp("2026-10-01") - 2 * 86400) == "2026-09-29", "two window steps back")
+    fx_test(fx_window_days == 3, "three days are requested per load")
+}HostedView{full: View{Label{text: "CFAW exchange rate tests"}}}
+start_timeout(0.05, || {
+    fx_test_run()
+    start_timeout(0.02, || {
+        let report = {passed: fx_test_passes failed: fx_test_failures stage: "complete"}
+        if fx_test_failures > 0 {
+            if fs.exists("fx-failures.txt") { report.failure_detail = fs.read("fx-failures.txt") }
+        }
+        fs.write("fx-report.json", report.to_json())
+    })
+})
