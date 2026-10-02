@@ -1,0 +1,50 @@
+// Pure suggestion lifecycle helpers. The application owns persistence and
+// user decisions; these functions only classify a validated proposal.
+// OctoScript has no verified lexical array sort, so callers provide the
+// validator-normalized identifier order. The key is deterministic for that
+// canonical representation and never trusts a model-generated key.
+fn change_sorted(values){
+    values
+}
+
+fn change_join(values){
+    let text = ""
+    for value in values { if text != "" { text = text + "," } text = text + value }
+    text
+}
+
+fn analysis_suggestion_key(suggestion){
+    let interests = change_join(change_sorted(suggestion.interest_ids))
+    let evidence = change_join(change_sorted(suggestion.evidence_ids))
+    let schedule = "null"
+    if suggestion.schedule_id != nil { schedule = suggestion.schedule_id }
+    let version = "null"
+    if suggestion.schedule_version != nil { version = "" + suggestion.schedule_version }
+    let action = "null"
+    if suggestion.proposed_action != nil {
+        action = suggestion.proposed_action.kind + "|" + suggestion.proposed_action.title + "|" + suggestion.proposed_action.start + "|" + suggestion.proposed_action.end + "|" + suggestion.proposed_action.timezone
+    }
+    "interest=" + interests + "|evidence=" + evidence + "|schedule=" + schedule + "|version=" + version + "|action=" + action
+}
+
+fn analysis_evidence_changed(previous_ids, current_ids){
+    let old = change_join(change_sorted(previous_ids))
+    let current = change_join(change_sorted(current_ids))
+    old != current
+}
+
+fn analysis_should_reconsider(previous, current, current_schedule_version){
+    if previous == nil { return {state: "pending" reason: "new_suggestion"} }
+    if previous.state == "accepted" { return {state: "pending" reason: "accepted_history_never_auto_reverted"} }
+    if current_schedule_version != nil && previous.schedule_version != nil && current_schedule_version != previous.schedule_version {
+        return {state: "stale" reason: "schedule_version_changed"}
+    }
+    let old_key = previous.deduplication_key
+    let new_key = analysis_suggestion_key(current)
+    if old_key == new_key && previous.state != "withdrawn" { return {state: "suppressed" reason: "same_validated_proposal"} }
+    if previous.state == "dismissed" && !analysis_evidence_changed(previous.evidence_ids, current.evidence_ids) {
+        return {state: "suppressed" reason: "dismissed_without_material_evidence"}
+    }
+    if previous.state == "pending" { return {state: "superseded" reason: "material_update"} }
+    {state: "pending" reason: "material_new_evidence_or_action"}
+}

@@ -1,11 +1,21 @@
 fn boot(){
     records_load()
+    schedules_load()
+    history_load()
     feed_initialize()
     render_main()
     if records_warning != "" { notice(records_warning) }
-    feed_restore_cache(0, feed_generation, || {
-        rebuild_feed(|| { render_main() start_timeout(0.01, || refresh()) })
-    })
+    // records_load/history_load/render_main already spent most of this 64ms
+    // slice; defer the cache restore so its first source read gets a fresh budget.
+    start_timeout(0.01, || feed_restore_cache(0, feed_generation, || {
+        rebuild_feed(|| {
+            render_main()
+            let demo_cache = false
+            for row in app_feed_rows { if row["demo_data"] == true { demo_cache = true } }
+            if demo_cache { notice("演示缓存仅供测试，非实时新闻；手动刷新可尝试获取真实来源。") }
+            else { start_timeout(0.01, || refresh()) }
+        })
+    }))
 }
 // Defer until all page prototypes and widget references have been mounted.
 start_timeout(0.05, || boot())

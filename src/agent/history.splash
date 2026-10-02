@@ -1,0 +1,173 @@
+// Stage 3 persistent analysis and suggestion history. Storage owns records;
+// this module owns deterministic history transitions and change selection.
+let analysis_history = []
+let suggestion_history = []
+let analysis_history_file = {path: "analysis_history_v1.json" writable: true recovered: false}
+let suggestion_history_file = {path: "suggestions_v1.json" writable: true recovered: false}
+let analysis_history_warning = ""
+let analysis_batch_busy = false
+let analysis_batch_index = 0
+let analysis_batch_rows = []
+let analysis_batch_done = 0
+
+fn history_warn(message){ if analysis_history_warning != "" { analysis_history_warning = analysis_history_warning + "；" } analysis_history_warning = analysis_history_warning + message }
+fn history_valid_state(value){ value == "pending" || value == "accepted" || value == "dismissed" || value == "withdrawn" || value == "superseded" || value == "stale" }
+fn history_valid_evidence_version(value){
+    record_object(value) && record_string(value.evidence_id) && record_string(value.content_hash) && record_number(value.observed_at)
+}
+fn history_valid_analysis(value){
+    record_object(value) && record_string(value.analysis_id) && record_string(value.request_id) && record_string(value.news_id) &&
+    record_number(value.created_at) && record_string(value.outcome) && record_string(value.prompt_revision) &&
+    record_array(value.evidence_versions) && record_array(value.suggestion_ids)
+}
+fn history_valid_suggestion(value){
+    record_object(value) && record_string(value.suggestion_id) && record_string(value.deduplication_key) &&
+    record_string(value.state) && history_valid_state(value.state) && record_number(value.created_at) &&
+    record_array(value.interest_ids) && record_array(value.evidence_ids) && record_array(value.evidence_versions)
+}
+fn history_doc_valid(value, kind){
+    if !record_object(value) || value["schema_version"] != 1 || !record_array(value["items"]) { return false }
+    if kind == "analysis" { for item in value["items"] { if !history_valid_analysis(item) { return false } } }
+    if kind == "suggestion" { for item in value["items"] { if !history_valid_suggestion(item) { return false } } }
+    true
+}
+fn history_read(file, kind){
+    let exists = false
+    try { exists = fs.exists(file.path) } { file.writable = false history_warn(file.path + "：无法检查存储") }
+    if !exists { return nil }
+    let value = nil
+    try { value = fs.read(file.path).parse_json() } { value = nil }
+    if history_doc_valid(value, kind) { return value["items"] }
+    file.writable = false history_warn(file.path + "：格式无效，原文件已保留")
+    nil
+}
+fn history_write(file, items, kind){
+    if !file.writable { return "历史文件不可写，当前仅保留在会话中" }
+    let value = {schema_version: 1 items: items}
+    if !history_doc_valid(value, kind) { return "历史记录校验失败，未保存" }
+    try { fs.write(file.path, value.to_json()) } { return "历史记录写入失败" }
+    ""
+}
+fn history_load(){
+    analysis_history_warning = ""
+    analysis_history = [] suggestion_history = []
+    let analyses = history_read(analysis_history_file, "analysis")
+    let suggestions = history_read(suggestion_history_file, "suggestion")
+    if analyses != nil { analysis_history = analyses }
+    if suggestions != nil { suggestion_history = suggestions }
+}
+fn history_evidence_version(row){
+    let text = row.title + "\n" + row.summary
+    let hash = text
+    // Stable content identity is derived from the normalized source item.
+    // The raw normalized text is retained as a deterministic fallback because
+    // this runtime has no verified cryptographic hash primitive.
+    {evidence_id: row.news_id content_hash: hash observed_at: row.retrieved_at}
+}
+fn history_find_suggestion(id){ for item in suggestion_history { if item.suggestion_id == id { return item } } nil }
+fn history_find_analysis(id){ for item in analysis_history { if item.analysis_id == id { return item } } nil }
+fn history_save(){
+    let a = history_write(analysis_history_file, analysis_history, "analysis")
+    let s = history_write(suggestion_history_file, suggestion_history, "suggestion")
+    if a != "" { return a }
+    s
+}
+fn history_record_analysis(row, request_id, context_version, turn_id, result){
+    let analysis_id = request_id + "-result"
+    let versions = [history_evidence_version(row)]
+    let suggestion_ids = []
+    for suggestion in result.suggestions {
+        let key = analysis_suggestion_key(suggestion)
+        let suggestion_id = analysis_id + "-" + suggestion_ids.len()
+        let previous = nil
+        for old in suggestion_history { if old.deduplication_key == key && old.news_id == row.news_id { previous = old } }
+        let decision = analysis_should_reconsider(previous, suggestion, nil)
+        let state = decision.state
+        if state == "suppressed" || state == "superseded" || state == "stale" { state = "pending" }
+        let record = {suggestion_id: suggestion_id deduplication_key: key state: state created_at: time_now()
+            analysis_id: analysis_id news_id: row.news_id interest_ids: suggestion.interest_ids evidence_ids: suggestion.evidence_ids
+            evidence_versions: versions schedule_id: suggestion.schedule_id schedule_version: suggestion.schedule_version
+            change_summary: suggestion.change_summary rationale: suggestion.rationale uncertainties: suggestion.uncertainties
+            proposed_action: suggestion.proposed_action decision_reason: decision.reason applied_key: nil}
+        suggestion_history.push(record) suggestion_ids.push(suggestion_id)
+    }
+    analysis_history.push({analysis_id: analysis_id request_id: request_id news_id: row.news_id context_version: context_version
+        turn_id: turn_id created_at: time_now() outcome: result.outcome explanation: result.explanation
+        prompt_revision: analysis_prompt_revision evidence_versions: versions suggestion_ids: suggestion_ids})
+    history_save()
+}
+fn history_update_suggestion_state(id, state){
+    if state == "accepted" { return "请先查看并确认日程变更" }
+    if !history_valid_state(state) { return "不支持的建议状态" }
+    let item = history_find_suggestion(id)
+    if item == nil { return "找不到建议记录" }
+    if item.state == "accepted" { return "已确认的建议不可撤销日程；可在日程页手动修改" }
+    if item.state != "pending" { return "建议已处理，请刷新查看状态" }
+    let previous = item.state
+    item.state = state item.updated_at = time_now()
+    let error = history_save()
+    if error != "" { item.state = previous }
+    error
+}
+fn history_confirm_suggestion(id){
+    let current = history_find_suggestion(id)
+    if current == nil { return {success: false error: "找不到建议记录"} }
+    if current.state == "accepted" { return {success: true idempotent: true} }
+    if current.state != "pending" { return {success: false error: "建议已处理，不能重复确认"} }
+    // A reload guards against decisions written in another application session.
+    if !suggestion_history_file.writable { return {success: false error: "建议历史不可写，日程未更改"} }
+    let reread = history_read(suggestion_history_file, "suggestion")
+    let found = nil
+    if reread != nil { for row in reread { if row.suggestion_id == id { found = row } } }
+    if found == nil { return {success: false error: "建议历史已变化，请重新打开应用"} }
+    if found.state == "accepted" { return {success: true idempotent: true} }
+    if found.state != "pending" { return {success: false error: "建议历史已变化，请重新查看"} }
+    if found.proposed_action == nil {
+        if current.proposed_action != nil { return {success: false error: "建议内容已变化，请重新打开应用"} }
+    } else {
+        if current.proposed_action == nil { return {success: false error: "建议内容已变化，请重新打开应用"} }
+        if found.proposed_action.to_json() != current.proposed_action.to_json() { return {success: false error: "建议内容已变化，请重新打开应用"} }
+    }
+    let result = {success: true}
+    if current.proposed_action != nil { result = schedule_apply_action(current.proposed_action, id) }
+    if !result.success { return result }
+    current.state = "accepted"
+    current.updated_at = time_now()
+    if current.proposed_action != nil { current.applied_key = id }
+    let error = history_save()
+    if error != "" {
+        // The schedule carries the suggestion marker. A retry discovers the
+        // existing write without creating another entry or incrementing version.
+        current.state = "pending" current.applied_key = nil
+        return {success: false error: "日程已写入，但建议历史保存失败；请重试确认以恢复状态：" + error}
+    }
+    result
+}
+fn history_suggestions_for_news(news_id){
+    let out = []
+    for item in suggestion_history { if item.news_id == news_id { out.push(item) } }
+    out
+}
+fn history_state_label(state){
+    if state == "pending" { return "待处理" }
+    if state == "accepted" { return "已接受" }
+    if state == "dismissed" { return "已忽略" }
+    if state == "withdrawn" { return "已撤回" }
+    if state == "superseded" { return "已被新建议替代" }
+    if state == "stale" { return "已过期" }
+    state
+}
+fn history_changed_rows(rows){
+    let out = []
+    for row in rows {
+        let version = history_evidence_version(row)
+        let changed = true
+        for old in analysis_history {
+            if old.news_id == row.news_id {
+                for old_version in old.evidence_versions { if old_version.evidence_id == version.evidence_id && old_version.content_hash == version.content_hash { changed = false } }
+            }
+        }
+        if changed { out.push(row) }
+    }
+    out
+}

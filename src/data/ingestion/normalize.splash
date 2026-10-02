@@ -17,7 +17,7 @@ fn news_normalize(item, source, retrieved_at){
         kind = "hn_submission"
         timestamp_kind = "submitted"
     }
-    let row = {news_id: news_identity(item.link) title: item.title.trim() source: publisher
+    let row = {news_id: news_identity(item.link) evidence_id: news_identity(item.link) content_version: item.title.trim() + "\n" + summary title: item.title.trim() source: publisher
         source_id: source.id source_url: item.link feed_url: source.url category: source.category
         language: source.language summary: summary published_at: published_at retrieved_at: retrieved_at
         evidence_kind: kind timestamp_kind: timestamp_kind
@@ -90,9 +90,11 @@ fn news_append_unique(out, indexed, row){
         let ids = []
         for ref in existing.references { ids.push(ref.source_id) }
         if !record_contains(ids, row.source_id) {
-            let snapshot = existing.to_json().parse_json()
-            snapshot.references.push(row.references[0])
-            out[existing_index] = snapshot
+            // OctoScript objects/arrays are reference values, so mutating
+            // `existing.references` updates the entry in `out` in place. The
+            // previous to_json().parse_json() deep copy is both unnecessary and
+            // a wall-budget hazard when many rows collide.
+            existing.references.push(row.references[0])
         }
         return true
     }

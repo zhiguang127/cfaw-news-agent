@@ -1,6 +1,8 @@
 # News analysis contract
 
-Design contract, version 1. No runtime serializer or validator is implemented yet.
+Design contract, version 1. The runtime serializer and deterministic
+validator are implemented in `src/agent/context.splash`,
+`src/agent/results/validator.splash`, and `src/agent/runtime/analysis.splash`.
 This describes application data, not additional parameters accepted by Octos.
 The adapter encodes bounded context into `octos.turn.start`'s `text` argument.
 The prompt revision and deterministic validation rules are documented in
@@ -62,6 +64,40 @@ for the application to accept as authoritative.
 stable suggestion IDs and attaches `request_id`, `context_version`, the host
 `turn_id`, and prompt/configuration revision; model-echoed identifiers are not
 trusted correlation metadata.
+
+## Stage 4 in-app schedule confirmation
+
+`schedules_v1.json` stores user-authored entries and confirmed changes with
+`schedule_id`, monotonic `version` (starting at 1), title, RFC 3339 start/end
+with explicit offset, and a display-only timezone label. Times are compared
+as UTC instants; overlapping entries block create and reschedule. The schedule
+page permits manual creation and version-checked editing. This is an in-app
+schedule, not a system-calendar integration or notification service.
+
+The validator accepts `create` with null schedule reference and `reschedule`
+only with matching snapshot `schedule_id` and `schedule_version`. A model
+proposal never writes automatically. The detail view previews the action,
+shows current conflicts, and requires a second explicit confirmation. On
+confirmation the app rereads the stored schedule and rejects a stale version
+or new conflict. Schedule writes retain a previous valid `.backup` snapshot;
+invalid/unknown primary files are not overwritten. The schedule entry stores
+the originating suggestion ID so retry after a partial decision-write failure
+is idempotent; a failed decision remains pending and displays an error.
+
+There is no cross-process atomic transaction or locking primitive in the
+verified host filesystem API. Simultaneous writers outside this app session
+remain a limitation; recovery preserves the last valid snapshot.
+
+## Stage 3 history
+
+The application now persists `analysis_history_v1.json` and
+`suggestions_v1.json` in the app storage jail. Each analysis records its request,
+context version, turn ID, prompt revision, outcome, and evidence content version.
+Each suggestion records its deduplication key and lifecycle state. A stable
+`evidence_id` is the normalized URL without fragments; `content_hash` is the
+deterministic normalized title-plus-summary fallback used by this runtime to
+detect same-link content changes. Retrieval time alone does not create a new
+content version.
 
 ## Validation and application
 

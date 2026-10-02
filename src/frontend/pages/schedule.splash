@@ -1,5 +1,35 @@
-let SchedulePage = View{visible: false width: Fill height: Fill flow: Down padding: 24 spacing: 14
-    Heading{text: "日程"}
-    Text{text: "当前版本尚未接入日程管理和 Agent 建议。"}
-    Small{text: "新闻、收藏和追踪已独立运行。真实新闻不会自动修改你的安排。"}
+let SchedulePage = View{visible: false width: Fill height: Fill flow: Down
+    ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 12
+        Heading{text: "我的日程"}
+        Small{text: "应用内日程；不会写入系统日历。时间请输入 RFC 3339 格式及偏移，例如 2026-10-06T14:00:00+08:00。"}
+        if schedule_warning != "" { Small{text: schedule_warning draw_text.color: accent} }
+        schedule_list := View{width: Fill height: Fit flow: Down spacing: 8 on_render: || {
+            if user_schedules.len() == 0 { Small{text: "暂无日程。添加安排后，Agent 可引用其版本给出调整建议。"} }
+            for item in user_schedules {
+                View{width: Fill height: Fit flow: Down spacing: 3
+                    Text{text: item.title}
+                    Small{text: item.start + " → " + item.end + " · " + item.timezone + " · v" + item.version}
+                    QuietButton{text: "编辑" on_click: || schedule_begin_edit(item.schedule_id)}
+                }
+                Divider{}
+            }
+        }}
+        Divider{}
+        schedule_editor := View{width: Fill height: Fit flow: Down spacing: 7 on_render: || {
+            if schedule_edit_id == nil { Section{text: "录入日程"} }
+            else { Section{text: "编辑日程（保存时核对版本）"} }
+            Small{text: "标题"}
+            schedule_title_input := Search{text: schedule_title_draft empty_text: "日程标题" on_change: |value| {schedule_title_draft = value}}
+            Small{text: "开始时间（含偏移）"}
+            schedule_start_input := Search{text: schedule_start_draft empty_text: "2026-10-06T14:00:00+08:00" on_change: |value| {schedule_start_draft = value}}
+            Small{text: "结束时间（含偏移）"}
+            schedule_end_input := Search{text: schedule_end_draft empty_text: "2026-10-06T16:00:00+08:00" on_change: |value| {schedule_end_draft = value}}
+            Small{text: "时区标签（仅展示；时间以偏移为准）"}
+            schedule_timezone_input := Search{text: schedule_timezone_draft empty_text: "Asia/Shanghai" on_change: |value| {schedule_timezone_draft = value}}
+            View{width: Fill height: Fit flow: Right spacing: 8
+                Primary{text: "保存日程" on_click: || schedule_save_draft()}
+                if schedule_edit_id != nil { QuietButton{text: "新建" on_click: || schedule_begin_new()} }
+            }
+        }}
+    }
 }

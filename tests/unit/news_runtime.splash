@@ -137,7 +137,7 @@ fn test_run(){
     test_assert(feed_rows_by_source["hn"].len() == 0 && feed_status_by_source["hn"].state == "fresh", "valid empty result distinct from failed request")
     test_stage = "complete"
 }
-fn test_report(){ fs.write("runtime-report.json", {passed: test_passes failed: test_failures stage: test_stage}.to_json()) }
+fn test_report(){ fs.write("runtime-report.json", {passed: test_passes.len() failed: test_failures.len() failures: test_failures stage: test_stage}.to_json()) }
 fn test_capacity_seed(index){
     test_stage = "bounded feed capacity"
     if index >= news_sources.len() {
