@@ -48,6 +48,8 @@ cfaw-news-agent/
 │   ├── TEAM_GUIDE.md              # 队友上手、目录分工与联调
 │   ├── windows-development.md    # Windows 本地环境与已验证的运行边界
 │   ├── fixture-expectations.md    # 固定样例 expected 字段契约
+│   ├── frontend-signal-api.md     # 天气/节假日/汇率三子系统的前端接口清单
+│   ├── splash-runtime-notes.md    # Octoscript 运行时实测行为与陷阱
 │   └── agent-a-interface.md       # Agent A runtime 接口交接
 ├── src/
 │   ├── app/                       # 启动、导航、三层连接
