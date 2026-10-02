@@ -58,6 +58,8 @@ fn schedule_valid(item){
     if !record_number(item["version"]) || item.version < 1 { return false }
     if !record_string(item["title"]) || item.title.trim() == "" { return false }
     if !record_string(item["timezone"]) || item.timezone.trim() == "" { return false }
+    if item["content"] != nil && !record_string(item["content"]) { return false }
+    if item["location"] != nil && !record_string(item["location"]) { return false }
     schedule_interval(item["start"], item["end"])
 }
 fn schedule_doc_valid(value){
@@ -126,6 +128,10 @@ fn schedule_conflicts(candidate, ignore_id){
     out
 }
 fn schedule_create(title, start, end, timezone, suggestion_id){
+    schedule_create_details(title, "", "", start, end, timezone, suggestion_id)
+}
+fn schedule_create_details(title, content, location, start, end, timezone, suggestion_id){
+    if !record_string(content) || !record_string(location) { return {success: false error: "Invalid schedule content or location"} }
     if !schedule_interval(start, end) || !record_string(title) || title.trim() == "" { return {success: false error: "Invalid schedule title or interval"} }
     if !record_string(timezone) || timezone.trim() == "" { return {success: false error: "Timezone label required"} }
     let error = schedule_refresh()
@@ -135,7 +141,7 @@ fn schedule_create(title, start, end, timezone, suggestion_id){
     }
     let id = "schedule-" + time_now() + "-" + schedule_counter
     while schedule_find(id) != nil { schedule_counter = schedule_counter + 1 id = "schedule-" + time_now() + "-" + schedule_counter }
-    let candidate = {schedule_id: id version: 1 title: title.trim() start: start end: end timezone: timezone origin_suggestion_id: suggestion_id}
+    let candidate = {schedule_id: id version: 1 title: title.trim() content: content.trim() location: location.trim() start: start end: end timezone: timezone origin_suggestion_id: suggestion_id}
     let conflicts = schedule_conflicts(candidate, nil)
     if conflicts.len() > 0 { return {success: false error: "Schedule conflict" conflicts: conflicts} }
     schedule_counter = schedule_counter + 1
@@ -145,6 +151,17 @@ fn schedule_create(title, start, end, timezone, suggestion_id){
     {success: true item: candidate}
 }
 fn schedule_update(id, expected_version, title, start, end, timezone, suggestion_id){
+    let current = schedule_find(id)
+    let content = ""
+    let location = ""
+    if current != nil {
+        if record_string(current["content"]) { content = current.content }
+        if record_string(current["location"]) { location = current.location }
+    }
+    schedule_update_details(id, expected_version, title, content, location, start, end, timezone, suggestion_id)
+}
+fn schedule_update_details(id, expected_version, title, content, location, start, end, timezone, suggestion_id){
+    if !record_string(content) || !record_string(location) { return {success: false error: "Invalid schedule content or location"} }
     if !schedule_interval(start, end) || !record_string(title) || title.trim() == "" { return {success: false error: "Invalid schedule title or interval"} }
     if !record_string(timezone) || timezone.trim() == "" { return {success: false error: "Timezone label required"} }
     let error = schedule_refresh()
@@ -158,6 +175,7 @@ fn schedule_update(id, expected_version, title, start, end, timezone, suggestion
     if conflicts.len() > 0 { return {success: false error: "Schedule conflict" conflicts: conflicts} }
     let previous = user_schedules.to_json()
     current.version = candidate.version current.title = candidate.title current.start = candidate.start current.end = candidate.end current.timezone = candidate.timezone
+    current.content = content.trim() current.location = location.trim()
     current.last_suggestion_id = suggestion_id
     error = schedule_write()
     if error != "" { user_schedules = previous.parse_json() return {success: false error: error} }

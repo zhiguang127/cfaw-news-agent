@@ -13,9 +13,18 @@ let display_rows = []
 let schedule_edit_id = nil
 let schedule_edit_version = nil
 let schedule_title_draft = ""
-let schedule_start_draft = ""
-let schedule_end_draft = ""
-let schedule_timezone_draft = "UTC"
+let schedule_content_draft = ""
+let schedule_location_draft = ""
+let schedule_date_draft = ""
+let schedule_end_date_draft = ""
+let schedule_start_hour_draft = ""
+let schedule_start_minute_draft = ""
+let schedule_end_hour_draft = ""
+let schedule_end_minute_draft = ""
+let schedule_timezone_draft = "Asia/Shanghai"
+let schedule_next_day = false
+let schedule_custom_date = false
+let schedule_edit_error = ""
 let schedule_confirmation_id = nil
 let category_filters = [{id: "all" label: "全部"} {id: "tech" label: "科技"}
     {id: "ai" label: "AI"} {id: "world" label: "国际"} {id: "finance" label: "财经"} {id: "china" label: "中文"}]
@@ -143,29 +152,84 @@ fn select_page(id){
     ui.detail_pane.set_visible(false)
     ui.main.set_visible(true)
     render_main()
-    if id == "schedule" { ui.schedule_list.render() ui.schedule_editor.render() }
+    if id == "schedule" {
+        if schedule_date_draft == "" { schedule_begin_new() }
+        ui.schedule_list.render() ui.schedule_editor.render()
+    }
 }
 fn schedule_begin_new(){
     schedule_edit_id = nil schedule_edit_version = nil
-    schedule_title_draft = "" schedule_start_draft = "" schedule_end_draft = "" schedule_timezone_draft = "UTC"
-    ui.schedule_title_input.set_text("") ui.schedule_start_input.set_text("")
-    ui.schedule_end_input.set_text("") ui.schedule_timezone_input.set_text("UTC")
+    schedule_title_draft = "" schedule_content_draft = "" schedule_location_draft = ""
+    schedule_timezone_draft = "Asia/Shanghai"
+    schedule_date_draft = schedule_date_at(schedule_zone_seconds(time_now(), schedule_timezone_draft))
+    schedule_end_date_draft = schedule_date_draft
+    schedule_start_hour_draft = "" schedule_start_minute_draft = ""
+    schedule_end_hour_draft = "" schedule_end_minute_draft = ""
+    schedule_next_day = false schedule_custom_date = false schedule_edit_error = ""
+    ui.schedule_editor.render()
+}
+fn schedule_pick_zone(zone){
+    schedule_timezone_draft = zone schedule_edit_error = ""
+    if schedule_edit_id == nil && !schedule_custom_date {
+        schedule_date_draft = schedule_date_at(schedule_zone_seconds(time_now(), zone))
+        schedule_end_date_draft = schedule_date_draft
+        if schedule_next_day { schedule_end_date_draft = schedule_date_at(schedule_instant(schedule_date_draft + "T00:00:00Z") + 86400) }
+    }
+    ui.schedule_editor.render()
+}
+fn schedule_pick_day(days){
+    schedule_date_draft = schedule_date_at(schedule_zone_seconds(time_now(), schedule_timezone_draft) + days * 86400)
+    schedule_end_date_draft = schedule_date_draft
+    schedule_custom_date = true schedule_next_day = false schedule_edit_error = ""
+    ui.schedule_editor.render()
+}
+fn schedule_pick_end_day(next_day){
+    schedule_next_day = next_day
+    schedule_end_date_draft = schedule_date_draft
+    if next_day && schedule_instant(schedule_date_draft + "T00:00:00Z") != nil {
+        schedule_end_date_draft = schedule_date_at(schedule_instant(schedule_date_draft + "T00:00:00Z") + 86400)
+    }
     ui.schedule_editor.render()
 }
 fn schedule_begin_edit(id){
     let item = schedule_find(id)
     if item == nil { notice("找不到日程，请刷新") return }
     schedule_edit_id = id schedule_edit_version = item.version
-    schedule_title_draft = item.title schedule_start_draft = item.start schedule_end_draft = item.end schedule_timezone_draft = item.timezone
-    ui.schedule_title_input.set_text(item.title) ui.schedule_start_input.set_text(item.start)
-    ui.schedule_end_input.set_text(item.end) ui.schedule_timezone_input.set_text(item.timezone)
+    schedule_title_draft = item.title schedule_content_draft = "" schedule_location_draft = ""
+    if record_string(item["content"]) { schedule_content_draft = item.content }
+    if record_string(item["location"]) { schedule_location_draft = item.location }
+    schedule_timezone_draft = "Asia/Shanghai"
+    if item.timezone == "America/New_York" { schedule_timezone_draft = item.timezone }
+    let start = schedule_entry_parts(item.start, schedule_timezone_draft)
+    let end = schedule_entry_parts(item.end, schedule_timezone_draft)
+    schedule_date_draft = start.date schedule_end_date_draft = end.date
+    schedule_start_hour_draft = start.hour schedule_start_minute_draft = start.minute
+    schedule_end_hour_draft = end.hour schedule_end_minute_draft = end.minute
+    schedule_next_day = end.date != start.date schedule_custom_date = true schedule_edit_error = ""
     ui.schedule_editor.render()
 }
 fn schedule_save_draft(){
+    schedule_edit_error = ""
+    let start = schedule_entry_timestamp(schedule_date_draft.trim(), schedule_start_hour_draft, schedule_start_minute_draft, schedule_timezone_draft)
+    let end_date = schedule_date_draft.trim()
+    if schedule_next_day { end_date = schedule_end_date_draft.trim() }
+    let end = schedule_entry_timestamp(end_date, schedule_end_hour_draft, schedule_end_minute_draft, schedule_timezone_draft)
+    if !start.valid { schedule_edit_error = "开始时间：" + start.error ui.schedule_editor.render() return }
+    if !end.valid { schedule_edit_error = "预计结束时间：" + end.error ui.schedule_editor.render() return }
+    if schedule_title_draft.trim() == "" { schedule_edit_error = "请填写日程标题。" ui.schedule_editor.render() return }
+    if !schedule_interval(start.timestamp, end.timestamp) {
+        schedule_edit_error = "预计结束时间必须晚于开始时间；跨午夜请选择次日结束。"
+        ui.schedule_editor.render() return
+    }
     let result = nil
-    if schedule_edit_id == nil { result = schedule_create(schedule_title_draft, schedule_start_draft, schedule_end_draft, schedule_timezone_draft, nil) }
-    else { result = schedule_update(schedule_edit_id, schedule_edit_version, schedule_title_draft, schedule_start_draft, schedule_end_draft, schedule_timezone_draft, nil) }
-    if !result.success { notice(result.error) return }
+    if schedule_edit_id == nil { result = schedule_create_details(schedule_title_draft, schedule_content_draft, schedule_location_draft, start.timestamp, end.timestamp, schedule_timezone_draft, nil) }
+    else { result = schedule_update_details(schedule_edit_id, schedule_edit_version, schedule_title_draft, schedule_content_draft, schedule_location_draft, start.timestamp, end.timestamp, schedule_timezone_draft, nil) }
+    if !result.success {
+        schedule_edit_error = result.error
+        if result.error == "Schedule conflict" { schedule_edit_error = "该时间段与已有日程冲突，请调整开始或结束时间。" }
+        if result.error == "Schedule version changed; review again" { schedule_edit_error = "日程已被修改，请重新打开编辑后保存。" }
+        ui.schedule_editor.render() return
+    }
     notice("日程已保存（版本 " + result.item.version + "）")
     schedule_edit_id = result.item.schedule_id schedule_edit_version = result.item.version
     ui.schedule_list.render() ui.schedule_editor.render()

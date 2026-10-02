@@ -25,9 +25,7 @@ def run():
     work = ROOT / '.test-state' / ('runtime-' + uuid4().hex[:12])
     bundle = work / 'bundle'
     bundle.mkdir(parents=True)
-    data_modules = [p for p in ORDER
-                    if p.startswith('src/contracts/') or p.startswith('src/data/')]
-    paths = ORDER[:3] + ['src/data/storage/schedules.splash', 'src/agent/context.splash', 'src/agent/history.splash', 'src/agent/results/validator.splash', 'src/agent/results/change.splash'] if args.agent_only else ['src/app/config.splash'] + data_modules + ['src/agent/context.splash', 'src/agent/history.splash', 'src/agent/results/validator.splash', 'src/agent/results/change.splash']
+    paths = ORDER[:3] + ['src/data/storage/schedules.splash', 'src/data/storage/schedule_time.splash', 'src/agent/context.splash', 'src/agent/history.splash', 'src/agent/results/validator.splash', 'src/agent/results/change.splash'] if args.agent_only else ORDER[:ORDER.index('src/agent/context.splash')] + ['src/agent/context.splash', 'src/agent/history.splash', 'src/agent/results/validator.splash', 'src/agent/results/change.splash']
     source, _ = assemble(paths=paths)
     for name, file in [('fixture_rss', 'news-rss.xml'), ('fixture_atom', 'news-atom.xml'), ('fixture_hn', 'news-hn.json'),
                        ('fixture_weather', 'weather-daily.json'),
