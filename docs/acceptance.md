@@ -1,6 +1,6 @@
 # 当前能力与验收
 
-更新：2026-10-03（Asia/Shanghai）。代码为 `641910a` 加本地产品界面调整。本文件集中维护当前实现、已知缺口和验证；运行步骤见 [开发说明](development.md)，历史记录见 [归档](archive/README.md)。
+更新：2026-10-03（Asia/Shanghai）。基线为 `2948a4f`，整合 PR #8 的信号数据接口及边界修复。本文件集中维护当前实现、已知缺口和验证；运行步骤见 [开发说明](development.md)，历史记录见 [归档](archive/README.md)。
 
 ## 当前实现
 
@@ -13,6 +13,7 @@
 | 建议与决定 | 有待处理项时首页显示数量；跟踪页可查看结果与历史快照。同目标同证据建议受抑制，更新可替代旧待处理项，明确无变化可撤回，证据不足进入待复核；依赖 goal_key/内容版本，不代表语义事实核验 |
 | 应用内日程 | 标题/内容/地点、北京/纽约时间、编辑、完成/取消和持久化。改期默认关闭；提议预览后再次确认才写入，复核证据、关注、许可、版本与冲突，支持重复确认和部分写入失败恢复 |
 | 设置与诊断 | 新闻来源位于“更多”，连接测试收在“连接诊断”中；测试只检查宿主连接，不证明业务分析正确 |
+| 信号数据接口 | Open-Meteo 城市预报、年度节假日与 CNY 基准汇率；独立校验、缓存与请求状态。天气缺测/过期和未覆盖年份明确未知，取消/重复完成受保护。城市选择最多 12 个、无效存储不覆盖；汇率按最新两日比较并限制支持币种。尚未接入页面、启动抓取或 Agent 上下文，调用说明见 [信号接口](frontend-signal-api.md) |
 
 天气联合分析、语义/向量检索、后台监测、通知、系统日历写入和跨设备同步尚未实现。当前主要以实际 Rinx 业务闭环作为下一步验收目标；包摘要、参考宿主运行和 App Hub 发布分别验证。
 
@@ -45,13 +46,14 @@
 
 | 检查 | 实际结果与范围 |
 | --- | --- |
-| `python scripts/test_runtime.py --agent-only --inspect-ui` | 本轮 100 项通过、0 失败；运行实际业务模块，宿主/模型回复使用固定替代输入。新增覆盖无关注、刷新期间、无候选、重复输入、关注变化后旧结论提示清除，以及无需调整、证据不足和全失败的反馈。原生结果页 → 证据详情 → 接受/确认及过期证据拒绝通过 |
-| `python scripts/test_runtime.py` | 本轮 43 项通过、0 失败；独立数据目录中的实际数据模块与固定输入，不请求公开新闻源 |
-| Python 组装检查及 `assemble.py --check` | 本轮 4 项通过；源码与生成入口一致 |
-| 原生页面交互 | 参考 card-host 的独立合成输入实例，430×860 和 360×860 检查首页、标题进入详情、跟踪空状态/添加关注/返回、检查反馈及诊断收起/展开。通过 Makepad 远程接口获取实际渲染和点击，修复按钮字体继承导致的文字不可见；未执行实时新闻或真实模型验收 |
+| `python scripts/test_runtime.py --agent-only --inspect-ui` | 本轮 100 项通过、0 失败；保留 main 的业务场景，宿主/模型回复使用固定替代输入。原生结果页 → 证据详情 → 接受/确认及过期证据拒绝通过 |
+| `python scripts/test_runtime.py` | 本轮 314 项通过、0 失败：新闻 44、天气 100、节假日 66、汇率 104。四份报告均要求 complete、非空，缺报告会失败；固定请求替代器不联网。新增覆盖缺测、过期、覆盖未知、选择文件保护、重试、乱序、缓存恢复、混年/重复日与重复回调 |
+| Python 组装/报告检查及 `assemble.py --check` | 本轮 10 项通过；覆盖缺失/不完整报告、错误计数和域名权限；源码与生成入口一致 |
+| 公开端点只读检查 | Open-Meteo 返回 7 日结构；修正后的 FX 2026-10-01 URL 返回对应日期和 CNY 对象；2026 日历返回 39 条；国航返回 RSS XML。均 HTTP 200，仅证明检查时公开端点可读，不证明 Rinx 网络桥与 UI/Agent 接线 |
+| 原生页面交互 | 本轮检查结果/详情/确认。此前参考 card-host 的独立合成输入实例已在 430×860、360×860 检查首页、标题详情、跟踪空状态/添加关注/返回、检查反馈及诊断收起/展开；本次保留相同前端源码。未执行实时新闻或真实模型验收 |
 | 未签名开发包 | `package.py` 已刷新摘要并生成 `build/cfaw-news.zip`；ZIP CRC、4 个文件与当前 bundle/manifest/LICENSE/NOTICE 的字节一致性通过，不含测试或用户记录 |
 | 文档 | 本轮 README 和 docs 中的本地链接目标存在，日期报告已移入 archive；当前状态只在本文件维护 |
 | 真实模型与固定 Rinx 业务闭环 | 本轮未验收，须执行人工清单 |
 | App Hub 发布 | 本轮未执行准入、签名或上架 |
 
-本轮 Agent 报告：`.test-state/runtime-e7d4bde26531/data/dev.cfaw.runtime-tests/runtime-report.json`；数据报告：`.test-state/runtime-e1bc64224c7e/data/dev.cfaw.runtime-tests/runtime-report.json`。合成输入首页与跟踪截图保存在 `build/product-feed.png`、`build/product-tracking.png`；测试状态只在本机保留，不随应用分发。
+本轮整合检查保存在 `build/pr8-integration/`：Agent 合并报告 `.test-state/runtime-f7a6eb59aea9/combined-report.json`、数据合并报告 `.test-state/runtime-39c654434b23/combined-report.json`、公开端点结果 `build/live-signal-probe.json`。此前首页与跟踪截图保存在项目根目录的 `build/product-feed.png`、`build/product-tracking.png`；测试状态只在本机保留，不随应用分发。

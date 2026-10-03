@@ -37,3 +37,15 @@ and server/worldmonitor/news/v1/_feeds.ts. No World Monitor implementation
 code is incorporated. Application ingestion and storage are implemented here.
 Article content remains attributable to its original publishers; the app
 retains source links and displays feed summaries, not complete articles.
+
+Signal data and test inputs
+---------------------------
+Forecasts use Open-Meteo (https://open-meteo.com/), with data under CC BY 4.0;
+the free API service has separate non-commercial usage conditions.
+Calendar fixtures derive from NateScarlet/holiday-cn
+(https://github.com/NateScarlet/holiday-cn), Copyright (c) 2019 NateScarlet,
+under the MIT License (see LICENSES/NateScarlet-holiday-cn-MIT.txt).
+Exchange-rate fixtures derive from fawazahmed0/exchange-api
+(https://github.com/fawazahmed0/exchange-api); they are not central bank data.
+Fixtures and their repository license files are not included in the app ZIP.
+Runtime records preserve the corresponding source attribution.

@@ -11,6 +11,8 @@
 | [实施计划](agent-integration-plan.md) | 尚未完成的工作及优先顺序，不重复记录已实现功能 |
 | [运行接口](agent-a-interface.md) | 运行器应遵守的调用、状态、超时和取消契约；要求不等于已验收 |
 | [数据来源与存储](data-sources.md) | 来源、证据字段、用户记录和缓存的职责 |
+| [天气、节假日与汇率接口](frontend-signal-api.md) | 数据模块调用、时间单位、覆盖与未知状态；不代表页面或 Agent 已接入 |
+| [Splash 运行时笔记](splash-runtime-notes.md) | 实际验证的语言约束与绕行方式 |
 | [Fixture 预期规则](fixture-expectations.md) | 固定样例的 expected 字段与测试语义 |
 | [共享契约](../src/contracts/analysis.md) | 生产方和消费方共同使用的输入、结果与动作结构 |
 | [历史归档](archive/README.md) | 日期审查、旧验证、原始计划；保留依据，不指导当前开发 |

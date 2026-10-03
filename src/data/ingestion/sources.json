@@ -3,6 +3,7 @@
   "reference": "https://github.com/koala73/worldmonitor/blob/main/src/config/feeds.ts",
   "redirect_hosts": ["feeds.arstechnica.com", "arstechnica.com", "rss.arxiv.org", "news.mit.edu"],
   "sources": [
+    {"id":"airchina","label":"国航 · 民航出行","category":"travel","language":"zh","kind":"rss","enabled":true,"url":"https://www.airchinagroup.com/cnah/include/xwzx/news_rss.xml"},
     {"id":"hn","label":"Hacker News","category":"tech","language":"en","kind":"hn","enabled":true,"url":"https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=20"},
     {"id":"techmeme","label":"TechMeme","category":"tech","language":"en","kind":"digest","enabled":true,"url":"https://www.techmeme.com/feed.xml"},
     {"id":"verge","label":"The Verge","category":"tech","language":"en","kind":"rss","enabled":true,"url":"https://www.theverge.com/rss/index.xml"},

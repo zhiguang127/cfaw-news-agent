@@ -22,6 +22,8 @@ cfaw-news-agent/
 │   ├── windows-development.md    # Windows 本地环境与已验证的运行边界
 │   ├── fixture-expectations.md    # 固定样例 expected 字段契约
 │   ├── agent-a-interface.md       # Agent A runtime 接口交接
+│   ├── frontend-signal-api.md     # 天气、节假日与汇率调用速查
+│   ├── splash-runtime-notes.md    # 实测语言约束
 │   └── archive/                   # 旧计划与日期报告
 ├── src/
 │   ├── app/                       # 启动、导航、三层连接
@@ -34,9 +36,9 @@ cfaw-news-agent/
 │   │   ├── prompts/               # 新闻分析与日程建议提示词
 │   │   └── results/               # 结果解析、证据核验、变化识别
 │   └── data/                      # 数据与检索：1 人
-│       ├── ingestion/             # 新闻源、请求、解析、去重
+│       ├── ingestion/             # 新闻源、天气、节假日、汇率请求与解析
 │       ├── retrieval/             # 查询、关键词/语义召回、融合排序
-│       └── storage/               # 新闻、关注、日程及历史结果存储
+│       └── storage/               # 新闻、关注、日程、城市选择及历史存储
 ├── bundle/                        # 运行与交付包
 │   ├── main.splash                # 自动生成的宿主入口；不要手工编辑
 │   ├── manifest.json
@@ -59,7 +61,7 @@ cfaw-news-agent/
 
 - 一个页面、一个组件或一项小职责优先对应一个文件，不再为 `feed`、`news_post`、`workflow` 等单独建目录。
 - `agent/runtime/` 只做应用侧适配，不实现 Octos 内核；提示词与结果核验分别放在 `prompts/`、`results/`。两个人共同维护同一个 Agent。
-- `contracts/` 初期用少量文件集中定义新闻、关注、日程及分析结果，避免接口定义散落各层。
+- `contracts/` 用文件定义新闻、关注、日程、分析结果与三类信号，生产方和消费方共同维护。
 - 某组实现需要多个相关文件、在同一目录中难以查找时，再增加子目录。语言和文件后缀在运行方式确定后选择。
 - 添加真实实现后移除对应 `.gitkeep`；不预建空代码文件。
 

@@ -158,9 +158,17 @@ fn test_report(){ fs.write("runtime-report.json", {passed: test_passes.len() fai
 fn test_capacity_seed(index){
     test_stage = "bounded feed capacity"
     if index >= news_sources.len() {
+        // The fixture seeds items_per_source rows per source with
+        // published = index*20 + i, so the newest and the retained-oldest
+        // timestamps follow from the source count. Deriving them keeps this
+        // correct when a source is added instead of pinning one catalog.
+        let seeded = news_sources.len() * news_config.items_per_source
+        let newest = (news_sources.len() - 1) * news_config.items_per_source + news_config.items_per_source - 1
+        let oldest_kept = newest - news_config.max_feed_items + 1
         feed_build_rows(test_async_ids, fn(rows){ test_stale_builds = test_stale_builds + 1 })
         feed_build_rows(test_async_ids, fn(rows){
-            test_assert(rows.len() == news_config.max_feed_items && rows[0].published_at == 339 && rows[239].published_at == 100, "all 17 sources merge and sort within runtime budgets")
+            test_assert(seeded >= news_config.max_feed_items, "fixture seeds more rows than the feed cap")
+            test_assert(rows.len() == news_config.max_feed_items && rows[0].published_at == newest && rows[news_config.max_feed_items - 1].published_at == oldest_kept, "every enabled source merges and sorts within runtime budgets")
             test_assert(test_stale_builds == 0, "superseded asynchronous list build ignored")
             test_stage = "complete"
             test_report()

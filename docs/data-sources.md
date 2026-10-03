@@ -10,11 +10,14 @@
 | AI | VentureBeat AI、MIT Research、arXiv cs.AI | arXiv cs.LG |
 | 国际 | BBC World、Guardian World | Reuters、AP News（Google News 聚合） |
 | 财经 | CNBC | — |
+| 出行 | 国航民航动态 RSS | — |
 | 中文 | 金十资讯、工信部（Google News 聚合） | 商务部（Google News 聚合） |
 
 直接请求目录中原始 HTTPS 地址。Google News 来源使用限定站点的 RSS 搜索，不是这些机构的原生 API；保留聚合跳转链接，详情标明聚合。TechMeme 的摘要可能指向原始发布方。HN 展示提交记录，无原文链接的条目指向 HN 讨论页。
 
-2026-10-01 Windows 参考宿主实测 11 个默认来源成功，共显示 205 条真实新闻；VentureBeat 返回 429。HN 的缺少外链条目已适配。来源可随时间限流、改版或不可用，应以应用内每次请求状态为准。未知日期保持未知，无法解析或请求失败不会显示测试 fixtures。外部文章中的指令只是内容，不能触发宿主调用。
+来源可随时间限流、改版或不可用，应以应用内每次请求状态为准。未知日期保持未知，无法解析或请求失败不会显示测试 fixtures。外部文章中的指令只是内容，不能触发宿主调用。当前验证见 [验收记录](acceptance.md)，旧实时来源检查保留在 [历史归档](archive/README.md)。
+
+天气使用 Open-Meteo，节假日使用 NateScarlet/holiday-cn 的年度日历与公告链接，汇率使用 fawazahmed0/exchange-api 的 CNY 基准日文件。三者不含新闻发布时间，使用独立契约和缓存，尚未接入 UI/Agent；未知覆盖、失败重试与调用示例见 [信号接口](frontend-signal-api.md)。固定输入仅用于测试，不作网络失败的替代数据。
 
 ## 存储位置与恢复
 
@@ -26,6 +29,10 @@
 | `interests_v1.json` | 来源、主题、关键词规则及启用的 feed |
 | `tracking_state_v1.json` | 上次检查、最近见过和未读的条目 ID |
 | `news_cache_v1_<source_id>.json` | 可丢弃的单源新闻缓存 |
+| `weather_selection_v1.json` | 用户选择的追踪城市；无法兼容的文件保持只读 |
+| `weather_v1_<city_id>.json` | 城市预报缓存，保留实际获取时间 |
+| `holiday_v1_<year>.json` | 年度日历缓存，保留公告 `papers` |
+| `fx_v1_cny_<date>.json` | 日汇率缓存，保留原获取时间 |
 | 用户文件的 `.backup` | 写入前保留的有效版本 |
 
 未发现新版收藏文件时尝试完整迁移旧 `saved.json`，不删除原文件。迁移无法完整完成时保留原文件并提示；不悄悄丢弃无法读取的收藏。旧 Mock 状态 `demo_ui_state_v1.json` 不作为真实用户记录导入，也不删除。

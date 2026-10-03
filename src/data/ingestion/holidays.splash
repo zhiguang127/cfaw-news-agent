@@ -1,0 +1,216 @@
+// The statutory holiday calendar for mainland China.
+//
+// This is the strongest schedule signal available and it is not news: a
+// 调休补班 day turns an ordinary weekday into a working day, and a 放假日 does
+// the opposite. Both rewrite plans that no article would have mentioned.
+//
+// Source is a public JSON mirror of the State Council announcements, fetched
+// once per year per year-file and cached. Nothing here interprets importance;
+// holiday_event_conflict() is a rule, and the Agent decides what it means.
+
+let holiday_hosts = ["cdn.jsdelivr.net"]
+let holiday_base = "https://cdn.jsdelivr.net/gh/NateScarlet/holiday-cn@master"
+let holiday_license = "MIT, NateScarlet/holiday-cn"
+let holiday_lookahead_years = 2
+
+let holiday_by_day = {}
+let holiday_years_loaded = []
+let holiday_years_missing = []
+let holiday_pending = 0
+let holiday_status = ""
+let holiday_attribution = holiday_license
+let holiday_status_by_year = {}
+let holiday_requests_by_year = {}
+let holiday_request_counter = 0
+let holiday_http_request = |url, redirects, callback| news_http_request(url, redirects, callback)
+
+fn holiday_year_valid(year){
+    if !record_string(year) { return false }
+    regex("^[0-9]{4}$").test(year)
+}
+fn holiday_update_status(){
+    holiday_status = ""
+    for status in holiday_status_by_year {
+        if status["cache_error"] != "" {
+            if holiday_status != "" { holiday_status = holiday_status + "；" }
+            holiday_status = holiday_status + status["cache_error"]
+        }
+        if status["error"] != "" {
+            if holiday_status != "" { holiday_status = holiday_status + "；" }
+            holiday_status = holiday_status + status["error"]
+        }
+    }
+}
+fn holiday_set_year_status(year, state, error){
+    let cache_error = ""
+    let previous = holiday_status_by_year[year]
+    if previous != nil { cache_error = previous["cache_error"] }
+    holiday_status_by_year[year] = {state: state error: error cache_error: cache_error}
+    holiday_update_status()
+}
+fn holiday_cache_error(year, message){
+    let state = "not_loaded"
+    let error = ""
+    let previous = holiday_status_by_year[year]
+    if previous != nil { state = previous["state"] error = previous["error"] }
+    holiday_status_by_year[year] = {state: state error: error cache_error: message}
+    holiday_update_status()
+}
+
+fn holiday_request_allowed(url){
+    if !record_string(url) { return false }
+    let parts = url.split("/")
+    parts.len() >= 3 && parts[0] == "https:" && parts[1] == "" && record_contains(holiday_hosts, parts[2])
+}
+fn holiday_year_known(year){
+    for y in holiday_years_loaded { if y == year { return true } }
+    false
+}
+fn holiday_year_missing(year){
+    for y in holiday_years_missing { if y == year { return true } }
+    false
+}
+
+fn holiday_ingest(catalog){
+    if !holiday_catalog_valid(catalog) { return false }
+    for d in catalog["days"] {
+        holiday_by_day[d["date"]] = {date: d["date"] is_off_day: d["is_off_day"] name: d["name"] year: catalog["year"]}
+    }
+    // Year coverage is separate from the sparse list of exceptional dates.
+    let year = catalog["year"]
+    if !holiday_year_known(year) { holiday_years_loaded.push(year) }
+    holiday_years_missing.retain(|value| value != year)
+    true
+}
+
+// Returns the ingested catalog, or nil. The caller keeps the catalog so the
+// cache can be written from the same document that was validated.
+fn holiday_parse(body, year){
+    let value = nil
+    try { value = body.parse_json() } { value = nil }
+    let catalog = holiday_catalog_from_upstream(value, year)
+    if catalog == nil { return nil }
+    if !holiday_ingest(catalog) { return nil }
+    catalog
+}
+
+fn holiday_cache_path(year){ "holiday_v1_" + year + ".json" }
+
+// Returns the ingested catalog, or nil, so a caller can tell "not cached"
+// from "cached but invalid".
+fn holiday_read_cache(year){
+    let path = holiday_cache_path(year)
+    if !fs.exists(path) {
+        return nil
+    }
+    let raw = ""
+    try { raw = fs.read(path) } { raw = "" }
+    if raw == "" {
+        holiday_cache_error(year, year + " 年节假日缓存读取失败，等待重新获取")
+        return nil
+    }
+    let value = nil
+    try { value = raw.parse_json() } { value = nil }
+    if value == nil || !holiday_catalog_valid(value) {
+        holiday_cache_error(year, year + " 年节假日缓存格式无效，等待重新获取")
+        return nil
+    }
+    if value["year"] != year { holiday_cache_error(year, year + " 年节假日缓存年份不符，等待重新获取") return nil }
+    if !holiday_ingest(value) { return nil }
+    holiday_set_year_status(year, "cached", "")
+    value
+}
+
+// The cache document keeps the State Council announcement URLs, so the
+// provenance of a date that rewrote a plan stays inspectable on disk. The
+// catalog is passed in rather than rebuilt from global state.
+fn holiday_write_cache(catalog){
+    if catalog == nil {
+        return
+    }
+    let body = {schema_version: 1 year: catalog["year"] days: catalog["days"] papers: catalog["papers"]}.to_json()
+    let saved = true
+    try { fs.write(holiday_cache_path(catalog["year"]), body) } { saved = false }
+    if !saved { holiday_cache_error(catalog["year"], catalog["year"] + " 年节假日缓存保存失败，本次数据仅在当前会话有效") }
+    else { holiday_cache_error(catalog["year"], "") }
+}
+
+fn holiday_load_year(year){
+    if !holiday_year_valid(year) { holiday_status = "节假日查询年份无效" return }
+    if holiday_year_known(year) || holiday_requests_by_year[year] != nil {
+        return
+    }
+    holiday_read_cache(year)
+    if holiday_year_known(year) {
+        return
+    }
+    let url = holiday_base + "/" + year + ".json"
+    if !holiday_request_allowed(url) {
+        holiday_set_year_status(year, "error", year + " 年节假日数据源域名未获许可")
+        return
+    }
+    holiday_pending = holiday_pending + 1
+    holiday_request_counter = holiday_request_counter + 1
+    let request_id = holiday_request_counter
+    holiday_requests_by_year[year] = request_id
+    holiday_set_year_status(year, "loading", "")
+    holiday_http_request(url, 0, fn(result){
+        if holiday_requests_by_year[year] != request_id { return }
+        holiday_requests_by_year[year] = nil
+        holiday_pending = holiday_pending - 1
+        if holiday_pending < 0 { holiday_pending = 0 }
+        if !result.success {
+            if !holiday_year_missing(year) { holiday_years_missing.push(year) }
+            holiday_set_year_status(year, "error", year + " 年节假日数据未发布或获取失败：日期是否放假未知（" + result["error"] + "）")
+            return
+        }
+        let catalog = holiday_parse(result.body, year)
+        if catalog == nil {
+            if !holiday_year_missing(year) { holiday_years_missing.push(year) }
+            holiday_set_year_status(year, "error", year + " 年节假日响应不是预期结构：日期是否放假未知")
+            return
+        }
+        holiday_set_year_status(year, "fresh", "")
+        holiday_write_cache(catalog)
+    })
+}
+
+// The year list is passed in by startup rather than read from the runtime
+// clock, so a test or a replay can pin it.
+fn holiday_load(years){
+    for year in years { holiday_load_year(year) }
+}
+
+fn holiday_days_known(){
+    let count = 0
+    for day in holiday_by_day { count = count + 1 }
+    count
+}
+
+// Lookup of exceptional dates. A missing entry does not establish whether its
+// year is covered: holiday_year_known() answers that separately.
+fn holiday_on(day){
+    if !weather_day_valid(day) { return {date: day known: false is_off_day: nil name: ""} }
+    if holiday_by_day[day] != nil {
+        let hit = holiday_by_day[day]
+        return {date: hit["date"] known: true is_off_day: hit["is_off_day"] name: hit["name"] year: hit["year"]}
+    }
+    {date: day known: false is_off_day: nil name: ""}
+}
+
+// A rule, not a judgement. Returns why a date is unusual for planning, or nil
+// when nothing in the calendar is known to differ from an ordinary day.
+// An unloaded target year yields known: false; other loaded years are irrelevant.
+fn holiday_event_conflict(event){
+    if !record_object(event) || !record_number(event["start"]) { return nil }
+    let day = weather_day_stamp(event["start"])
+    let info = holiday_on(day)
+    if !info["known"] {
+        if !holiday_year_known(day.split("-")[0]) {
+            return {day: day known: false kind: "" name: ""}
+        }
+        return nil
+    }
+    if info["is_off_day"] { return {day: day known: true kind: "off_day" name: info["name"]} }
+    return {day: day known: true kind: "makeup_workday" name: info["name"]}
+}

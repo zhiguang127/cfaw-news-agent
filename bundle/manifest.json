@@ -13,12 +13,14 @@
   },
   "id": "dev.cfaw.news",
   "integrity": {
-    "bundle_blake3": "ac76565748a53d467b5cf35f9ba310209fdb6b63d9ddb05236a596d4230929cf"
+    "bundle_blake3": "a31e20d8417a58c76a46a9a1b23933afe352c7bc52fcde6126c75de1664db79a"
   },
   "name": "CFAW News",
   "network": {
     "hosts": [
+      "api.open-meteo.com",
       "arstechnica.com",
+      "cdn.jsdelivr.net",
       "export.arxiv.org",
       "feeds.arstechnica.com",
       "feeds.bbci.co.uk",
@@ -28,6 +30,7 @@
       "rss.arxiv.org",
       "techcrunch.com",
       "venturebeat.com",
+      "www.airchinagroup.com",
       "www.cnbc.com",
       "www.techmeme.com",
       "www.theguardian.com",
