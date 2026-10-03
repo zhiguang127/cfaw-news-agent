@@ -1,0 +1,83 @@
+// Static SDF art keeps the weather glance visible without a continuous redraw
+// loop. The native Makepad weather app's full Rust view is not bundled here.
+let ForecastGlyph = View{width: 56 height: 56 show_bg: true
+    draw_bg +: {
+        condition: uniform(7.0)
+        pixel: fn(){
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let w = self.rect_size.x
+            let h = self.rect_size.y
+            if self.condition < 1.5 {
+                let sx = w * 0.44
+                let sy = h * 0.38
+                sdf.circle(sx, sy, w * 0.24) sdf.fill(#xffcf70)
+                sdf.circle(sx, sy, w * 0.18) sdf.fill(#xffe6a6)
+                sdf.box(sx - 1.0, h * 0.04, 2.0, h * 0.08, 1.0) sdf.fill(#xffe6a6)
+                sdf.box(w * 0.07, sy - 1.0, w * 0.08, 2.0, 1.0) sdf.fill(#xffe6a6)
+                sdf.box(w * 0.72, sy - 1.0, w * 0.08, 2.0, 1.0) sdf.fill(#xffe6a6)
+            }
+            if self.condition > 0.5 {
+                sdf.circle(w * 0.32, h * 0.53, w * 0.17) sdf.fill(#xc9dcec)
+                sdf.circle(w * 0.52, h * 0.42, w * 0.23) sdf.fill(#xf1f7fc)
+                sdf.circle(w * 0.75, h * 0.54, w * 0.16) sdf.fill(#xe1edf6)
+                sdf.box(w * 0.18, h * 0.53, w * 0.69, h * 0.14, h * 0.065) sdf.fill(#xe1edf6)
+            }
+            if self.condition > 2.5 && self.condition < 4.5 {
+                sdf.box(w * 0.30, h * 0.74, w * 0.045, h * 0.16, w * 0.02) sdf.fill(#x8ed9ff)
+                sdf.box(w * 0.50, h * 0.76, w * 0.045, h * 0.16, w * 0.02) sdf.fill(#x8ed9ff)
+                sdf.box(w * 0.70, h * 0.74, w * 0.045, h * 0.16, w * 0.02) sdf.fill(#x8ed9ff)
+            }
+            if self.condition > 3.5 && self.condition < 4.5 {
+                sdf.box(w * 0.52, h * 0.50, w * 0.07, h * 0.22, 1.0) sdf.fill(#xffda76)
+            }
+            if self.condition > 4.5 && self.condition < 5.5 {
+                sdf.circle(w * 0.30, h * 0.82, w * 0.035) sdf.fill(#xffffff)
+                sdf.circle(w * 0.51, h * 0.86, w * 0.035) sdf.fill(#xffffff)
+                sdf.circle(w * 0.71, h * 0.82, w * 0.035) sdf.fill(#xffffff)
+            }
+            if self.condition > 5.5 {
+                sdf.box(w * 0.22, h * 0.77, w * 0.57, 2.0, 1.0) sdf.fill(#xbccee1)
+                sdf.box(w * 0.30, h * 0.87, w * 0.43, 2.0, 1.0) sdf.fill(#xbccee1)
+            }
+            return sdf.result
+        }
+    }
+}
+let ForecastSky = RoundedView{width: Fill height: Fit flow: Down show_bg: true
+    draw_bg +: {
+        border_radius: 16.0
+        pixel: fn(){
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let glow = max(0.0, 1.0 - length(self.pos - vec2(0.84, 0.12)))
+            let sky = mix(#x243d68, #x476e99, glow * 0.85)
+            sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.border_radius)
+            sdf.fill(sky)
+            return sdf.result
+        }
+    }
+}
+let WeatherHeaderWidget = View{width: 132 height: 50
+    weather_header_content := View{width: Fill height: Fill on_render: || {
+        let city = weather_primary_city()
+        let today = weather_today()
+        GestureView{width: Fill height: Fill on_tap: |x, y| show_weather()
+            ForecastSky{width: Fill height: Fill padding: 8 draw_bg.border_radius: 12.0
+                View{width: Fill height: Fill flow: Right spacing: 6 align: Align{y: 0.5}
+                    ForecastGlyph{width: 30 height: 30 draw_bg.condition: weather_glyph_condition(today)}
+                    View{width: Fill height: Fit flow: Down spacing: 3
+                        if city != nil {
+                            Small{text: city.name + " · " + weather_header_condition(today) draw_text.color: #xd7e6f7 max_lines: 1 draw_text.text_style.font_size: 9}
+                            if today != nil {
+                                Text{text: weather_temperature(today.temp_min_c) + " / " + weather_temperature(today.temp_max_c)
+                                    max_lines: 1 draw_text.color: white draw_text.text_style: theme.font_bold{font_size: 13}}
+                            } else { Small{text: "查看预报 ›" draw_text.color: white max_lines: 1} }
+                        } else {
+                            Small{text: "城市天气" draw_text.color: #xd7e6f7 max_lines: 1 draw_text.text_style.font_size: 9}
+                            Small{text: "选择城市 ›" draw_text.color: white max_lines: 1}
+                        }
+                    }
+                }
+            }
+        }
+    }}
+}

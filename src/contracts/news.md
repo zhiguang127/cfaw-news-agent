@@ -35,4 +35,6 @@ source 匹配发布方名称，category 匹配目录分类，keyword 对标题�
 
 数据层负责获取与记录，`app/controller.splash` 连接用户动作与页面；数据代码不访问 widgets。`records.splash` 是用户记录的唯一写入入口，写入函数成功返回空字符串，否则返回可展示的错误，本次内存修改仍可使用但不宣称已保存。
 
-`feed_build_rows(enabled_ids, complete)` 分批去重与排序，每批最多处理配置中的 `work_batch_items` 条记录，以适配参考宿主的 64 ms 回调限制。新的构建或取消刷新使旧构建失效，回调只发布完整的新列表。关键词匹配器按规则 ID 复用，规则变化时清理；它不存储用户记录。
+`feed_build_rows(enabled_ids, complete)` 分批去重与排序，每批最多处理 `work_batch_items` 条，同时以 `work_slice_seconds` 的时间预算让出执行，以适配宿主的 64 ms 回调限制。当前配置为最多 64 条/8 ms；单个操作仍需适配宿主预算。新的数据层构建或取消刷新使旧构建失效，回调只发布完整的新列表。app 合并同一来源选择、同一 refresh generation 内的更新：完成当前快照后展示，再重建累计新数据，避免每次来源完成都取消排序；来源选择或 generation 改变仍拒绝旧结果。
+
+`feed_restore_cache(enabled_ids, index, generation, complete)` 只恢复启用源；`feed_refresh_needed_ids(enabled_ids, checked_at)` 返回缺失、未来获取时间或达到 `startup_refresh_seconds`（300 秒）的来源。有效空结果也受该时限保护；手动刷新绕过时限。`feed_data_revision` 只标记已接受缓存/网络数据变化，不代表新闻内容有实质变化。刷新的最终完成在各来源的 on_update 都交付后发出，失败不触发无必要的全量排序。关键词匹配器按规则 ID 复用，规则变化时清理；它不存储用户记录。

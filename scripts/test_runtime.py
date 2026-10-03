@@ -41,7 +41,13 @@ def run():
     parser.add_argument('--host', type=Path, help='Pinned card-host executable')
     parser.add_argument('--agent-only', action='store_true', help='Run isolated agent validation tests')
     parser.add_argument('--inspect-ui', action='store_true', help='Capture and exercise the fixture results/detail UI (agent-only)')
+    parser.add_argument('--suites', nargs='+', choices=('news', 'weather', 'holiday', 'fx', 'feed'), help='Run selected suites; feed exercises application refresh (default: data suites)')
     args = parser.parse_args()
+    if args.agent_only and args.suites:
+        parser.error('--suites cannot be combined with --agent-only')
+    suites = args.suites or ['news', 'weather', 'holiday', 'fx']
+    if 'feed' in suites and len(suites) != 1:
+        parser.error('feed uses the application UI; run it separately from data suites')
     lock = json.loads((ROOT / 'dev-dependencies.lock.json').read_text())
     checkout = ROOT / next(r['relative_checkout'] for r in lock['repositories'] if r['name'] == 'OctoSense-App-Hub')
     host = (args.host or checkout / 'target/release' / ('card-host.exe' if os.name == 'nt' else 'card-host')).resolve()
@@ -50,7 +56,7 @@ def run():
     work = ROOT / '.test-state' / ('runtime-' + uuid4().hex[:12])
     bundle = work / 'bundle'
     bundle.mkdir(parents=True)
-    paths = ORDER[:-1] if args.agent_only else ORDER[:ORDER.index('src/agent/runtime/connectivity.splash')]
+    paths = ORDER[:-1] if args.agent_only or 'feed' in suites else ORDER[:ORDER.index('src/agent/runtime/connectivity.splash')]
     source, _ = assemble(paths=paths)
     for name, file in [('fixture_rss', 'news-rss.xml'), ('fixture_atom', 'news-atom.xml'), ('fixture_hn', 'news-hn.json'),
                        ('fixture_weather', 'weather-daily.json'),
@@ -78,8 +84,9 @@ start_timeout(0.05, || agent_test_validation(|| {
 
 
     else:
-        for name in ('news', 'weather', 'holiday', 'fx'):
-            source += (ROOT / f'tests/unit/{name}_runtime.splash').read_text(encoding='utf-8')
+        for name in suites:
+            directory = 'scenarios' if name == 'feed' else 'unit'
+            source += (ROOT / f'tests/{directory}/{name}_runtime.splash').read_text(encoding='utf-8')
     (bundle / 'main.splash').write_text(source, encoding='utf-8')
     manifest = json.loads((ROOT / 'bundle/manifest.json').read_text())
     manifest['id'] = 'dev.cfaw.runtime-tests'
@@ -96,8 +103,8 @@ start_timeout(0.05, || agent_test_validation(|| {
         startup.wShowWindow = 0
     report_path = work / 'data' / manifest['id'] / 'runtime-report.json'
     report_paths = {'agent': report_path} if args.agent_only else {
-        'news': report_path,
-        **{label: report_path.with_name(label + '-report.json') for label in ('weather', 'holiday', 'fx')},
+        label: report_path if label == 'news' else report_path.with_name(label + '-report.json')
+        for label in suites
     }
     with (work / 'host.log').open('w', encoding='utf-8') as log:
         process = subprocess.Popen([str(host), '--bundle', str(bundle), '--allow-unsigned', '--stamp', '--app-data', str(work / 'data'), '--remote', str(port)], cwd=host.parents[2], stdout=log, stderr=log, startupinfo=startup)

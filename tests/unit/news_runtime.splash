@@ -143,8 +143,11 @@ fn test_run(){
     feed_refresh(["hn"], || {}, fn(count){ completions = completions + 1 }, request)
     requests[0].callback({success: true body: "{\"hits\":[]}"})
     test_assert(feed_rows_by_source["hn"].len() == 0 && feed_status_by_source["hn"].state == "fresh", "valid empty result distinct from failed request")
-    test_stage = "complete"
-    start_timeout(0.02, || test_capacity_seed(0))
+    feed_status_by_source["bbc"].retrieved_at = 1000
+    test_assert(feed_refresh_needed_ids(["bbc"], 1100).len() == 0, "recent cache skips startup network refresh")
+    test_assert(feed_refresh_needed_ids(["bbc"], 1000 + news_config.startup_refresh_seconds).len() == 1, "startup retries cache at refresh age boundary")
+    test_assert(feed_refresh_needed_ids(["bbc"], 999).len() == 1, "future retrieval time cannot suppress startup refresh")
+    start_timeout(0.03, || test_simultaneous_completion())
     })
     })
     })
@@ -155,6 +158,19 @@ fn test_run(){
     })
 }
 fn test_report(){ fs.write("runtime-report.json", {passed: test_passes.len() failed: test_failures.len() failures: test_failures stage: test_stage}.to_json()) }
+fn test_simultaneous_completion(){
+    test_stage = "simultaneous source completion"
+    let updates = 0
+    let completed_after_updates = 0
+    let requests = []
+    feed_refresh(["bbc" "guardian" "cnbc"], || { updates = updates + 1 }, fn(count){ completed_after_updates = updates },
+        fn(url, redirects, callback){ requests.push(callback) })
+    for callback in requests { callback({success: false error: "synthetic simultaneous failure"}) }
+    start_timeout(0.04, || {
+        test_assert(updates == 3 && completed_after_updates == 3, "final completion follows all source updates even when responses arrive together")
+        test_capacity_seed(0)
+    })
+}
 fn test_capacity_seed(index){
     test_stage = "bounded feed capacity"
     if index >= news_sources.len() {

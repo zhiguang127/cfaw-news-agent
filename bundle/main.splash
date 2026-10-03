@@ -5,8 +5,10 @@
 // Request limits apply to one refresh; storage limits apply to domain records.
 let news_config = {request_timeout_seconds: 15 max_parallel_requests: 3
     max_response_bytes: 2000000 max_redirects: 3 items_per_source: 20
-    max_feed_items: 240 work_batch_items: 5 max_bookmarks: 500 max_interests: 50 max_seen_ids: 2000
-    cache_stale_seconds: 7200}
+    max_feed_items: 240 work_batch_items: 64 work_slice_seconds: 0.008
+    max_bookmarks: 500 max_interests: 50 max_seen_ids: 2000
+    startup_refresh_seconds: 300 cache_stale_seconds: 7200
+    refresh_gesture_cooldown_seconds: 2 overlay_tap_guard_seconds: 0.2}
 // END src/app/config.splash
 
 // BEGIN src/contracts/news.splash
@@ -997,6 +999,10 @@ fn weather_warn(text){
 fn weather_selection_document_valid(value){
     if !record_object(value) || value["schema_version"] != 1 { return false }
     if !record_array(value["tracked"]) { return false }
+    if value["selected_city_id"] != nil {
+        if !record_string(value["selected_city_id"]) { return false }
+        if value["selected_city_id"] != "" && !record_contains(value["tracked"], value["selected_city_id"]) { return false }
+    }
     weather_tracked_valid(value["tracked"])
 }
 
@@ -1031,10 +1037,15 @@ fn weather_selection_read(){
     }
     weather_tracked = []
     for cid in parsed["tracked"] { weather_tracked.push(cid) }
+    weather_primary_cid = ""
+    if parsed["selected_city_id"] != nil { weather_primary_cid = parsed["selected_city_id"] }
 }
 
 fn weather_selection_write(){
-    let document = {schema_version: 1 tracked: weather_tracked}
+    let selected = ""
+    let city = weather_primary_city()
+    if city != nil { selected = city.cid }
+    let document = {schema_version: 1 tracked: weather_tracked selected_city_id: selected}
     if !weather_selection_document_valid(document) {
         weather_warn("城市选择未通过校验，原文件未覆盖")
         return false
@@ -1201,6 +1212,7 @@ let feed_status_by_source = {}
 let feed_generation = 0
 let feed_task = nil
 let feed_build_revision = 0
+let feed_data_revision = 0
 
 fn feed_cache_valid(value, source){
     if !record_object(value) || value.schema_version != 1 || value.source_id != source.id || !record_number(value.retrieved_at) || !record_array(value.items) { return false }
@@ -1220,6 +1232,7 @@ fn feed_read_cache(source){
             let cached = fs.read(path).parse_json()
             if feed_cache_valid(cached, source) {
                 feed_rows_by_source[source.id] = cached.items
+                feed_data_revision = feed_data_revision + 1
                 feed_status_by_source[source.id] = {state: "cached" retrieved_at: cached.retrieved_at error: "" count: cached.items.len()}
             } else { feed_status_by_source[source.id].error = "缓存格式无效，等待重新获取" }
         }
@@ -1229,12 +1242,22 @@ fn feed_load_cache(){
     feed_initialize()
     for source in news_sources { feed_read_cache(source) }
 }
-fn feed_restore_cache(index, generation, complete){
+fn feed_restore_cache(enabled_ids, index, generation, complete){
     // Each native entry has a 64 ms wall budget. Yield between source files.
     if generation != feed_generation { return }
+    while index < news_sources.len() && !record_contains(enabled_ids, news_sources[index].id) { index = index + 1 }
     if index >= news_sources.len() { complete() return }
     feed_read_cache(news_sources[index])
-    start_timeout(0.01, || feed_restore_cache(index + 1, generation, complete))
+    start_timeout(0.01, || feed_restore_cache(enabled_ids, index + 1, generation, complete))
+}
+fn feed_refresh_needed_ids(enabled_ids, checked_at){
+    let ids = []
+    for id in enabled_ids {
+        let status = feed_status_by_source[id]
+        if status == nil { continue }
+        if status.retrieved_at <= 0 || checked_at < status.retrieved_at || checked_at - status.retrieved_at >= news_config.startup_refresh_seconds { ids.push(id) }
+    }
+    ids
 }
 fn feed_all_rows(enabled_ids){
     let groups = []
@@ -1248,6 +1271,7 @@ fn feed_accept(source, result, retrieved_at){
     try { rows = news_parse(result.body, source, retrieved_at) } { rows = nil }
     if rows == nil { status.state = "error" status.error = "响应不是可解析的 RSS/Atom 或新闻 JSON" return false }
     feed_rows_by_source[source.id] = rows
+    feed_data_revision = feed_data_revision + 1
     status.state = "fresh"
     status.error = ""
     status.count = rows.len()
@@ -1271,7 +1295,8 @@ fn feed_work_current(work){ work.revision == feed_build_revision && work.generat
 fn feed_collect_step(work){
     if !feed_work_current(work) { return }
     let processed = 0
-    while work.group_index < work.groups.len() && processed < news_config.work_batch_items {
+    let started_at = time_now()
+    while work.group_index < work.groups.len() && processed < news_config.work_batch_items && time_now() - started_at < news_config.work_slice_seconds {
         let rows = work.groups[work.group_index]
         if work.row_index >= rows.len() { work.group_index = work.group_index + 1 work.row_index = 0 }
         else {
@@ -1291,7 +1316,8 @@ fn feed_sort_step(work){
         return
     }
     let processed = 0
-    while work.start < work.rows.len() && processed < news_config.work_batch_items {
+    let started_at = time_now()
+    while work.start < work.rows.len() && processed < news_config.work_batch_items && time_now() - started_at < news_config.work_slice_seconds {
         if work.end == 0 {
             work.left = work.start
             work.middle = min(work.start + work.width, work.rows.len())
@@ -1328,12 +1354,13 @@ fn feed_pump(task){
             // never shares the same slice and trips the hard wall budget.
             start_timeout(0.01, || {
                 if task.generation != feed_generation { return }
+                task.announced = task.announced + 1
                 task.on_update()
                 feed_pump(task)
             })
         })
     }
-    if task.active == 0 && task.next >= task.sources.len() && !task.done {
+    if task.active == 0 && task.next >= task.sources.len() && task.announced == task.completed && !task.done {
         task.done = true
         task.on_done(task.successes)
     }
@@ -1342,7 +1369,7 @@ fn feed_refresh(enabled_ids, on_update, on_done, request){
     feed_generation = feed_generation + 1
     let sources = []
     for source in news_sources { if record_contains(enabled_ids, source.id) { sources.push(source) } }
-    let task = {generation: feed_generation sources: sources next: 0 active: 0 completed: 0 successes: 0 done: false
+    let task = {generation: feed_generation sources: sources next: 0 active: 0 completed: 0 announced: 0 successes: 0 done: false
         on_update: on_update on_done: on_done request: request}
     feed_task = task
     feed_pump(task)
@@ -1370,6 +1397,8 @@ let weather_tracked = []
 let weather_pending = 0
 let weather_generation = 0
 let weather_selection = ""
+let weather_primary_cid = ""
+let weather_on_update = || {}
 // Six hours bounds the age of usable evidence; the date alone is not freshness.
 let weather_cache_ttl_seconds = 21600
 let weather_http_request = fn(url, redirects, callback){ news_http_request(url, redirects, callback) }
@@ -1386,6 +1415,11 @@ fn weather_city_by_name(name){ for c in weather_cities { if c.name == name { ret
 fn weather_is_tracked(cid){
     for t in weather_tracked { if t == cid { return true } }
     false
+}
+fn weather_primary_city(){
+    if weather_is_tracked(weather_primary_cid) { return weather_city_by_cid(weather_primary_cid) }
+    if weather_tracked.len() > 0 { return weather_city_by_cid(weather_tracked[0]) }
+    nil
 }
 fn weather_initialize(){
     weather_generation = weather_generation + 1
@@ -1552,6 +1586,7 @@ fn weather_fetch_city(cid, generation){
         weather_pending = weather_pending - 1
         weather_accept(city, result, time_now())
         if weather_pending <= 0 { weather_pending = 0 }
+        start_timeout(0.01, || { if generation == weather_generation { weather_on_update() } })
     })
     true
 }
@@ -1588,6 +1623,7 @@ fn weather_select_at(name, checked_at){
     if city == nil { return false }
     if !weather_track_at(city.cid, weather_generation, checked_at) { return false }
     weather_selection = name
+    weather_primary_cid = city.cid
     true
 }
 fn weather_select(name){ weather_select_at(name, time_now()) }
@@ -3067,13 +3103,18 @@ let keyword_draft = ""
 let reading = nil
 let detail_kind = ""
 let busy = false
+let menu_open = false
+let last_swipe_refresh_at = 0
+let last_return_top_at = 0
 let settings_show_diagnostics = false
 let results_show_error_detail = false
 let analysis_check_message = ""
 let analysis_batch_no_change = 0
 let analysis_batch_insufficient = 0
 let app_feed_rows = []
-let visible_limit = 40
+let app_feed_build_task = nil
+let app_feed_build_counter = 0
+let refresh_successes_seen = 0
 let display_rows = []
 let schedule_edit_id = nil
 let schedule_edit_version = nil
@@ -3167,22 +3208,24 @@ fn empty_text(){
         if user_interests.len() == 0 { return "还没有关注。添加主题、关键词或关注新闻来源后，相关消息会出现在这里。" }
         return "暂时没有与你关注内容匹配的新闻，可以刷新或调整关注。"
     }
-    if enabled_source_ids.len() == 0 { return "尚未启用新闻源。打开更多，选择需要获取的来源。" }
+    if enabled_source_ids.len() == 0 { return "尚未启用新闻源。打开左上角菜单，选择需要获取的来源。" }
     if busy { return "正在获取真实新闻，来源完成后会逐步显示。" }
-    "暂无可显示的新闻。点击刷新重试，或到来源查看请求错误。"
+    "暂无可显示的新闻，可从菜单查看来源状态。"
 }
 fn notice(text){ ui.feedback.set_text(text) ui.feedback_panel.set_visible(text != "") }
 fn sync_status(){
     let failed = 0
     for id in enabled_source_ids { if feed_status_by_source[id].state == "error" { failed = failed + 1 } }
     let text = "" + app_feed_rows.len() + " 条新闻"
-    if busy { text = "正在更新新闻…" }
+    if busy {
+        text = text + " · 正在更新"
+        if feed_task != nil { text = text + " " + feed_task.completed + "/" + feed_task.sources.len() }
+    }
     if page == "saved" { text = "" + user_bookmarks.len() + " 条收藏" }
     if page == "tracking" && !busy { text = "" + display_rows.len() + " 条相关新闻" }
     if failed > 0 && page != "saved" { text = text + " · 部分来源暂时不可用" }
     ui.status.set_text(text)
-    ui.refresh_button.set_text("刷新")
-    if busy { ui.refresh_button.set_text("取消刷新") }
+    ui.menu_cancel_update.set_visible(busy)
     ui.tracking_summary.set_text("我的关注 · " + tracking_new_count() + " 条未读更新")
     render_analysis_controls()
 }
@@ -3193,7 +3236,7 @@ fn render_feed(){
     ui.list_container.set_visible(!empty)
     ui.empty_panel.set_visible(empty)
     ui.empty_message.set_text(empty_text())
-    ui.more_button.set_visible(display_rows.len() > visible_limit)
+    ui.back_to_top.set_visible(!empty)
     sync_status()
     ui.tile_list.render()
 }
@@ -3210,11 +3253,11 @@ fn render_main(){
     render_feed()
 }
 fn select_page(id){
+    close_menu()
     notice("")
     page = id
     category = "all"
     query = ""
-    visible_limit = 40
     reading = nil
     detail_kind = ""
     ui.search.set_text("")
@@ -3362,20 +3405,65 @@ fn schedule_confirm(){
     ui.story_content.render()
     render_analysis_controls()
 }
-fn pick_category(id){ category = id visible_limit = 40 ui.categories.render() render_feed() }
-fn set_query(text){ query = text.trim() visible_limit = 40 render_feed() }
-fn show_more(){ visible_limit = visible_limit + 40 render_feed() }
+fn pick_category(id){ category = id ui.categories.render() render_feed() }
+fn set_query(text){ query = text.trim() render_feed() }
+fn return_feed_top(){
+    last_return_top_at = time_now()
+    // The pinned script UI has no scroll-position method. Recreate only the
+    // scroll child for this explicit action; ordinary updates retain it.
+    ui.list_container.render()
+    start_timeout(0.01, || ui.list.render())
+}
 fn rebuild_feed(complete){
-    feed_build_rows(enabled_source_ids, fn(rows){ app_feed_rows = rows complete() })
+    let source_key = enabled_source_ids.to_json()
+    if app_feed_build_task != nil {
+        if app_feed_build_task.generation == feed_generation && app_feed_build_task.source_key == source_key {
+            app_feed_build_task.complete = complete
+            return
+        }
+    }
+    app_feed_build_counter = app_feed_build_counter + 1
+    let task = {id: app_feed_build_counter generation: feed_generation source_key: source_key complete: complete}
+    app_feed_build_task = task
+    rebuild_feed_step(task)
+}
+fn rebuild_feed_step(task){
+    let data_revision = feed_data_revision
+    feed_build_rows(enabled_source_ids, fn(rows){
+        if app_feed_build_task == nil || app_feed_build_task.id != task.id || task.generation != feed_generation { return }
+        app_feed_rows = rows
+        // Publish this snapshot while newer sources accumulate; never restart
+        // an in-flight sort for every HTTP completion.
+        if data_revision != feed_data_revision {
+            render_feed()
+            start_timeout(0.01, || rebuild_feed_step(task))
+        } else { app_feed_build_task = nil task.complete() }
+    })
 }
 fn refresh(){
     analysis_check_message = ""
     if busy { feed_cancel() busy = false render_feed() notice("已取消等待；迟到结果不会更新新闻。") return }
+    refresh_sources(enabled_source_ids)
+}
+fn feed_swipe_refresh(dx, dy){
+    if dy >= 0 || dx != 0 || page != "feed" || detail_kind != "" || busy { return }
+    let checked_at = time_now()
+    if checked_at - last_swipe_refresh_at < news_config.refresh_gesture_cooldown_seconds { return }
+    last_swipe_refresh_at = checked_at
+    refresh()
+}
+fn refresh_sources(ids){
+    if ids.len() == 0 { return }
     busy = true
-    feed_refresh(enabled_source_ids, || {
-        rebuild_feed(|| render_feed())
+    refresh_successes_seen = 0
+    feed_refresh(ids, || {
+        if feed_task.successes > refresh_successes_seen {
+            refresh_successes_seen = feed_task.successes
+            rebuild_feed(|| render_feed())
+        } else { sync_status() }
         if detail_kind == "settings" { ui.source_list.render() }
     }, fn(successes){
+        if successes == 0 { busy = false render_feed() if detail_kind == "settings" { ui.source_list.render() } return }
         rebuild_feed(|| {
             busy = false
             if successes > 0 {
@@ -3402,8 +3490,9 @@ fn suggestion_attention_count(){
 }
 fn render_analysis_controls(){
     let count = suggestion_attention_count()
-    ui.suggestions_button.set_visible(count > 0)
-    ui.suggestions_button.set_text("建议 " + count)
+    ui.menu_badge.set_visible(count > 0)
+    ui.suggestions_button.set_text("分析与建议")
+    if count > 0 { ui.suggestions_button.set_text("分析与建议 · " + count + " 待处理") }
     ui.manage_tracking_button.set_visible(analysis_has_focus())
     if page == "tracking" { ui.tracking_analysis_actions.render() }
 }
@@ -3550,9 +3639,12 @@ fn render_detail(){
     ui.settings_panel.set_visible(detail_kind == "settings")
     ui.tracking_panel.set_visible(detail_kind == "tracking")
     ui.results_panel.set_visible(detail_kind == "results")
+    ui.weather_panel.set_visible(detail_kind == "weather")
     if detail_kind == "results" { ui.results_content.render() }
+    if detail_kind == "weather" { ui.weather_content.render() }
 }
 fn show_detail(kind, title){
+    close_menu()
     detail_kind = kind
     ui.detail_title.set_text(title)
     ui.main.set_visible(false)
@@ -3560,6 +3652,9 @@ fn show_detail(kind, title){
     render_detail()
 }
 fn open_story(row){
+    // The pinned GestureView can also deliver a tap through a sibling overlay.
+    // Remove this guard when host capture excludes overlapping sibling controls.
+    if time_now() - last_return_top_at < news_config.overlay_tap_guard_seconds { return }
     suggestion_focus_id = nil
     schedule_confirmation_id = nil
     if !analysis_busy { analysis_result = nil analysis_state = "idle" }
@@ -3577,6 +3672,7 @@ fn update_suggestion_state(id, state){
     render_analysis_controls()
 }
 fn close_detail(){
+    close_menu()
     detail_kind = ""
     reading = nil
     ui.detail_pane.set_visible(false)
@@ -3585,6 +3681,8 @@ fn close_detail(){
     sync_status()
 }
 fn show_settings(){ notice("") settings_show_diagnostics = false ui.diagnostics_controls.render() show_detail("settings", "设置") }
+fn close_menu(){ menu_open = false ui.menu_panel.set_visible(false) }
+fn toggle_menu(){ menu_open = !menu_open ui.menu_panel.set_visible(menu_open) }
 fn manage_tracking(){ notice("") show_detail("tracking", "管理关注") }
 fn add_keyword(){
     analysis_check_message = ""
@@ -3608,6 +3706,141 @@ fn toggle_source(id){
     rebuild_feed(|| render_feed())
 }
 // END src/app/controller.splash
+
+// BEGIN src/app/weather.splash
+// City-based forecasts, independent of the feed's refresh and navigation state.
+// The pinned script host exposes no device-location service. Never infer the
+// user's location from a default city, timezone, account or network address.
+let weather_app_ready = false
+let weather_picker_open = false
+let weather_city_query = ""
+
+fn weather_app_rows(){
+    let city = weather_primary_city()
+    if city == nil { return [] }
+    let rows = weather_rows_by_city[city.cid]
+    if rows == nil { return [] }
+    let today = weather_time_stamp(weather_day_stamp(time_now()))
+    let out = []
+    for row in rows { if weather_time_stamp(row.day) >= today { out.push(row) } }
+    out
+}
+fn weather_today(){
+    let today = weather_day_stamp(time_now())
+    for row in weather_app_rows() { if row.day == today { return row } }
+    nil
+}
+fn weather_temperature(value){
+    if value == nil { return "—" }
+    "" + floor(value + 0.5) + "°"
+}
+fn weather_day_label(day){
+    if day == weather_day_stamp(time_now()) { return "今天" }
+    if day == weather_day_stamp(time_now() + 86400) { return "明天" }
+    let parts = day.split("-")
+    parts[1] + "." + parts[2]
+}
+fn weather_glyph_condition(row){
+    if row == nil { return 7 }
+    let code = row.code
+    if code == 0 { return 0 }
+    if code <= 2 { return 1 }
+    if code == 3 { return 2 }
+    if code == 45 || code == 48 { return 6 }
+    if code >= 95 { return 4 }
+    if (code >= 71 && code <= 77) || code == 85 || code == 86 { return 5 }
+    if code >= 51 && code <= 82 { return 3 }
+    7
+}
+fn weather_header_condition(row){
+    let city = weather_primary_city()
+    if city == nil { return "选择城市" }
+    let status = weather_status_by_city[city.cid]
+    if status.state == "loading" { return "更新中" }
+    if status.state == "error" { return "更新失败" }
+    if row == nil { return "待更新" }
+    if !weather_city_fresh_at(city.cid, time_now()) { return "缓存预报" }
+    row.condition
+}
+fn weather_app_status(){
+    let city = weather_primary_city()
+    if city == nil { return "选择所在城市或你关心的目的地，查看未来 7 天预报。" }
+    let status = weather_status_by_city[city.cid]
+    if status.state == "loading" { return "正在更新预报，已有缓存仍可查看…" }
+    if status.state == "error" { return "更新失败：" + status.error + "。可点击更新重试。" }
+    if status.fetched_at <= 0 { return "尚未获取预报，请点击更新重试。" }
+    let text = "获取于 " + age_label(status.fetched_at)
+    if !weather_city_fresh_at(city.cid, time_now()) { text = "缓存已过期 · " + text }
+    if weather_today() == nil { text = text + " · 今日预报缺失" }
+    if status.error != "" { text = text + " · " + status.error }
+    text
+}
+fn weather_choose_name(){
+    let city = weather_city_by_name(weather_city_query.trim())
+    if city == nil { notice("目录中暂无该城市，请选择下方的已支持城市。") return }
+    weather_choose_city(city.cid)
+}
+fn weather_render(){
+    ui.weather_header_content.render()
+    if detail_kind == "weather" { ui.weather_content.render() }
+}
+fn weather_app_restore(index, generation){
+    if generation != weather_generation { return }
+    if index >= weather_tracked.len() {
+        weather_app_ready = true
+        weather_render()
+        weather_fetch_cities(weather_tracked, generation)
+        weather_render()
+        return
+    }
+    let city = weather_city_by_cid(weather_tracked[index])
+    if city != nil { weather_read_cache(city) }
+    start_timeout(0.01, || weather_app_restore(index + 1, generation))
+}
+fn weather_app_boot(){
+    weather_initialize()
+    weather_selection_read()
+    weather_on_update = || weather_render()
+    start_timeout(0.01, || weather_app_restore(0, weather_generation))
+}
+fn show_weather(){
+    notice("")
+    weather_picker_open = weather_primary_city() == nil
+    weather_city_query = ""
+    show_detail("weather", "天气预报")
+}
+fn weather_choose_city(cid){
+    if !weather_app_ready { return }
+    let city = weather_city_by_cid(cid)
+    if city == nil { return }
+    if !weather_select(city.name) { notice("最多保存 12 个城市，请先移除不需要的城市。") return }
+    weather_selection_write()
+    weather_picker_open = false
+    weather_city_query = ""
+    weather_render()
+}
+fn weather_remove_city(cid){
+    if !weather_app_ready { return }
+    let kept = []
+    for id in weather_tracked { if id != cid { kept.push(id) } }
+    // Invalidate any completion for a removed city before updating selection.
+    weather_cancel()
+    weather_tracked = kept
+    if weather_primary_cid == cid { weather_primary_cid = "" }
+    weather_selection_write()
+    weather_picker_open = weather_primary_city() == nil
+    weather_fetch_cities(weather_tracked, weather_generation)
+    weather_render()
+}
+fn weather_update_selected(){
+    if !weather_app_ready { return }
+    let city = weather_primary_city()
+    if city == nil { return }
+    weather_cancel()
+    weather_fetch_city(city.cid, weather_generation)
+    weather_render()
+}
+// END src/app/weather.splash
 
 // BEGIN src/frontend/styles.splash
 let ink = #x202126
@@ -3664,22 +3897,23 @@ let Search = TextInput{width: Fill height: 32 empty_text: "搜索新闻"
 // BEGIN src/frontend/components/news_list.splash
 let NewsList = ScrollYView{width: Fill height: Fill flow: Down on_render: || {
     for i row in display_rows {
-        if i >= visible_limit { break }
-        View{width: Fill height: Fit flow: Down
+        let hint = row_match_hint(row)
+        let cache_note = row_cache_note(row)
+        GestureView{width: Fill height: Fit flow: Down on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
             View{width: Fill height: Fit flow: Right spacing: 10 padding: Inset{left: 18 right: 18 top: 12 bottom: 8}
                 RoundedView{width: 32 height: 32 show_bg: true draw_bg.color: soft draw_bg.border_radius: 16.0 align: Align{x: 0.5 y: 0.5}
                     Label{text: news_avatar(row) draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 12}}
                 }
                 View{width: Fill height: Fit flow: Down spacing: 4
                     Small{text: news_meta(row) draw_text.text_style: theme.font_bold{font_size: 11 line_spacing: 1.15}}
-                    GestureView{width: Fill height: Fit on_tap: |x, y| open_story(row)
+                    GestureView{width: Fill height: Fit on_tap: |x, y| open_story(row) on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
                         Text{text: row.title max_lines: 3 draw_text.text_style.font_size: 14}
                     }
-                    if row_match_hint(row) != "" {
-                        Small{text: row_match_hint(row) max_lines: 1 draw_text.color: accent}
+                    if hint != "" {
+                        Small{text: hint max_lines: 1 draw_text.color: accent}
                     }
-                    if row_is_new(row) { Small{text: "新消息 · 首次检查后的新增" draw_text.color: accent} }
-                    if row_cache_note(row) != "" { Small{text: row_cache_note(row)} }
+                    if records_is_unread(row.news_id) && hint != "" { Small{text: "新消息 · 首次检查后的新增" draw_text.color: accent} }
+                    if cache_note != "" { Small{text: cache_note} }
                     View{width: Fill height: 28 flow: Right spacing: 10
                         if records_has_interest("source", row.source) { LinkButton{text: "已跟踪" on_click: || toggle_follow(row)} }
                         else { QuietButton{text: "关注来源" on_click: || toggle_follow(row)} }
@@ -3693,6 +3927,119 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down on_render: || {
     }
 }}
 // END src/frontend/components/news_list.splash
+
+// BEGIN src/frontend/components/weather_widget.splash
+// Static SDF art keeps the weather glance visible without a continuous redraw
+// loop. The native Makepad weather app's full Rust view is not bundled here.
+let ForecastGlyph = View{width: 56 height: 56 show_bg: true
+    draw_bg +: {
+        condition: uniform(7.0)
+        pixel: fn(){
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let w = self.rect_size.x
+            let h = self.rect_size.y
+            if self.condition < 1.5 {
+                let sx = w * 0.44
+                let sy = h * 0.38
+                sdf.circle(sx, sy, w * 0.24) sdf.fill(#xffcf70)
+                sdf.circle(sx, sy, w * 0.18) sdf.fill(#xffe6a6)
+                sdf.box(sx - 1.0, h * 0.04, 2.0, h * 0.08, 1.0) sdf.fill(#xffe6a6)
+                sdf.box(w * 0.07, sy - 1.0, w * 0.08, 2.0, 1.0) sdf.fill(#xffe6a6)
+                sdf.box(w * 0.72, sy - 1.0, w * 0.08, 2.0, 1.0) sdf.fill(#xffe6a6)
+            }
+            if self.condition > 0.5 {
+                sdf.circle(w * 0.32, h * 0.53, w * 0.17) sdf.fill(#xc9dcec)
+                sdf.circle(w * 0.52, h * 0.42, w * 0.23) sdf.fill(#xf1f7fc)
+                sdf.circle(w * 0.75, h * 0.54, w * 0.16) sdf.fill(#xe1edf6)
+                sdf.box(w * 0.18, h * 0.53, w * 0.69, h * 0.14, h * 0.065) sdf.fill(#xe1edf6)
+            }
+            if self.condition > 2.5 && self.condition < 4.5 {
+                sdf.box(w * 0.30, h * 0.74, w * 0.045, h * 0.16, w * 0.02) sdf.fill(#x8ed9ff)
+                sdf.box(w * 0.50, h * 0.76, w * 0.045, h * 0.16, w * 0.02) sdf.fill(#x8ed9ff)
+                sdf.box(w * 0.70, h * 0.74, w * 0.045, h * 0.16, w * 0.02) sdf.fill(#x8ed9ff)
+            }
+            if self.condition > 3.5 && self.condition < 4.5 {
+                sdf.box(w * 0.52, h * 0.50, w * 0.07, h * 0.22, 1.0) sdf.fill(#xffda76)
+            }
+            if self.condition > 4.5 && self.condition < 5.5 {
+                sdf.circle(w * 0.30, h * 0.82, w * 0.035) sdf.fill(#xffffff)
+                sdf.circle(w * 0.51, h * 0.86, w * 0.035) sdf.fill(#xffffff)
+                sdf.circle(w * 0.71, h * 0.82, w * 0.035) sdf.fill(#xffffff)
+            }
+            if self.condition > 5.5 {
+                sdf.box(w * 0.22, h * 0.77, w * 0.57, 2.0, 1.0) sdf.fill(#xbccee1)
+                sdf.box(w * 0.30, h * 0.87, w * 0.43, 2.0, 1.0) sdf.fill(#xbccee1)
+            }
+            return sdf.result
+        }
+    }
+}
+let ForecastSky = RoundedView{width: Fill height: Fit flow: Down show_bg: true
+    draw_bg +: {
+        border_radius: 16.0
+        pixel: fn(){
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let glow = max(0.0, 1.0 - length(self.pos - vec2(0.84, 0.12)))
+            let sky = mix(#x243d68, #x476e99, glow * 0.85)
+            sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.border_radius)
+            sdf.fill(sky)
+            return sdf.result
+        }
+    }
+}
+let WeatherHeaderWidget = View{width: 132 height: 50
+    weather_header_content := View{width: Fill height: Fill on_render: || {
+        let city = weather_primary_city()
+        let today = weather_today()
+        GestureView{width: Fill height: Fill on_tap: |x, y| show_weather()
+            ForecastSky{width: Fill height: Fill padding: 8 draw_bg.border_radius: 12.0
+                View{width: Fill height: Fill flow: Right spacing: 6 align: Align{y: 0.5}
+                    ForecastGlyph{width: 30 height: 30 draw_bg.condition: weather_glyph_condition(today)}
+                    View{width: Fill height: Fit flow: Down spacing: 3
+                        if city != nil {
+                            Small{text: city.name + " · " + weather_header_condition(today) draw_text.color: #xd7e6f7 max_lines: 1 draw_text.text_style.font_size: 9}
+                            if today != nil {
+                                Text{text: weather_temperature(today.temp_min_c) + " / " + weather_temperature(today.temp_max_c)
+                                    max_lines: 1 draw_text.color: white draw_text.text_style: theme.font_bold{font_size: 13}}
+                            } else { Small{text: "查看预报 ›" draw_text.color: white max_lines: 1} }
+                        } else {
+                            Small{text: "城市天气" draw_text.color: #xd7e6f7 max_lines: 1 draw_text.text_style.font_size: 9}
+                            Small{text: "选择城市 ›" draw_text.color: white max_lines: 1}
+                        }
+                    }
+                }
+            }
+        }
+    }}
+}
+// END src/frontend/components/weather_widget.splash
+
+// BEGIN src/frontend/components/menu.splash
+let MenuToggle = GestureView{width: 32 height: 36 on_tap: |x, y| toggle_menu()
+    View{width: Fill height: Fill show_bg: true
+        draw_bg +: {
+            pixel: fn(){
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                sdf.box(6.0, 10.0, 20.0, 2.0, 1.0) sdf.fill(#x202126)
+                sdf.box(6.0, 17.0, 20.0, 2.0, 1.0) sdf.fill(#x202126)
+                sdf.box(6.0, 24.0, 20.0, 2.0, 1.0) sdf.fill(#x202126)
+                return sdf.result
+            }
+        }
+    }
+}
+let MenuItem = QuietButton{width: Fill height: 36 align: Align{x: 0.0}
+    draw_text +: {color: ink color_hover: ink color_down: ink text_style +: {font_size: 13}}
+}
+let MenuPanel = View{visible: false width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 8 bottom: 8}
+    show_bg: true draw_bg.color: soft
+    MenuItem{text: "新闻来源" on_click: || show_settings()}
+    MenuItem{text: "管理关注" on_click: || manage_tracking()}
+    suggestions_button := MenuItem{text: "分析与建议" on_click: || show_analysis_results()}
+    MenuItem{text: "天气预报" on_click: || show_weather()}
+    menu_cancel_update := MenuItem{visible: false text: "停止新闻更新" on_click: || { close_menu() if busy { refresh() } }}
+}
+// END src/frontend/components/menu.splash
 
 // BEGIN src/frontend/pages/feed.splash
 let FeedFilters = View{width: Fill height: Fit flow: Down
@@ -3906,7 +4253,7 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
             if saved_suggestions.len() > 0 {
                 Divider{}
                 Section{text: "分析与建议"}
-                if saved_suggestions.len() > 30 { Small{text: "显示最近30条建议；较早待处理项可从顶部建议入口打开。"} }
+                if saved_suggestions.len() > 30 { Small{text: "显示最近30条建议；较早待处理项可从菜单的分析与建议入口打开。"} }
                 for i saved in saved_suggestions {
                     if i >= saved_suggestions.len() - 30 || saved.suggestion_id == suggestion_focus_id {
                     Small{text: history_state_label(saved.state)}
@@ -4013,7 +4360,7 @@ let AnalysisResultsPage = View{visible: false width: Fill height: Fill flow: Dow
 let SourcesPage = View{visible: false width: Fill height: Fill flow: Down
     ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 12
         Heading{text: "选择新闻来源"}
-        Small{text: "启用来源后点击顶部刷新。来源不可用时，已有缓存继续可读。"}
+        Small{text: "来源不可用时，已有缓存继续可读。"}
         source_list := View{width: Fill height: Fit flow: Down spacing: 8 on_render: || {
             for source in news_sources {
                 View{width: Fill height: Fit flow: Down spacing: 4
@@ -4041,16 +4388,112 @@ let SourcesPage = View{visible: false width: Fill height: Fill flow: Down
 }
 // END src/frontend/pages/settings.splash
 
+// BEGIN src/frontend/pages/weather.splash
+// Compact city/forecast layout inspired by Makepad apps/weather's resident
+// forecast and locations sheet. Native WeatherView is not registered in Rinx;
+// this page uses the widgets already available to the script application.
+let WeatherPage = View{visible: false width: Fill height: Fill flow: Down
+    ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 14
+        weather_content := View{width: Fill height: Fit flow: Down spacing: 14 on_render: || {
+            let city = weather_primary_city()
+            let today = weather_today()
+            if city != nil {
+                ForecastSky{padding: 18 spacing: 9
+                    View{width: Fill height: Fit flow: Right align: Align{y: 0.5}
+                        Heading{width: Fill text: city.name draw_text.color: white}
+                        Small{width: Fit text: "今日预报" draw_text.color: #xd7e3f3}
+                    }
+                    if today != nil {
+                        View{width: Fill height: 90 flow: Right align: Align{y: 0.5} spacing: 10
+                            View{width: Fill height: Fit flow: Down spacing: 8
+                                Text{text: today.condition draw_text.color: white draw_text.text_style.font_size: 19}
+                                Text{text: weather_temperature(today.temp_min_c) + " / " + weather_temperature(today.temp_max_c)
+                                    draw_text.color: white draw_text.text_style.font_size: 32}
+                            }
+                            ForecastGlyph{width: 80 height: 80 draw_bg.condition: weather_glyph_condition(today)}
+                        }
+                        Small{text: "最低 / 最高 · 降水 " + today.precipitation_mm + " mm" draw_text.color: #xd7e3f3}
+                    } else { Text{text: "今日预报暂不可用" draw_text.color: white} }
+                }
+            } else {
+                Heading{text: "你关心哪里的天气？"}
+            }
+            Small{text: weather_app_status()}
+            if !weather_app_ready { Small{text: "正在恢复城市设置…"} }
+            View{width: Fill height: Fit flow: Right spacing: 8
+                SecondaryButton{text: "选择城市" on_click: || { weather_picker_open = !weather_picker_open weather_render() }}
+                if city != nil { SecondaryButton{text: "更新预报" on_click: || weather_update_selected()} }
+            }
+            if weather_picker_open {
+                Box{
+                    Section{text: "城市"}
+                    View{width: Fill height: 32 flow: Right spacing: 6 align: Align{y: 0.5}
+                        Search{empty_text: "输入城市名称" text: weather_city_query on_change: |text| { weather_city_query = text }}
+                        LinkButton{text: "使用城市" on_click: || weather_choose_name()}
+                    }
+                    let cities = weather_cities
+                    for group in 10 {
+                        if group * 3 < cities.len() {
+                            View{width: Fill height: 32 flow: Right spacing: 4
+                                for column in 3 {
+                                    let index = group * 3 + column
+                                    if index < cities.len() {
+                                        let item = cities[index]
+                                        if city != nil && city.cid == item.cid { NavActive{height: 30 text: item.name on_click: || weather_choose_city(item.cid)} }
+                                        else { Nav{height: 30 text: item.name on_click: || weather_choose_city(item.cid)} }
+                                    } else { View{width: Fill height: 30} }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if city != nil {
+                Section{text: "逐日预报"}
+                for row in weather_app_rows() {
+                    View{width: Fill height: Fit flow: Down spacing: 5
+                        View{width: Fill height: 26 flow: Right align: Align{y: 0.5} spacing: 8
+                            Section{width: 48 text: weather_day_label(row.day) draw_text.text_style.font_size: 11}
+                            Text{width: Fill text: row.condition draw_text.text_style.font_size: 13}
+                            Text{width: Fit text: weather_temperature(row.temp_min_c) + " / " + weather_temperature(row.temp_max_c)
+                                draw_text.text_style.font_size: 13}
+                        }
+                        Small{text: row.day + " · 降水 " + row.precipitation_mm + " mm"}
+                        Divider{}
+                    }
+                }
+                if weather_app_rows().len() == 0 { Small{text: "暂无有效日期的预报；旧日期不会显示为今天。"} }
+            }
+            if weather_tracked.len() > 0 {
+                Section{text: "已保存的城市"}
+                for cid in weather_tracked {
+                    let saved_city = weather_city_by_cid(cid)
+                    if saved_city != nil {
+                        View{width: Fill height: 32 flow: Right align: Align{y: 0.5}
+                            LinkButton{width: Fill align: Align{x: 0.0} text: saved_city.name on_click: || weather_choose_city(cid)}
+                            QuietButton{text: "移除" on_click: || weather_remove_city(cid)}
+                        }
+                    }
+                }
+            }
+            if weather_warning != "" { Small{text: weather_warning draw_text.color: #xa54c3c} }
+            Small{text: "数据：Open-Meteo · CC BY 4.0。展示逐日预报，不是实时温度。日期使用北京时间。"}
+        }}
+    }
+}
+// END src/frontend/pages/weather.splash
+
 // BEGIN src/frontend/app_view.splash
 HostedView{width: Fill height: Fill
     full: View{width: Fill height: Fill flow: Down show_bg: true draw_bg.color: white
-        View{width: Fill height: 58 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 14} spacing: 8
-            Label{width: Fill text: "cfaw news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 23}}
-            refresh_button := LinkButton{text: "刷新" on_click: || refresh()}
-            suggestions_button := LinkButton{visible: false text: "建议" on_click: || show_analysis_results()}
-            QuietButton{text: "更多" on_click: || show_settings()}
+        View{width: Fill height: 70 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 14} spacing: 8
+            menu_button := MenuToggle{}
+            menu_badge := Small{visible: false width: Fit text: "•" draw_text.color: accent}
+            Label{width: Fill text: "cfaw-news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18} max_lines: 1}
+            weather_widget := WeatherHeaderWidget{}
         }
         Divider{}
+        menu_panel := MenuPanel{}
         main := View{width: Fill height: Fill flow: Down
             feed_filters := FeedFilters{}
             tracking_header := TrackingHeader{}
@@ -4059,14 +4502,19 @@ HostedView{width: Fill height: Fill
                 search := Search{on_change: |text| set_query(text)}
             }
             status := Small{text: "正在准备新闻来源…" padding: Inset{left: 18 right: 18 bottom: 6}}
-            feed_list := View{width: Fill height: Fill flow: Down
-                empty_panel := View{visible: false width: Fill height: Fill flow: Down padding: 28 spacing: 12
+            feed_list := View{width: Fill height: Fill flow: Overlay
+                empty_panel := GestureView{visible: false width: Fill height: Fill flow: Down padding: 28 spacing: 12 on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
                     Section{text: "这里暂时没有内容"}
                     empty_message := Text{text: "" draw_text.color: secondary}
                 }
                 list_container := View{width: Fill height: Fill flow: Down
                     list := NewsList{}
-                    more_button := QuietButton{visible: false text: "加载更多" on_click: || show_more()}
+                    on_render: || { list := NewsList{} }
+                }
+                View{width: Fill height: Fill align: Align{x: 1.0 y: 1.0} padding: Inset{right: 14 bottom: 18}
+                    back_to_top := Primary{visible: false width: 40 height: 40 text: "↑" on_click: || return_feed_top()
+                        draw_bg +: {border_radius: 20.0 color: #x2e4b75 color_hover: #x3c5d89 color_down: #x496f9e}
+                        draw_text.text_style.font_size: 20}
                 }
             }
             schedule_page := SchedulePage{}
@@ -4081,6 +4529,7 @@ HostedView{width: Fill height: Fill
             settings_panel := SourcesPage{}
             tracking_panel := TrackingEditor{}
             results_panel := AnalysisResultsPage{}
+            weather_panel := WeatherPage{}
         }
         feedback_panel := View{visible: false width: Fill height: Fit flow: Right padding: Inset{left: 18 right: 12 top: 6 bottom: 6} align: Align{y: 0.5}
             feedback := Small{text: "" max_lines: 2}
@@ -4111,16 +4560,20 @@ fn boot(){
     history_load()
     feed_initialize()
     render_main()
+    start_timeout(0.01, || weather_app_boot())
     if records_warning != "" || schedule_warning != "" || analysis_history_warning != "" { notice(records_warning + " " + schedule_warning + " " + analysis_history_warning) }
     // records_load/history_load/render_main already spent most of this 64ms
     // slice; defer the cache restore so its first source read gets a fresh budget.
-    start_timeout(0.01, || feed_restore_cache(0, feed_generation, || {
+    start_timeout(0.01, || feed_restore_cache(enabled_source_ids, 0, feed_generation, || {
         rebuild_feed(|| {
             render_main()
             let demo_cache = false
             for row in app_feed_rows { if row["demo_data"] == true { demo_cache = true } }
             if demo_cache { notice("演示缓存仅供测试，非实时新闻；手动刷新可尝试获取真实来源。") }
-            else { start_timeout(0.01, || refresh()) }
+            else {
+                let ids = feed_refresh_needed_ids(enabled_source_ids, time_now())
+                start_timeout(0.01, || refresh_sources(ids))
+            }
         })
     }))
 }

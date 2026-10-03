@@ -66,13 +66,15 @@
 - 缓存：`weather_v1_<city_id>.json`，`{schema_version, city_id, fetched_at, items}`，
   单源上限 `weather_days`，日期不能重复，行与文档的 `fetched_at` 必须一致。
   缓存损坏只降级为 `not_loaded`；过期缓存仍可供浏览，但不能支撑当前风险判断。
-- 用户记录：`weather_selection_v1.json`，`{schema_version: 1, tracked: [...]}`。
+- 用户记录：`weather_selection_v1.json`，`{schema_version: 1, tracked: [...], selected_city_id: "w02"}`。`selected_city_id` 为可选扩展字段；旧文件按首个城市显示，新字段必须为空字符串或属于 tracked，未知格式仍拒绝覆盖。
   沿用 `records.splash` 的约定：单一写入口、返回警告字符串而不是抛错、
   写入口返回 true/false，失败时内存值仍可用但**不宣称已保存**。
   存储的 `cid` 必须在目录内、唯一且不超限，否则整份文件不被采纳。
   读取失败、未知 schema 或无效 ID 都将文件设为只读，原文件不会被默认值覆盖。
   写入前再次核对当前文件和内存文档，支持的上一份记录先保存到 `.backup`。
   启动恢复选择和缓存之后才请求过期或缺失的城市，避免缓存读入覆盖 loading 状态。
+
+`weather_primary_city()` 获取当前选城，`weather_select_at()` 同时更新当前选城。`weather_on_update` 是 app 注册的零参数通知，默认无操作，只在当前请求接受后触发。城市 ID/参考坐标只代表手动选城，没有设备定位数据或日程位置关联。
 
 ## 与日程的关系
 
