@@ -33,7 +33,11 @@ source 匹配发布方名称，category 匹配目录分类，keyword 对标题�
 
 `news_parse(body, source, retrieved_at)` 返回有效新闻数组（可为空），无法解析时为 `nil`。`feed_refresh` 最多并发 3 个来源，按代数拒绝过期完成；某来源失败保留该来源的缓存与错误。缓存单源最多 20 条，合并 feed 最多 240 条。
 
-数据层负责获取与记录，`app/controller.splash` 连接用户动作与页面；数据代码不访问 widgets。`records.splash` 是用户记录的唯一写入入口，写入函数成功返回空字符串，否则返回可展示的错误，本次内存修改仍可使用但不宣称已保存。
+数据层负责获取与记录，`app/controller.splash` 连接用户动作与页面；数据代码不访问 widgets。`records.splash` 是用户记录的唯一写入入口，同步写入函数成功返回空字符串，否则返回可展示的错误，本次内存修改仍可使用但不宣称已保存。
+
+`records_check_tracking(rows, interests, checked_at, current, complete)` 异步分批检查最多 240 条新闻和 2000 个历史 ID，沿用 64 条/8 ms 预算。`current()` 判断调用方任务仍然有效；失效或被后续检查替代时不提交、不回调。完整结果一次性替换检查状态，`complete(error)` 在保存后的独立回调中交付空字符串或写入错误。期间打开详情会改变记录版本，检查从最新已读状态重新开始，不能恢复已移除的未读标记。应用保持刷新状态直至这个回调完成。
+
+Windows 宿主临时回收保护：应用合并同一事件中的列表渲染请求，下一短定时器先调用宿主提供的 `mod.gc.run()` 再更新列表。保持 manifest 的 32 MiB 上限；这是对当前宿主仅按对象数量增长触发 GC 的保护，待上游实现内存压力回收并通过连续刷新复现后移除。
 
 `feed_build_rows(enabled_ids, complete)` 分批去重与排序，每批最多处理 `work_batch_items` 条，同时以 `work_slice_seconds` 的时间预算让出执行，以适配宿主的 64 ms 回调限制。当前配置为最多 64 条/8 ms；单个操作仍需适配宿主预算。新的数据层构建或取消刷新使旧构建失效，回调只发布完整的新列表。app 合并同一来源选择、同一 refresh generation 内的更新：完成当前快照后展示，再重建累计新数据，避免每次来源完成都取消排序；来源选择或 generation 改变仍拒绝旧结果。
 
