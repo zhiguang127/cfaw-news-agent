@@ -1,14 +1,16 @@
 HostedView{width: Fill height: Fill
     full: View{width: Fill height: Fill flow: Down show_bg: true draw_bg.color: white
         View{width: Fill height: 58 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 14} spacing: 8
-            Label{width: Fill text: "cfaw news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 23}}
-            refresh_button := LinkButton{text: "刷新" on_click: || refresh()}
+            Label{width: Fill text: "cfaw news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 20}}
+            weather_button := LinkButton{width: 43 text: "天气" on_click: || show_weather()}
+            refresh_button := LinkButton{width: 66 text: "刷新" on_click: || refresh()}
             suggestions_button := LinkButton{visible: false text: "建议" on_click: || show_analysis_results()}
             QuietButton{text: "更多" on_click: || show_settings()}
         }
         Divider{}
         main := View{width: Fill height: Fill flow: Down
             feed_filters := FeedFilters{}
+            weather_glance := WeatherGlance{}
             tracking_header := TrackingHeader{}
             bookmarks_header := BookmarksHeader{}
             search_box := View{width: Fill height: Fit padding: Inset{left: 18 right: 18 top: 4 bottom: 8}
@@ -37,6 +39,7 @@ HostedView{width: Fill height: Fill
             settings_panel := SourcesPage{}
             tracking_panel := TrackingEditor{}
             results_panel := AnalysisResultsPage{}
+            weather_panel := WeatherPage{}
         }
         feedback_panel := View{visible: false width: Fill height: Fit flow: Right padding: Inset{left: 18 right: 12 top: 6 bottom: 6} align: Align{y: 0.5}
             feedback := Small{text: "" max_lines: 2}

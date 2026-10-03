@@ -49,3 +49,10 @@ Exchange-rate fixtures derive from fawazahmed0/exchange-api
 (https://github.com/fawazahmed0/exchange-api); they are not central bank data.
 Fixtures and their repository license files are not included in the app ZIP.
 Runtime records preserve the corresponding source attribution.
+
+Weather UI reference
+--------------------
+The weather glance and forecast layout reference Makepad apps/weather at
+6cf03859630761f5cb99ce7fcdfd8c30475d9ab8. The Rust WeatherView and its assets
+are not bundled here; this application implements the layout and static
+condition artwork in OctoScript using the host's Makepad widgets.

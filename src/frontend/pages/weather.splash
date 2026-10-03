@@ -1,0 +1,100 @@
+// Compact city/forecast layout inspired by Makepad apps/weather's resident
+// forecast and locations sheet. Native WeatherView is not registered in Rinx;
+// this page uses the widgets already available to the script application.
+let WeatherPage = View{visible: false width: Fill height: Fill flow: Down
+    ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 14
+        weather_content := View{width: Fill height: Fit flow: Down spacing: 14 on_render: || {
+            let city = weather_primary_city()
+            let today = weather_today()
+            if city != nil {
+                ForecastSky{padding: 18 spacing: 9
+                    View{width: Fill height: Fit flow: Right align: Align{y: 0.5}
+                        Heading{width: Fill text: city.name draw_text.color: white}
+                        Small{width: Fit text: "今日预报" draw_text.color: #xd7e3f3}
+                    }
+                    if today != nil {
+                        View{width: Fill height: 90 flow: Right align: Align{y: 0.5} spacing: 10
+                            View{width: Fill height: Fit flow: Down spacing: 8
+                                Text{text: today.condition draw_text.color: white draw_text.text_style.font_size: 19}
+                                Text{text: weather_temperature(today.temp_min_c) + " / " + weather_temperature(today.temp_max_c)
+                                    draw_text.color: white draw_text.text_style.font_size: 32}
+                            }
+                            ForecastGlyph{width: 80 height: 80 draw_bg.condition: weather_glyph_condition(today)}
+                        }
+                        Small{text: "最低 / 最高 · 降水 " + today.precipitation_mm + " mm" draw_text.color: #xd7e3f3}
+                    } else { Text{text: "今日预报暂不可用" draw_text.color: white} }
+                }
+            } else {
+                Heading{text: "你关心哪里的天气？"}
+            }
+            Small{text: weather_app_status()}
+            if !weather_app_ready { Small{text: "正在恢复城市设置…"} }
+            View{width: Fill height: Fit flow: Right spacing: 8
+                SecondaryButton{text: "选择城市" on_click: || { weather_picker_open = !weather_picker_open weather_render() }}
+                if city != nil { SecondaryButton{text: "更新预报" on_click: || weather_update_selected()} }
+            }
+            if weather_picker_open {
+                Box{
+                    Section{text: "城市"}
+                    View{width: Fill height: 32 flow: Right spacing: 6 align: Align{y: 0.5}
+                        Search{empty_text: "输入城市名称" text: weather_city_query on_change: |text| { weather_city_query = text }}
+                        LinkButton{text: "使用城市" on_click: || weather_choose_name()}
+                    }
+                    let cities = weather_cities
+                    for group in 10 {
+                        if group * 3 < cities.len() {
+                            View{width: Fill height: 32 flow: Right spacing: 4
+                                for column in 3 {
+                                    let index = group * 3 + column
+                                    if index < cities.len() {
+                                        let item = cities[index]
+                                        if city != nil && city.cid == item.cid { NavActive{height: 30 text: item.name on_click: || weather_choose_city(item.cid)} }
+                                        else { Nav{height: 30 text: item.name on_click: || weather_choose_city(item.cid)} }
+                                    } else { View{width: Fill height: 30} }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if city != nil {
+                Section{text: "逐日预报"}
+                for row in weather_app_rows() {
+                    View{width: Fill height: Fit flow: Down spacing: 5
+                        View{width: Fill height: 26 flow: Right align: Align{y: 0.5} spacing: 8
+                            Section{width: 48 text: weather_day_label(row.day) draw_text.text_style.font_size: 11}
+                            Text{width: Fill text: row.condition draw_text.text_style.font_size: 13}
+                            Text{width: Fit text: weather_temperature(row.temp_min_c) + " / " + weather_temperature(row.temp_max_c)
+                                draw_text.text_style.font_size: 13}
+                        }
+                        Small{text: row.day + " · 降水 " + row.precipitation_mm + " mm"}
+                        Divider{}
+                    }
+                }
+                if weather_app_rows().len() == 0 { Small{text: "暂无有效日期的预报；旧日期不会显示为今天。"} }
+            }
+            Box{
+                Section{text: "位置来源"}
+                if city != nil {
+                    Text{text: "手动选择 · " + city.name}
+                    Small{text: "城市参考坐标 " + city.lat + ", " + city.lon + "；预报代表城市区域，可能与你所在街区不同。"}
+                } else { Text{text: "尚未选择城市"} }
+                Small{text: "自动定位暂不可用，请手动选择城市。不会读取设备位置；查询时只向 Open-Meteo 发送所选城市的参考坐标。"}
+            }
+            if weather_tracked.len() > 0 {
+                Section{text: "已保存的城市"}
+                for cid in weather_tracked {
+                    let saved_city = weather_city_by_cid(cid)
+                    if saved_city != nil {
+                        View{width: Fill height: 32 flow: Right align: Align{y: 0.5}
+                            LinkButton{width: Fill align: Align{x: 0.0} text: saved_city.name on_click: || weather_choose_city(cid)}
+                            QuietButton{text: "移除" on_click: || weather_remove_city(cid)}
+                        }
+                    }
+                }
+            }
+            if weather_warning != "" { Small{text: weather_warning draw_text.color: #xa54c3c} }
+            Small{text: "数据：Open-Meteo · CC BY 4.0。展示逐日预报，不是实时温度。日期使用北京时间。"}
+        }}
+    }
+}

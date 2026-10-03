@@ -180,6 +180,13 @@ fn weather_test_persistence(){
     weather_tracked = []
     weather_load()
     weather_test(weather_is_tracked("w01") && weather_is_tracked("w03") && weather_tracked.len() == 2, "selection restored")
+    weather_test(weather_primary_city().cid == "w01", "legacy selection defaults to its first saved city")
+    weather_primary_cid = "w03"
+    weather_selection_write()
+    weather_primary_cid = ""
+    weather_load()
+    weather_test(weather_primary_city().cid == "w03", "selected weather city survives restart")
+    weather_test(!weather_selection_document_valid({schema_version: 1 tracked: ["w01"] selected_city_id: "w03"}), "selected city must belong to saved cities")
     weather_file.writable = false
     weather_tracked = ["w01"]
     weather_selection_write()

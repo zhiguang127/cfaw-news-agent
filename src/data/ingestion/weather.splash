@@ -9,6 +9,8 @@ let weather_tracked = []
 let weather_pending = 0
 let weather_generation = 0
 let weather_selection = ""
+let weather_primary_cid = ""
+let weather_on_update = || {}
 // Six hours bounds the age of usable evidence; the date alone is not freshness.
 let weather_cache_ttl_seconds = 21600
 let weather_http_request = fn(url, redirects, callback){ news_http_request(url, redirects, callback) }
@@ -25,6 +27,11 @@ fn weather_city_by_name(name){ for c in weather_cities { if c.name == name { ret
 fn weather_is_tracked(cid){
     for t in weather_tracked { if t == cid { return true } }
     false
+}
+fn weather_primary_city(){
+    if weather_is_tracked(weather_primary_cid) { return weather_city_by_cid(weather_primary_cid) }
+    if weather_tracked.len() > 0 { return weather_city_by_cid(weather_tracked[0]) }
+    nil
 }
 fn weather_initialize(){
     weather_generation = weather_generation + 1
@@ -191,6 +198,7 @@ fn weather_fetch_city(cid, generation){
         weather_pending = weather_pending - 1
         weather_accept(city, result, time_now())
         if weather_pending <= 0 { weather_pending = 0 }
+        start_timeout(0.01, || { if generation == weather_generation { weather_on_update() } })
     })
     true
 }
@@ -227,6 +235,7 @@ fn weather_select_at(name, checked_at){
     if city == nil { return false }
     if !weather_track_at(city.cid, weather_generation, checked_at) { return false }
     weather_selection = name
+    weather_primary_cid = city.cid
     true
 }
 fn weather_select(name){ weather_select_at(name, time_now()) }

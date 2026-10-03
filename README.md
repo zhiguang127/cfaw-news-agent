@@ -9,10 +9,11 @@
 - **日程**：录入和编辑应用内安排，支持北京/纽约时间、完成/取消。助手可以提议新增或改期，你确认后才保存。
 - **收藏**：重看已保存的新闻快照。
 - **建议**：有待处理建议时首页显示数量；也可从跟踪页查看分析、依据和历史决定。
+- **天气**：首页小组件显示所选城市的今日预报、温度范围与降水；点击组件或顶部“天气”查看 7 日预报、选城和位置来源。
 
 新闻抓取与规则匹配不需要 AI。助手仅在你发起分析时使用实际可用的标题和摘要；没有候选新闻时不会调用模型，分析结果可能是建议、无需调整或证据不足。来源管理和连接诊断位于“更多”。
 
-当前有 18 个可选来源、13 个默认启用来源，本地保存关注、收藏、日程与决定。天气、节假日、汇率已有独立数据接口，尚未接入页面或 Agent。向量检索、天气联合分析、后台监测、通知、系统日历写入和跨设备同步尚未实现。当前包用于本地开发导入，正式 App Hub 发布仍需单独准备和验收。
+当前有 18 个可选来源、13 个默认启用来源，本地保存关注、收藏、日程与决定。启动先展示缓存，仅更新缺失或超过 5 分钟的来源；手动刷新仍更新全部启用来源。天气独立加载，支持 30 城、最多保存 12 城，记住当前选城；使用城市参考坐标，不读取设备位置。固定 Rinx 尚未向脚本应用开放定位服务，自动定位不可用。节假日、汇率尚未接入页面；向量检索、天气联合分析、后台监测、通知、系统日历写入和跨设备同步尚未实现。当前包用于本地开发导入，正式 App Hub 发布仍需单独准备和验收。
 
 ## 本地运行
 
@@ -31,12 +32,14 @@ powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1 -Mode Rinx
 ```powershell
 python scripts/test_runtime.py
 python scripts/test_runtime.py --agent-only
+python scripts/test_runtime.py --suites news weather
+python scripts/test_runtime.py --suites feed
 python -m unittest discover -s tests/unit -p "test_*.py"
 python scripts/assemble.py --check
 python scripts/package.py
 ```
 
-原生测试使用独立 `.test-state/` 和固定输入，不调用真实模型；通过这些检查不代表 Rinx 业务流程、实时抓取或 App Hub 发布通过。当前实现、已知问题、最近验证和人工验收清单统一见 [验收记录](docs/acceptance.md)。
+可用 `--suites` 只检查受改动影响的数据模块；feed 控制器场景使用应用 UI，单独运行。原生测试使用独立 `.test-state/` 和固定输入，不调用真实模型，也不在应用启动时运行；通过这些检查不代表 Rinx 业务流程、实时抓取或 App Hub 发布通过。当前实现、已知问题、最近验证和人工验收清单统一见 [验收记录](docs/acceptance.md)。
 
 ## 文档入口
 

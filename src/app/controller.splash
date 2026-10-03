@@ -14,6 +14,9 @@ let analysis_check_message = ""
 let analysis_batch_no_change = 0
 let analysis_batch_insufficient = 0
 let app_feed_rows = []
+let app_feed_build_task = nil
+let app_feed_build_counter = 0
+let refresh_successes_seen = 0
 let visible_limit = 40
 let display_rows = []
 let schedule_edit_id = nil
@@ -117,7 +120,10 @@ fn sync_status(){
     let failed = 0
     for id in enabled_source_ids { if feed_status_by_source[id].state == "error" { failed = failed + 1 } }
     let text = "" + app_feed_rows.len() + " 条新闻"
-    if busy { text = "正在更新新闻…" }
+    if busy {
+        text = text + " · 正在更新"
+        if feed_task != nil { text = text + " " + feed_task.completed + "/" + feed_task.sources.len() }
+    }
     if page == "saved" { text = "" + user_bookmarks.len() + " 条收藏" }
     if page == "tracking" && !busy { text = "" + display_rows.len() + " 条相关新闻" }
     if failed > 0 && page != "saved" { text = text + " · 部分来源暂时不可用" }
@@ -142,6 +148,7 @@ fn render_main(){
     ui.categories.render()
     ui.navigation.render()
     ui.feed_filters.set_visible(page == "feed")
+    ui.weather_glance.set_visible(page == "feed")
     ui.tracking_header.set_visible(page == "tracking")
     ui.bookmarks_header.set_visible(page == "saved")
     ui.search_box.set_visible(page != "schedule")
@@ -307,16 +314,48 @@ fn pick_category(id){ category = id visible_limit = 40 ui.categories.render() re
 fn set_query(text){ query = text.trim() visible_limit = 40 render_feed() }
 fn show_more(){ visible_limit = visible_limit + 40 render_feed() }
 fn rebuild_feed(complete){
-    feed_build_rows(enabled_source_ids, fn(rows){ app_feed_rows = rows complete() })
+    let source_key = enabled_source_ids.to_json()
+    if app_feed_build_task != nil {
+        if app_feed_build_task.generation == feed_generation && app_feed_build_task.source_key == source_key {
+            app_feed_build_task.complete = complete
+            return
+        }
+    }
+    app_feed_build_counter = app_feed_build_counter + 1
+    let task = {id: app_feed_build_counter generation: feed_generation source_key: source_key complete: complete}
+    app_feed_build_task = task
+    rebuild_feed_step(task)
+}
+fn rebuild_feed_step(task){
+    let data_revision = feed_data_revision
+    feed_build_rows(enabled_source_ids, fn(rows){
+        if app_feed_build_task == nil || app_feed_build_task.id != task.id || task.generation != feed_generation { return }
+        app_feed_rows = rows
+        // Publish this snapshot while newer sources accumulate; never restart
+        // an in-flight sort for every HTTP completion.
+        if data_revision != feed_data_revision {
+            render_feed()
+            start_timeout(0.01, || rebuild_feed_step(task))
+        } else { app_feed_build_task = nil task.complete() }
+    })
 }
 fn refresh(){
     analysis_check_message = ""
     if busy { feed_cancel() busy = false render_feed() notice("已取消等待；迟到结果不会更新新闻。") return }
+    refresh_sources(enabled_source_ids)
+}
+fn refresh_sources(ids){
+    if ids.len() == 0 { return }
     busy = true
-    feed_refresh(enabled_source_ids, || {
-        rebuild_feed(|| render_feed())
+    refresh_successes_seen = 0
+    feed_refresh(ids, || {
+        if feed_task.successes > refresh_successes_seen {
+            refresh_successes_seen = feed_task.successes
+            rebuild_feed(|| render_feed())
+        } else { sync_status() }
         if detail_kind == "settings" { ui.source_list.render() }
     }, fn(successes){
+        if successes == 0 { busy = false render_feed() if detail_kind == "settings" { ui.source_list.render() } return }
         rebuild_feed(|| {
             busy = false
             if successes > 0 {
@@ -491,7 +530,9 @@ fn render_detail(){
     ui.settings_panel.set_visible(detail_kind == "settings")
     ui.tracking_panel.set_visible(detail_kind == "tracking")
     ui.results_panel.set_visible(detail_kind == "results")
+    ui.weather_panel.set_visible(detail_kind == "weather")
     if detail_kind == "results" { ui.results_content.render() }
+    if detail_kind == "weather" { ui.weather_content.render() }
 }
 fn show_detail(kind, title){
     detail_kind = kind

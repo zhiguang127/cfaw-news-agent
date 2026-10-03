@@ -4,6 +4,7 @@ let feed_status_by_source = {}
 let feed_generation = 0
 let feed_task = nil
 let feed_build_revision = 0
+let feed_data_revision = 0
 
 fn feed_cache_valid(value, source){
     if !record_object(value) || value.schema_version != 1 || value.source_id != source.id || !record_number(value.retrieved_at) || !record_array(value.items) { return false }
@@ -23,6 +24,7 @@ fn feed_read_cache(source){
             let cached = fs.read(path).parse_json()
             if feed_cache_valid(cached, source) {
                 feed_rows_by_source[source.id] = cached.items
+                feed_data_revision = feed_data_revision + 1
                 feed_status_by_source[source.id] = {state: "cached" retrieved_at: cached.retrieved_at error: "" count: cached.items.len()}
             } else { feed_status_by_source[source.id].error = "缓存格式无效，等待重新获取" }
         }
@@ -32,12 +34,22 @@ fn feed_load_cache(){
     feed_initialize()
     for source in news_sources { feed_read_cache(source) }
 }
-fn feed_restore_cache(index, generation, complete){
+fn feed_restore_cache(enabled_ids, index, generation, complete){
     // Each native entry has a 64 ms wall budget. Yield between source files.
     if generation != feed_generation { return }
+    while index < news_sources.len() && !record_contains(enabled_ids, news_sources[index].id) { index = index + 1 }
     if index >= news_sources.len() { complete() return }
     feed_read_cache(news_sources[index])
-    start_timeout(0.01, || feed_restore_cache(index + 1, generation, complete))
+    start_timeout(0.01, || feed_restore_cache(enabled_ids, index + 1, generation, complete))
+}
+fn feed_refresh_needed_ids(enabled_ids, checked_at){
+    let ids = []
+    for id in enabled_ids {
+        let status = feed_status_by_source[id]
+        if status == nil { continue }
+        if status.retrieved_at <= 0 || checked_at < status.retrieved_at || checked_at - status.retrieved_at >= news_config.startup_refresh_seconds { ids.push(id) }
+    }
+    ids
 }
 fn feed_all_rows(enabled_ids){
     let groups = []
@@ -51,6 +63,7 @@ fn feed_accept(source, result, retrieved_at){
     try { rows = news_parse(result.body, source, retrieved_at) } { rows = nil }
     if rows == nil { status.state = "error" status.error = "响应不是可解析的 RSS/Atom 或新闻 JSON" return false }
     feed_rows_by_source[source.id] = rows
+    feed_data_revision = feed_data_revision + 1
     status.state = "fresh"
     status.error = ""
     status.count = rows.len()
@@ -74,7 +87,8 @@ fn feed_work_current(work){ work.revision == feed_build_revision && work.generat
 fn feed_collect_step(work){
     if !feed_work_current(work) { return }
     let processed = 0
-    while work.group_index < work.groups.len() && processed < news_config.work_batch_items {
+    let started_at = time_now()
+    while work.group_index < work.groups.len() && processed < news_config.work_batch_items && time_now() - started_at < news_config.work_slice_seconds {
         let rows = work.groups[work.group_index]
         if work.row_index >= rows.len() { work.group_index = work.group_index + 1 work.row_index = 0 }
         else {
@@ -94,7 +108,8 @@ fn feed_sort_step(work){
         return
     }
     let processed = 0
-    while work.start < work.rows.len() && processed < news_config.work_batch_items {
+    let started_at = time_now()
+    while work.start < work.rows.len() && processed < news_config.work_batch_items && time_now() - started_at < news_config.work_slice_seconds {
         if work.end == 0 {
             work.left = work.start
             work.middle = min(work.start + work.width, work.rows.len())
@@ -131,12 +146,13 @@ fn feed_pump(task){
             // never shares the same slice and trips the hard wall budget.
             start_timeout(0.01, || {
                 if task.generation != feed_generation { return }
+                task.announced = task.announced + 1
                 task.on_update()
                 feed_pump(task)
             })
         })
     }
-    if task.active == 0 && task.next >= task.sources.len() && !task.done {
+    if task.active == 0 && task.next >= task.sources.len() && task.announced == task.completed && !task.done {
         task.done = true
         task.on_done(task.successes)
     }
@@ -145,7 +161,7 @@ fn feed_refresh(enabled_ids, on_update, on_done, request){
     feed_generation = feed_generation + 1
     let sources = []
     for source in news_sources { if record_contains(enabled_ids, source.id) { sources.push(source) } }
-    let task = {generation: feed_generation sources: sources next: 0 active: 0 completed: 0 successes: 0 done: false
+    let task = {generation: feed_generation sources: sources next: 0 active: 0 completed: 0 announced: 0 successes: 0 done: false
         on_update: on_update on_done: on_done request: request}
     feed_task = task
     feed_pump(task)

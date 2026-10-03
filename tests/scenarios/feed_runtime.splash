@@ -1,0 +1,77 @@
+// Actual controller refresh + asynchronous ingestion/list construction.
+// These synthetic inputs stay in the runtime test's isolated storage.
+let feed_test_passed = 0
+let feed_test_failed = 0
+let feed_test_failures = []
+let feed_test_stage = "startup"
+fn feed_test_assert(condition, label){
+    if condition { feed_test_passed = feed_test_passed + 1 }
+    else { feed_test_failed = feed_test_failed + 1 feed_test_failures.push(label) }
+}
+fn feed_test_report(){
+    fs.write("feed-report.json", {stage: feed_test_stage passed: feed_test_passed failed: feed_test_failed failures: feed_test_failures}.to_json())
+}
+fn feed_test_wait_ready(deadline, complete){
+    if time_now() > deadline { feed_test_assert(false, "refresh/list build finished before deadline") feed_test_stage = "complete" feed_test_report() return }
+    if busy || app_feed_build_task != nil { start_timeout(0.02, || feed_test_wait_ready(deadline, complete)) return }
+    complete()
+}
+fn feed_test_run(){
+    records_load()
+    schedules_load()
+    history_load()
+    feed_initialize()
+    weather_initialize()
+    enabled_source_ids = ["bbc" "guardian" "cnbc"]
+    render_main()
+    feed_test_stage = "coalesced source completions"
+    let requests = []
+    news_http_request = fn(url, redirects, callback){ requests.push(callback) }
+    refresh_sources(enabled_source_ids)
+    feed_test_assert(requests.len() == 3 && busy, "application starts bounded refresh")
+    requests[0]({success: true body: fixture_rss})
+    // Start one construction before the other sources complete, so the newer
+    // evidence must accumulate rather than cancelling it.
+    start_timeout(0.02, || {
+        requests[1]({success: true body: fixture_atom})
+        requests[2]({success: true body: fixture_rss})
+        feed_test_wait_ready(time_now() + 4, || {
+            feed_test_assert(app_feed_rows.len() == 3, "all simultaneously returned evidence is eventually visible")
+            feed_test_assert(!busy && app_feed_build_task == nil, "final completion clears application loading state")
+            let repeated = nil
+            for row in app_feed_rows { if row.news_id == "https://example.org/first" { repeated = row } }
+            feed_test_assert(repeated != nil && repeated.references.len() == 2, "coalesced updates preserve duplicate source provenance")
+            feed_test_failure_and_cancel()
+        })
+    })
+}
+fn feed_test_failure_and_cancel(){
+    feed_test_stage = "failure and cancellation"
+    let requests = []
+    news_http_request = fn(url, redirects, callback){ requests.push(callback) }
+    let previous = app_feed_rows.to_json()
+    refresh_sources(enabled_source_ids)
+    for callback in requests { callback({success: false error: "synthetic offline"}) }
+    feed_test_wait_ready(time_now() + 4, || {
+        feed_test_assert(app_feed_rows.to_json() == previous && !busy, "failed refresh preserves readable cache and ends loading")
+        requests = []
+        refresh_sources(enabled_source_ids)
+        refresh()
+        requests[0]({success: true body: "<rss><channel><item><title>Late synthetic news</title><link>https://example.org/late</link></item></channel></rss>"})
+        start_timeout(0.04, || {
+            feed_test_assert(!busy && app_feed_rows.to_json() == previous, "late reply after application cancellation cannot replace the feed")
+            // A newer source selection must invalidate an old build, while
+            // several requests within one selection share the active build.
+            enabled_source_ids = ["bbc"]
+            let obsolete_called = false
+            rebuild_feed(|| { obsolete_called = true })
+            enabled_source_ids = ["guardian"]
+            rebuild_feed(|| {
+                feed_test_assert(!obsolete_called && app_feed_rows.len() == 1 && app_feed_rows[0].source_id == "guardian", "changed source selection rejects an older list completion")
+                feed_test_stage = "complete"
+                feed_test_report()
+            })
+        })
+    })
+}
+start_timeout(0.05, || feed_test_run())

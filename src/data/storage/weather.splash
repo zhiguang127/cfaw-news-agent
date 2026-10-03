@@ -18,6 +18,10 @@ fn weather_warn(text){
 fn weather_selection_document_valid(value){
     if !record_object(value) || value["schema_version"] != 1 { return false }
     if !record_array(value["tracked"]) { return false }
+    if value["selected_city_id"] != nil {
+        if !record_string(value["selected_city_id"]) { return false }
+        if value["selected_city_id"] != "" && !record_contains(value["tracked"], value["selected_city_id"]) { return false }
+    }
     weather_tracked_valid(value["tracked"])
 }
 
@@ -52,10 +56,15 @@ fn weather_selection_read(){
     }
     weather_tracked = []
     for cid in parsed["tracked"] { weather_tracked.push(cid) }
+    weather_primary_cid = ""
+    if parsed["selected_city_id"] != nil { weather_primary_cid = parsed["selected_city_id"] }
 }
 
 fn weather_selection_write(){
-    let document = {schema_version: 1 tracked: weather_tracked}
+    let selected = ""
+    let city = weather_primary_city()
+    if city != nil { selected = city.cid }
+    let document = {schema_version: 1 tracked: weather_tracked selected_city_id: selected}
     if !weather_selection_document_valid(document) {
         weather_warn("城市选择未通过校验，原文件未覆盖")
         return false
