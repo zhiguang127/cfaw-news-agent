@@ -17,7 +17,7 @@
 
 ## 本地运行
 
-先按 [Windows 开发说明](docs/windows-development.md) 准备固定宿主、配套 Octos、打包工具和资源。已有环境时，在项目根目录执行：
+先按 [Windows 开发说明](docs/windows-development.md) 准备锁定的最新宿主、配套 Octos、打包工具和资源。本轮依赖默认放在项目 `.dev/vendor/`；旧共享检出保留。已有环境时，在项目根目录执行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1 -Mode Rinx

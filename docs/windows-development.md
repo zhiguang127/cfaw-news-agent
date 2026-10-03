@@ -1,77 +1,40 @@
 # Windows 本地开发
 
-宿主入口是自动生成的 `bundle/main.splash`，业务源码放在 `src/`。Python 工具负责源码组装、原生测试启动和打包，Rust 编译宿主与开发工具。无需 npm 或应用级 Python 虚拟环境。2026-10-01 已在 Windows x86_64 上使用 Python 3.12.8、Rust 1.98.0、Visual Studio 2026 Build Tools / Windows SDK 和 Visual Studio 自带的 CMake、Ninja 完成构建。
+业务源码在 `src/`，`scripts/assemble.py` 生成 `bundle/main.splash`。Python 负责组装、测试与打包，Rust 编译宿主和开发工具；应用包不执行 Python 或 Rust。
 
-## 固定依赖与位置
+## 依赖与版本
 
-开发工具放在本项目相邻的 `../demo-workspace/vendor/`，与依赖记录一致。源码、二进制、Octos 配套运行时和 Cargo cache 都保存在该目录，不依赖 Codex 工作树。不要切换已有的共享或有修改的检出。
+2026-10-03 核对官方 main 后更新。开发依赖放在本项目隔离目录 `.dev/vendor/`，完整提交、配套内核和实际二进制摘要见 [依赖锁](../dev-dependencies.lock.json)。旧的相邻 `../demo-workspace/vendor/` 保留，启动默认路径已切换。
 
-| `../demo-workspace/vendor/` 子目录 | 官方仓库 | 提交 |
-| --- | --- | --- |
-| `Rinx` | `https://github.com/hagency-org/Rinx.git` | `68afcf796d303aaf646eeb832d65c450a56c92b5` |
-| `OctoSense-App-Hub` | `https://github.com/OctoSense-org/OctoSense-App-Hub.git` | `a72989ff2e4d51562693d05210b68e11f3bf3fcd` |
-| `makepad` | `https://github.com/OctoSense-org/makepad.git` | `975c5630e01b0f3f3ae16cafd2e0fce3c9a5f7d9` |
-| `octoscript-makepad` | `https://github.com/OctoSense-org/Octoscript-Makepad.git` | `65d30a091eee284ed45afe5b8502835563fb56f7` |
-| `octoscript` | `https://github.com/OctoSense-org/Octoscript.git` | `68f6a9df55692b5d8ef8873a12721e279a3f40d6` |
+| 目录 | 当前提交 |
+| --- | --- |
+| Rinx | `3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9` |
+| OctoSense-App-Hub | `2bcb8985bc1d2c8856f2a61e65baa7ed443ae817` |
+| makepad | `c155f61d0e1600d2ec474209374444a38a09a470` |
+| octoscript-makepad | `2cc5ef37d7d6a3d2992673389ce74488f7bb2d87` |
+| octoscript | `f67cb843dddb045a75a13b7d166994fc13acd17c` |
 
-后三个检出是固定 App Hub 工作区的 sibling path 依赖，版本来自其 Cargo.toml 和对应 Octoscript-Makepad 工作区。Rinx 自己的 Makepad、bridge 和 Octos 由其 Cargo.lock 下载，不能把两组运行时依赖混用。新机器可将表中的仓库克隆到对应目录，再 `git checkout --detach <提交>`。
+后三个目录是最新 App Hub 参考宿主的 sibling 依赖。Rinx 仍按其自己的 Cargo.lock 固定 Makepad `1f3b1de`、bridge `cb66de0`、OctoScript `dbd48cf`、app-peers `98666de` 和 Octos `fe08d8e`。这是两个独立运行时图，不能把参考宿主测试当作 Rinx 验收，也不能单独替换 Rinx 内核为任意最新发行包。
 
-## 构建环境
+`octoscript-makepad/runtime.json` 要求的 L0 修订为 `5991dfa`；当前 OctoScript main 从该修订起只更新其 Makepad pin，参考图使用最新 sibling 检出。应用的原始代码署名 `application_source` 是历史来源，不是运行时加载依赖。
 
-先安装 Git、Python 3、Rust 和 Visual Studio 的 C++ Build Tools、Windows SDK、CMake/Ninja 组件。安装宿主工具链：
+## 准备和构建
+
+安装 Git、Python 3、Rust、Visual Studio C++ Build Tools、Windows SDK、CMake/Ninja。当前检查使用 Python 3.12.8；宿主要求 Rust 1.98.0。项目没有需要安装的 Python 第三方运行依赖。
+
+在项目根目录执行：
 
 ```powershell
 rustup toolchain install 1.98.0 --profile minimal
+python scripts/prepare_dev_dependencies.py
+powershell -ExecutionPolicy Bypass -File scripts/build_windows_tools.ps1
 ```
 
-在本项目根目录的 **Developer PowerShell for VS** 中执行：
+准备脚本只创建锁中不存在的检出，遇到已有不同提交或修改会停止并保留它。构建脚本核对五个提交、加载 Visual Studio 环境，使用私有 Cargo cache 和临时短盘符，依次构建固定 Rinx、打包配套 Octos、构建 hub/card-host 并复制资源。日志在 `build/dependency-update/`。可用 `-Mode Rinx` 或 `-Mode Preview` 只构建对应工具。
 
-```powershell
-$taskVendor = (Resolve-Path '../demo-workspace/vendor').Path
-$env:RUSTUP_TOOLCHAIN = '1.98.0'
-$env:CARGO_HOME = Join-Path $taskVendor 'cargo-home'
-$env:CARGO_NET_OFFLINE = 'false'
-$env:CARGO_NET_GIT_FETCH_WITH_CLI = 'true'
-$env:GIT_CONFIG_COUNT = '1'
-$env:GIT_CONFIG_KEY_0 = 'core.longpaths'
-$env:GIT_CONFIG_VALUE_0 = 'true'
-$env:CMAKE_GENERATOR = 'Ninja'
-$env:MAKEPAD_PACKAGE_DIR = '.'
-```
+Rinx 的 `tools/package-octos.py` 同时验证 Cargo.lock 与 packaging/octos.lock.json；配套 `octos.exe --version` 应包含 `fe08d8e`，版本号仍为 `2.0.3-rc.13`。不能仅凭相同版本号复用旧内核。本项目不安装全局 Octos，也不复制模型配置。
 
-确保该终端的 `cmake` 和 `ninja` 命令可用；若未加入 PATH，从当前 Visual Studio 安装目录的 `Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin` 与 `Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja` 加入。使用 Developer PowerShell 与 Ninja 避免固定依赖中的旧 cmake crate 无法识别 Visual Studio 2026 generator。
-
-`MAKEPAD_PACKAGE_DIR` 在编译时生效，让宿主从可执行文件旁加载资源。`.path` 文件是资源打包输入，修改它们不能替换二进制内部的编译路径。迁移开发目录后，按下述方式重新构建并复制资源；运行不需要短盘符映射。
-
-构建正式宿主和配套内核：
-
-```powershell
-Push-Location ../demo-workspace/vendor/Rinx
-try {
-    cargo build --locked --release --features agent_chat
-    if ($LASTEXITCODE -ne 0) { throw 'Rinx build failed' }
-    python tools/package-octos.py desktop --app-binary target/release/rinx.exe
-    if ($LASTEXITCODE -ne 0) { throw 'Octos packaging failed' }
-    ./target/release/octos.exe --version
-} finally { Pop-Location }
-powershell -ExecutionPolicy Bypass -File scripts/stage_windows_resources.ps1 -Mode Rinx
-```
-
-Octos 应报告 `2.0.3-rc.13` 和提交前缀 `a6ea850`，打包 metadata 的完整 revision 应与宿主 `packaging/octos.lock.json` 相同。该版本的官方发行包报告 `4231669`，不能仅凭相同版本号替代本宿主锁定的内核。本项目使用宿主脚本构建的配套文件，不安装个人 Octos、不复制模型配置。
-
-构建参考宿主和打包工具：
-
-```powershell
-$env:CARGO_HOME = Join-Path $taskVendor 'hub-cargo-home'
-Push-Location ../demo-workspace/vendor/OctoSense-App-Hub
-try {
-    cargo build --locked --release -p octosense-app-hub --bin hub -p octosense-card-host --bin card-host
-    if ($LASTEXITCODE -ne 0) { throw 'App Hub tools build failed' }
-} finally { Pop-Location }
-powershell -ExecutionPolicy Bypass -File scripts/stage_windows_resources.ps1
-```
-
-两个构建共用 cache 时会等待 Cargo 文件锁；本机参考宿主使用 `../demo-workspace/vendor/hub-cargo-home/`，Rinx 使用 `../demo-workspace/vendor/cargo-home/`。资源脚本将构建输出的 `.path` 文件所指向的 `resources/` 按 crate 名复制到二进制旁，供已编译的 `MAKEPAD_PACKAGE_DIR=.` 布局加载。
+构建时 `MAKEPAD_PACKAGE_DIR=.` 使资源从可执行文件旁加载。`stage_windows_resources.ps1` 在短盘符仍存在时读取构建的 `.path` 并复制字体、主题和 Rinx 资源。构建结束取消映射，运行不需要该盘符。资源缺失时启动脚本报具体路径。
 
 ## 启动与验证边界
 
