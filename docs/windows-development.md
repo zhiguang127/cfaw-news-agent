@@ -36,22 +36,39 @@ Rinx 的 `tools/package-octos.py` 同时验证 Cargo.lock 与 packaging/octos.lo
 
 构建时 `MAKEPAD_PACKAGE_DIR=.` 使资源从可执行文件旁加载。`stage_windows_resources.ps1` 在短盘符仍存在时读取构建的 `.path` 并复制字体、主题和 Rinx 资源。构建结束取消映射，运行不需要该盘符。资源缺失时启动脚本报具体路径。
 
-## 启动与验证边界
-
-从本项目根目录执行：
+## 启动与临时白屏修复
 
 ```powershell
-python .\scripts\package.py
-powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1
 powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1 -Mode Rinx
 ```
 
-默认启动 `card-host`，自动获取真实新闻，可操作收藏与来源/主题/关键词追踪。它未实现 Octos 服务，“更多 → 连接诊断 → 测试连接”应显示真实服务不可用错误。`-Mode Rinx` 打开正式宿主，Matrix 登录、bundle 导入和模型配置见 [开发说明](development.md#3-导入并运行)。用户自己在宿主中输入凭据。
+Windows Rinx 模式默认将同一固定宿主 App 重新链接为 `build/windows-rinx-sdf/rinx-sdf.exe`，在 Startup 中将共享字体栅格化模式切换为 SDF。它使用相同宿主服务和配套内核，不修改上游源码；第一次需要编译好的 `librinx` 和 Rust 工具链，后续复用构建缓存。每次确保资源及内核副本完整。
 
-数据逻辑检查运行 `python scripts/test_runtime.py`，组装检查运行 `python scripts/assemble.py --check`。原生测试在独立 `.test-state/runtime-*/` 中执行实际 OctoScript 模块，不读写 `.local-state/`。公开来源复测需要允许宿主访问 manifest 声明的 HTTPS 域名。Windows 固定宿主拥有 `User-Agent`，应用不能自行覆盖；请求头中的值必须为字符串数组。
+这是本机 MSDF 白屏触发的临时保护。SDF 可能改变字形边缘；新依赖上的实际显示与长期稳定性仍须验收。移除条件是上游默认模式通过真实标题/原始 My Notes 复现和新闻连续刷新。原因和对照见 [白屏调查](../reports/FAILURE_ANALYSIS.md)。
 
-脚本默认将 Rinx 数据和缓存放在本项目 `.local-state/rinx/`；该目录已被 Git 忽略。可通过 `RINX_DATA_DIR` 指定其他绝对路径，脚本也沿用旧版 `ROBRIX_DATA_DIR` 配置。2026-10-01 迁移时保留了原宿主登录数据和缓存。直接双击 `rinx.exe` 会回到 Windows 默认应用数据目录，应通过脚本启动以使用项目中的数据。
+比较原始宿主或采集本机日志时使用：
 
-启动脚本只使用已编译、已复制资源的工具，缺少资源时显示对应错误。Windows Git 的 CRLF 转换可能改变 bundle 摘要。启动脚本通过 `package.py` 调用固定 `hub.exe` 刷新未签名包，生成 `build/cfaw-news.zip`。仅摘要不同不表示业务代码改变；签名包不能用这个开发流程重写。
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1 -Mode Rinx -RinxTextRasterizer Default -Diagnostic
+```
 
-当前检查结果见 [验收记录](acceptance.md)。参考宿主的交互验证、Rinx 启动、实际 Matrix/Octos 联调和 App Hub 发布验收分别报告，不能互相替代。
+`-Diagnostic` 记录 stdout、stderr 和 session.json 到 `.local-state/diagnostics/`，启用仅 loopback 的原生诊断 API。日志可能含宿主账户信息，不随 issue 或应用包分发。
+
+在 Rinx 的 **Mini apps → Import an app** 选本项目 `bundle/`，执行 **Review bundle → Run**。分析模型由用户在 Rinx 配置，新闻浏览不需要模型。完整导入、模型与 Linux 说明见 [开发说明](development.md)。
+
+不传 `-Mode` 时启动 card-host，窗口 430×860。它没有 Rinx 的 Octos 服务，连接检查应报告真实服务不可用。启动脚本通过固定 hub 刷新未签名摘要和 `build/cfaw-news.zip`；签名包不能使用该流程改写。
+
+## 数据与验证边界
+
+Rinx 默认沿用项目 `.local-state/rinx/`，此目录不入 Git。设置 `RINX_DATA_DIR` 或旧 `ROBRIX_DATA_DIR` 可覆盖。更新依赖不迁移或清理用户记录。直接双击原始 rinx.exe 会使用宿主默认数据目录，建议通过项目脚本启动。
+
+```powershell
+python scripts/test_runtime.py
+python scripts/test_runtime.py --agent-only
+python scripts/test_runtime.py --suites feed --inspect-ui
+python -m unittest discover -s tests/unit -p "test_*.py"
+python scripts/assemble.py --check
+python scripts/package.py
+```
+
+原生固定输入测试使用独立 `.test-state/`，不调用真实模型。最新结果、未覆盖的重启/模型业务闭环和 App Hub 发布见 [验收记录](acceptance.md)。包完整性、参考宿主行为、Rinx 行为和实际发布分别验收。

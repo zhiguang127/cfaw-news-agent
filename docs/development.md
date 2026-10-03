@@ -134,7 +134,7 @@ cd .dev/vendor/Rinx
 cargo run --locked --release --features agent_chat
 ```
 
-该命令按照[固定版本的官方 README](https://github.com/hagency-org/Rinx/blob/3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9/README.md#build-and-run)的构建方式启动，增加 `--release` 用于演示；首次运行会编译和下载依赖。构建并打包配套内核后可直接运行 `./target/release/rinx`。Rust 工具链由宿主的 `rust-toolchain.toml` 固定为 `1.98.0`。
+该命令按照[固定版本的官方 README](https://github.com/hagency-org/Rinx/blob/3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9/README.md#build-and-run)的构建方式启动，增加 `--release` 用于演示；首次运行会编译和下载依赖。构建并打包配套内核后可直接运行 `./target/release/rinx`；Windows 建议使用项目启动脚本以启用临时 SDF 保护。Rust 工具链由宿主的 `rust-toolchain.toml` 固定为 `1.98.0`。
 
 Linux 需要图形会话和原生构建依赖。Debian/Ubuntu 可按照[固定版本的 Linux 构建说明](https://github.com/hagency-org/Rinx/blob/3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9/docs/robrix-upstream-readme.md#building--running-robrix-on-desktop)准备：
 
@@ -171,9 +171,9 @@ powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1
 powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1 -Mode Rinx
 ```
 
-脚本核对宿主检出的固定提交、重新打包，再打开可交互窗口；不下载或编译工具。参考宿主的数据保存在 `.local-state/windows-preview/`，Rinx 的数据和缓存默认保存在 `.local-state/rinx/`；已设置 `RINX_DATA_DIR` 或 `ROBRIX_DATA_DIR` 时沿用该配置。直接运行 `rinx.exe` 会使用宿主自身的默认数据目录，建议通过脚本启动以沿用迁移后的登录状态。使用其他开发依赖目录时传入 `-DevRoot`。
+脚本核对固定提交、重新打包，再打开可交互窗口。Windows Rinx 默认将已编译的同一 App 重新链接为 SDF 字体模式，首次需要 Rust；不修改上游源码。用 `-RinxTextRasterizer Default` 可比较原始宿主。参考宿主的数据保存在 `.local-state/windows-preview/`，Rinx 的数据和缓存默认保存在 `.local-state/rinx/`；已设置 `RINX_DATA_DIR` 或 `ROBRIX_DATA_DIR` 时沿用该配置。直接运行 `rinx.exe` 会使用宿主自身的默认数据目录，建议通过脚本启动以沿用迁移后的登录状态。使用其他开发依赖目录时传入 `-DevRoot`。
 
-固定宿主限制每次脚本回调为 64 ms。缓存只恢复启用源；列表按最多 64 条/8 ms 分批，app 合并同时到达的更新，避免反复取消全量排序。启动只更新缺失或达到 5 分钟的来源，手动刷新仍覆盖全部启用源。关键词匹配器复用，页面每次渲染只筛选一次。Windows 宿主提供 `User-Agent`，应用不能自行覆盖。参考宿主依赖与 Rinx 的依赖不同；运行与验证范围见 [验收记录](acceptance.md)。
+固定宿主限制每次脚本回调为 64 ms。缓存只恢复启用源；列表按最多 64 条/8 ms 分批，app 合并同时到达的更新，避免反复取消全量排序。启动只更新缺失或达到 5 分钟的来源，手动刷新仍覆盖全部启用源。关键词匹配器复用，页面每次渲染只筛选一次。关注状态检查也分批执行，保持 busy 至保存完成；列表渲染合并到独立定时器，在新列表分配前执行当前脚本 VM 的回收，以保护 32 MiB 堆上限。该保护和 SDF 均为临时宿主兼容措施，移除条件见 [白屏调查](../reports/FAILURE_ANALYSIS.md)。Windows 宿主提供 `User-Agent`，应用不能自行覆盖。参考宿主依赖与 Rinx 的依赖不同；运行与验证范围见 [验收记录](acceptance.md)。
 
 ### 2. 打包当前应用
 
