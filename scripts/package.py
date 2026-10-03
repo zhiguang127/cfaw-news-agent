@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import zipfile
-from assemble import build, source_catalog
+from assemble import build, requested_hosts
 
 root = Path(__file__).resolve().parents[1]
 bundle = root / 'bundle'
@@ -17,11 +17,9 @@ manifest = json.loads((bundle / 'manifest.json').read_text())
 if manifest.get('publisher_signature') or manifest.get('integrity', {}).get('signature'):
     raise SystemExit('Refusing to restamp a signed bundle')
 build()
-from urllib.parse import urlsplit
-catalog = source_catalog()
-expected_hosts = {urlsplit(s['url']).hostname for s in catalog['sources']} | set(catalog.get('redirect_hosts', []))
+expected_hosts = requested_hosts()
 if not expected_hosts.issubset(set(manifest['network']['hosts'])):
-    raise SystemExit('Source hosts missing from bundle/manifest.json')
+    raise SystemExit('Source/signal hosts missing from bundle/manifest.json: ' + ', '.join(sorted(expected_hosts - set(manifest['network']['hosts']))))
 lock = json.loads((root / 'dev-dependencies.lock.json').read_text())
 repo = next(item for item in lock['repositories'] if item['name'] == 'OctoSense-App-Hub')
 hub_name = 'hub.exe' if os.name == 'nt' else 'hub'

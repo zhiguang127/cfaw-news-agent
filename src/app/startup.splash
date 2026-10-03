@@ -4,7 +4,7 @@ fn boot(){
     history_load()
     feed_initialize()
     render_main()
-    if records_warning != "" { notice(records_warning) }
+    if records_warning != "" || schedule_warning != "" || analysis_history_warning != "" { notice(records_warning + " " + schedule_warning + " " + analysis_history_warning) }
     // records_load/history_load/render_main already spent most of this 64ms
     // slice; defer the cache restore so its first source read gets a fresh budget.
     start_timeout(0.01, || feed_restore_cache(0, feed_generation, || {

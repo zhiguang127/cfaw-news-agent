@@ -41,6 +41,90 @@ fn fx_fixture(name){
     try { value = name.parse_json() } { value = nil }
     value
 }
+let fx_test_requests = []
+fn fx_test_transport(){
+    fx_test_requests = []
+    fx_http_request = |url, redirects, callback| fx_test_requests.push({url: url callback: callback})
+}
+fn fx_test_reply(index, result){
+    let callback = fx_test_requests[index]["callback"]
+    callback(result)
+}
+fn fx_test_table(day, amount){ {schema_version: 1 date: day base: "cny" source: {usd: amount jpy: 24} fetched_at: 0} }
+fn fx_test_response_order(){
+    let days = ["2026-09-29" "2026-09-30" "2026-10-01"]
+    let amounts = [0.10, 0.14, 0.15]
+    let orders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]
+    for order in orders {
+        fx_test_reset()
+        for index in order { fx_ingest(fx_test_table(days[index], amounts[index]), 100 + index) }
+        fx_test(fx_newest_date() == "2026-10-01", "every response order selects the newest day")
+        fx_test(fx_previous_date() == "2026-09-30", "every response order selects the nearest earlier day")
+        fx_test(fx_close(fx_rate("usd")["change_ratio"], 0.071428571, 0.00000001), "every response order compares the same two days")
+    }
+    fx_ingest(fx_test_table("2026-10-01", 0.16), 300)
+    fx_test(fx_previous_date() == "2026-09-30", "a same-day replacement is never its own comparison day")
+    fx_test(fx_close(fx_rate("usd")["previous_per_cny"], 0.14, 0.00000001), "same-day replacement keeps the previous day's value")
+    fx_test_reset()
+    fx_ingest(fx_test_table("2026-10-01", 0.15), 200)
+    fx_ingest(fx_test_table("2026-10-01", 0.16), 300)
+    fx_test(fx_rate("usd")["change_ratio"] == nil, "two observations on one day do not invent a daily change")
+
+    fx_test_reset()
+    fx_ingest(fx_test_table("2026-09-30", 100), 100)
+    fx_ingest(fx_test_table("2026-10-01", 98), 200)
+    let fall = fx_movers(["usd"])
+    fx_test(fall.len() == 1, "an exact negative two-percent move also reaches the alert threshold")
+    if fall.len() == 1 { fx_test(fall[0]["change_ratio"] < 0, "negative threshold alert preserves its signed direction") }
+    fx_ingest(fx_test_table("2026-10-01", 98.01), 300)
+    fx_test(fx_movers(["usd"]).len() == 0, "a fall just under two percent does not alert")
+}
+fn fx_test_cache_and_requests(){
+    fx_test_reset()
+    let older = fx_table_from_upstream(fx_fixture(fixture_fx_old), "cny", "2026-09-30")
+    let newer = fx_table_from_upstream(fx_fixture(fixture_fx_new), "cny", "2026-10-01")
+    older.fetched_at = 100 newer.fetched_at = 200
+    fx_write_cache(older) fx_write_cache(newer)
+    fx_test_reset() fx_test_transport()
+    fx_load("2026-10-01")
+    fx_test(fx_test_requests.len() == 1, "normal load restores two cached days and requests only the missing day")
+    fx_test(fx_rate("usd")["fetched_at"] == 200, "cache reload preserves retrieval time rather than replacing it with zero")
+    fx_test(fx_rate("usd")["previous_per_cny"] != nil, "cached days restore the comparison before network replies")
+    fx_load("2026-10-01")
+    fx_test(fx_test_requests.len() == 1 && fx_pending == 1, "repeated load does not duplicate the in-flight missing day")
+    fx_test_reply(0, {success: false error: "fixture timeout"})
+    fx_test(fx_pending == 0 && fx_status != "", "request failure releases pending state and retains a cause")
+    fx_fetch_day("2026-09-29")
+    fx_test(fx_test_requests.len() == 2 && fx_pending == 1, "a failed daily request can be retried")
+    fx_test_reply(0, {success: false error: "duplicate old completion"})
+    fx_test(fx_pending == 1, "an old duplicate completion cannot finish a newer retry")
+    let response = {date: "2026-09-29" cny: {usd: 0.10}}
+    fx_test_reply(1, {success: true body: response.to_json()})
+    fx_test(fx_pending == 0 && fx_status == "", "successful retry clears its failure without pending drift")
+
+    // A corrupt cache stays diagnosable while a valid network result replaces it.
+    fs.write(fx_cache_path("2026-09-29"), "broken fixture cache")
+    fx_test_reset() fx_test_transport()
+    fx_load_from("2026-09-29", 1)
+    fx_test(fx_test_requests.len() == 1 && fx_status != "", "corrupt cache triggers a request and preserves its diagnostic while loading")
+    fx_test_reply(0, {success: true body: response.to_json()})
+    fx_test(fx_date_loaded("2026-09-29") && fx_status == "", "valid replacement repairs the corrupt cache and clears that cause")
+
+    fx_test_reset() fx_test_transport()
+    fx_fetch_day("2026-09-28") fx_fetch_day("2026-09-27")
+    fx_test_reply(0, {success: false error: "fixture failure"})
+    let success = {date: "2026-09-27" cny: {usd: 0.10}}
+    fx_test_reply(1, {success: true body: success.to_json()})
+    fx_test(fx_status != "", "another day's late success does not erase a failed day's diagnostic")
+    fx_fetch_day("2026-09-26")
+    fx_test_reset()
+    let stale = {date: "2026-09-26" cny: {usd: 0.10}}
+    fx_test_reply(2, {success: true body: stale.to_json()})
+    fx_test(fx_newest_date() == "" && fx_pending == 0, "a completion after reset cannot repopulate newer state")
+    let count = fx_test_requests.len()
+    fx_load_from("2026-02-31", 1) fx_load_from("2026-10-01", 100)
+    fx_test(fx_test_requests.len() == count, "impossible dates and unbounded windows are refused before requests")
+}
 
 
 fn fx_test_run(){
@@ -71,6 +155,9 @@ fn fx_test_run(){
         fx_test(fx_close(fx_amount(table_new, "usd"), 0.14913367, 0.00000001), "usd rate read from the cny table")
         fx_test(fx_close(fx_amount(table_new, "jpy"), 23.61117077, 0.00000001), "jpy rate read from the cny table")
         fx_test(fx_amount(table_new, "1inch") == nil, "crypto tickers dropped")
+        fx_test(fx_amount(table_new, "btc") == nil, "three-letter bitcoin ticker refused")
+        fx_test(fx_amount(table_new, "eth") == nil, "three-letter ethereum ticker refused")
+        fx_test(fx_amount(table_new, "sol") == nil, "three-letter solana ticker refused")
     }
     fx_test(fx_table_from_upstream(raw_new, "usd", "2026-10-01") == nil, "a base the file does not carry is refused")
     fx_test(fx_table_from_upstream(raw_new, "cny", "2026-10-02") == nil, "a date the file does not match is refused")
@@ -161,6 +248,7 @@ fn fx_test_run(){
     fx_test(fx_movers("usd").len() == 0, "a non-list yields no movers")
 
     // --- host admission ----------------------------------------------------
+    fx_test(fx_url("2026-10-01") == "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@2026-10-01/v1/currencies/cny.json", "daily rate URL has exactly one version separator")
     fx_test(fx_request_allowed(fx_url("2026-10-01")), "rate host admitted")
     fx_test(!fx_request_allowed("https://example.invalid/x.json"), "unlisted host refused")
     fx_test(!fx_request_allowed("http://cdn.jsdelivr.net/x.json"), "plain http refused")
@@ -170,11 +258,13 @@ fn fx_test_run(){
     fx_test(weather_day_stamp(weather_time_stamp("2026-10-01") - 86400) == "2026-09-30", "one window step back")
     fx_test(weather_day_stamp(weather_time_stamp("2026-10-01") - 2 * 86400) == "2026-09-29", "two window steps back")
     fx_test(fx_window_days == 3, "three days are requested per load")
+    fx_test_response_order()
+    fx_test_cache_and_requests()
 }HostedView{full: View{Label{text: "CFAW exchange rate tests"}}}
 start_timeout(0.05, || {
     fx_test_run()
     start_timeout(0.02, || {
-        let report = {passed: fx_test_passes failed: fx_test_failures stage: "complete"}
+        let report = {passed: fx_test_passes failed: fx_test_failures stage: "complete" failure_detail: ""}
         if fx_test_failures > 0 {
             if fs.exists("fx-failures.txt") { report.failure_detail = fs.read("fx-failures.txt") }
         }

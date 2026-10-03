@@ -2,7 +2,7 @@
   "schema_version": 1,
   "note": "City forecasts are not news records. Kept apart from sources.json so the news contract is not stretched to cover data that has no publication timestamp.",
   "endpoint": "https://api.open-meteo.com/v1/forecast",
-  "attribution": "Open-Meteo.com, CC BY 4.0, non-commercial use",
+  "attribution": "Open-Meteo.com, data CC BY 4.0; free API for non-commercial use",
   "days": 7,
   "cities": [
     {

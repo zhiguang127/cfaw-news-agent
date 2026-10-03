@@ -1,6 +1,10 @@
-// Pure shared checks for exchange rates. fx_code_valid lives here so every
-// module and test agrees on what a currency code is.
-fn fx_code_valid(code){ record_string(code) && regex("^[a-z]{3}$").test(code) }
+// Supported travel currencies, not a shape check for every upstream ticker.
+// Three-letter crypto symbols also match the ISO-shaped regular expression.
+let fx_supported_currencies = ["cny" "usd" "eur" "jpy" "krw" "gbp" "chf" "aud" "cad" "thb" "sgd" "hkd" "nzd"]
+fn fx_code_valid(code){
+    if !record_string(code) { return false }
+    record_contains(fx_supported_currencies, code)
+}
 
 // Rates are quoted per 1 unit of the base currency, which is the direction a
 // traveller needs: it answers "what does 100 yuan buy" without the caller
@@ -21,7 +25,7 @@ fn fx_amount(table, code){
 // yields values rather than keys, there are no keys()/entries()/values()
 // methods, and len() on it reports 0 regardless of how many members it has.
 // So fx_table_valid can only check what can be named, and the real gate is
-// fx_amount: every currency a caller asks for is checked for a valid ISO code
+// fx_amount: every currency a caller asks for is checked against the supported set
 // and a positive amount on the way out.
 fn fx_table_valid(table){
     if !record_object(table) || table["schema_version"] != 1 { return false }
@@ -34,11 +38,8 @@ fn fx_table_valid(table){
 
 // The upstream file is {date, <base>: {<currency>: <amount>}} with flat numbers,
 // and it mixes crypto tickers such as "1inch" and "aave" into the same map.
-// The base object is carried through unchanged rather than copied into a
-// derived map: keys written into a map literal created inside a function do not
-// read back, so a filtered copy would silently come out empty. Callers reach
-// values through fx_amount(), which applies the currency-code filter and the
-// positive-amount rule.
+// Retain the provider's base object; callers reach values through fx_amount(),
+// which checks the supported currency set and positive amount on every read.
 fn fx_table_from_upstream(value, base, expected_date){
     if !record_object(value) { return nil }
     if !weather_day_valid(value["date"]) { return nil }

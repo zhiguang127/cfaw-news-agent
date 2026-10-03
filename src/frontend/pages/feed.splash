@@ -1,12 +1,4 @@
 let FeedFilters = View{width: Fill height: Fit flow: Down
-    filters := View{width: Fill height: 42 flow: Right padding: Inset{left: 12 right: 12 top: 3 bottom: 3} spacing: 4 on_render: || {
-        if !related_only { FilterActive{text: "最新动态" on_click: || pick_filter(false)} }
-        else { Filter{text: "最新动态" on_click: || pick_filter(false)} }
-        if related_only { FilterActive{text: "与你有关" on_click: || pick_filter(true)} }
-        else { Filter{text: "与你有关" on_click: || pick_filter(true)} }
-        if !analysis_batch_busy { QuietButton{text: "分析本次变化" on_click: || analyze_changes()} }
-        else { QuietButton{text: "变化分析中…"} }
-    }}
     categories := View{width: Fill height: 32 flow: Right padding: Inset{left: 12 right: 12} spacing: 2 on_render: || {
         for item in category_filters {
             if category == item.id { FilterActive{height: 30 text: item.label on_click: || pick_category(item.id)} }

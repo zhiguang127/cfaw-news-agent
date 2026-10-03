@@ -27,15 +27,49 @@ let fx_tables_by_date = {}
 let fx_latest_day = ""
 let fx_latest_key = 0
 let fx_prior_day = ""
+let fx_prior_key = 0
 let fx_pending = 0
 let fx_status = ""
+let fx_status_by_date = {}
+let fx_requests_by_date = {}
+let fx_request_counter = 0
+let fx_http_request = |url, redirects, callback| news_http_request(url, redirects, callback)
+
+fn fx_update_status(){
+    fx_status = ""
+    for status in fx_status_by_date {
+        if status["cache_error"] != "" {
+            if fx_status != "" { fx_status = fx_status + "；" }
+            fx_status = fx_status + status["cache_error"]
+        }
+        if status["error"] != "" {
+            if fx_status != "" { fx_status = fx_status + "；" }
+            fx_status = fx_status + status["error"]
+        }
+    }
+}
+fn fx_set_day_status(day, state, error){
+    let cache_error = ""
+    let previous = fx_status_by_date[day]
+    if previous != nil { cache_error = previous["cache_error"] }
+    fx_status_by_date[day] = {state: state error: error cache_error: cache_error}
+    fx_update_status()
+}
+fn fx_cache_error(day, message){
+    let state = "not_loaded"
+    let error = ""
+    let previous = fx_status_by_date[day]
+    if previous != nil { state = previous["state"] error = previous["error"] }
+    fx_status_by_date[day] = {state: state error: error cache_error: message}
+    fx_update_status()
+}
 
 fn fx_request_allowed(url){
     if !record_string(url) { return false }
     let parts = url.split("/")
     parts.len() >= 3 && parts[0] == "https:" && parts[1] == "" && record_contains(fx_hosts, parts[2])
 }
-fn fx_url(day){ fx_source + "@" + day + "/v1/currencies/" + fx_base + ".json" }
+fn fx_url(day){ fx_source + day + "/v1/currencies/" + fx_base + ".json" }
 fn fx_date_loaded(day){ return fx_tables_by_date[day] != nil }
 fn fx_currency_count(currencies){
     if !record_array(currencies) { return 0 }
@@ -52,13 +86,18 @@ fn fx_currency_count(currencies){
 
 fn fx_ingest(table, fetched_at){
     if !fx_table_valid(table) { return false }
+    if table["base"] != fx_base || !record_number(fetched_at) { return false }
     table.fetched_at = fetched_at
     let day = table["date"]
     let key = weather_time_stamp(day)
     if key > fx_latest_key {
         fx_prior_day = fx_latest_day
+        fx_prior_key = fx_latest_key
         fx_latest_day = day
         fx_latest_key = key
+    } else if key < fx_latest_key && key > fx_prior_key {
+        fx_prior_day = day
+        fx_prior_key = key
     }
     fx_tables_by_date[day] = table
     true
@@ -71,8 +110,11 @@ fn fx_reset(){
     fx_latest_day = ""
     fx_latest_key = 0
     fx_prior_day = ""
+    fx_prior_key = 0
     fx_pending = 0
     fx_status = ""
+    fx_status_by_date = {}
+    fx_requests_by_date = {}
 }
 
 fn fx_cache_path(day){ "fx_v1_" + fx_base + "_" + day + ".json" }
@@ -82,42 +124,54 @@ fn fx_read_cache(day){
     if !fs.exists(path) { return false }
     let raw = ""
     try { raw = fs.read(path) } { raw = "" }
-    if raw == "" { return false }
+    if raw == "" { fx_cache_error(day, day + " 汇率缓存读取失败，等待重新获取") return false }
     let value = nil
     try { value = raw.parse_json() } { value = nil }
-    if value == nil { return false }
-    fx_ingest(value, 0)
+    if !fx_table_valid(value) { fx_cache_error(day, day + " 汇率缓存格式无效，等待重新获取") return false }
+    if value["date"] != day || value["base"] != fx_base { fx_cache_error(day, day + " 汇率缓存日期或基准币种不符，等待重新获取") return false }
+    if !fx_ingest(value, value["fetched_at"]) { return false }
+    fx_set_day_status(day, "cached", "")
+    true
 }
 
 fn fx_write_cache(table){
     if table == nil { return }
-    try { fs.write(fx_cache_path(table["date"]), table.to_json()) } { fx_status = "汇率缓存保存失败，本次数据仅在当前会话有效" }
+    let day = table["date"]
+    let saved = true
+    try { fs.write(fx_cache_path(day), table.to_json()) } { saved = false }
+    if !saved { fx_cache_error(day, day + " 汇率缓存保存失败，本次数据仅在当前会话有效") }
+    else { fx_cache_error(day, "") }
 }
 
 fn fx_fetch_day(day){
-    if fx_date_loaded(day) { return }
+    if fx_date_loaded(day) || fx_requests_by_date[day] != nil { return }
     let url = fx_url(day)
     if !fx_request_allowed(url) {
-        fx_status = "汇率数据源域名未获许可"
+        fx_set_day_status(day, "error", day + " 汇率数据源域名未获许可")
         return
     }
     fx_pending = fx_pending + 1
-    news_http_request(url, 0, fn(result){
+    fx_request_counter = fx_request_counter + 1
+    let request_id = fx_request_counter
+    fx_requests_by_date[day] = request_id
+    fx_set_day_status(day, "loading", "")
+    fx_http_request(url, 0, fn(result){
+        if fx_requests_by_date[day] != request_id { return }
+        fx_requests_by_date[day] = nil
         fx_pending = fx_pending - 1
         if fx_pending < 0 { fx_pending = 0 }
         if !result.success {
-            fx_status = day + " 汇率未发布或获取失败：是否变动未知"
+            fx_set_day_status(day, "error", day + " 汇率未发布或获取失败：是否变动未知（" + result["error"] + "）")
             return
         }
         let value = nil
         try { value = result.body.parse_json() } { value = nil }
         let table = fx_table_from_upstream(value, fx_base, day)
         if table == nil {
-            fx_status = day + " 汇率响应不是预期结构：是否变动未知"
+            fx_set_day_status(day, "error", day + " 汇率响应不是预期结构：是否变动未知")
             return
         }
-        fx_status = ""
-        if fx_ingest(table, time_now()) { fx_write_cache(table) }
+        if fx_ingest(table, time_now()) { fx_set_day_status(day, "fresh", "") fx_write_cache(table) }
     })
 }
 
@@ -125,6 +179,14 @@ fn fx_fetch_day(day){
 // replay can pin it; nothing here reads the runtime clock.
 fn fx_load(today){ fx_load_from(today, fx_window_days) }
 fn fx_load_from(today, days){
+    if !weather_day_valid(today) { fx_status = "汇率查询日期无效" return }
+    if !record_number(days) { fx_status = "汇率查询天数无效" return }
+    if days < 1 || days > fx_window_days || floor(days) != days { fx_status = "汇率查询天数须为 1–" + fx_window_days return }
+    // Restore every cached comparison day before any synchronous or delayed reply.
+    for i in days {
+        let day = weather_day_stamp(weather_time_stamp(today) - i * 86400)
+        if !fx_date_loaded(day) { fx_read_cache(day) }
+    }
     for i in days {
         fx_fetch_day(weather_day_stamp(weather_time_stamp(today) - i * 86400))
     }

@@ -82,6 +82,15 @@ hour/minute fields, and also offers New York time with US DST rules from 2007.
 It constructs offset timestamps internally; users do not type RFC 3339.
 Nonexistent spring hours and ambiguous autumn hours are rejected explicitly.
 
+Schedules also have `status` (active/cancelled/completed, missing means active)
+and `allow_reschedule` (missing means false). Inactive schedules do not block
+new entries and are excluded from Agent snapshots. Rescheduling is rejected
+both during model validation and at confirmation unless explicitly enabled.
+Manual edits preserve these fields and content/location. Status changes
+increment the version. Saving unchanged fields does not increment the version.
+Editing timezone converts the same instant; unchanged minute fields preserve
+original seconds and timestamp representation.
+
 The validator accepts `create` with null schedule reference and `reschedule`
 only with matching snapshot `schedule_id` and `schedule_version`. A model
 proposal never writes automatically. The detail view previews the action,
@@ -140,3 +149,46 @@ Use these categories at the adapter and validation boundary:
 Failure categories must retain an actionable cause and must never be converted
 to `no_change`. See `src/agent/results/validation-rules.md` for validation
 rules and `src/agent/results/change-detection.md` for deduplication.
+
+## Runtime revision news-impact-v2
+
+The JSON schema remains version 1 for existing records. The runtime prompt asks
+for `goal_key`: a stable business objective (1–120 characters) retained across
+wording changes. The validator accepts missing goal keys for v1 compatibility;
+legacy identity falls back to action title or exact change-summary text. This
+is deterministic application matching, not a guarantee of semantic equivalence.
+
+Each request has one terminal state. Navigation is independent of execution.
+Replies are correlated by request ID and checked against current evidence,
+interests, schedules and explicit user decisions. Cancelling or timing out stops
+the whole batch and waits at most 10 seconds for interruption acknowledgment;
+an unacknowledged stop requires reopening the app. Batch selection yields every
+five feed rows, admits at most eight changed lexical candidates, and exposes
+success, failure and skipped counts. This is lexical recall, not hybrid retrieval.
+
+The input includes `timestamp_kind` so HN submission dates are not article
+publication dates. Context selects at most eight active plans, preferring title
+matches then upcoming start times, and at most 12 recent explicit decisions.
+It reduces whole records to stay under a 7,500-character conservative request
+budget and reports `omitted_schedules`/`omitted_decisions`; it never truncates
+serialized JSON. If evidence and interests alone cannot fit, sending fails
+visibly. The change fingerprint uses full user inputs, even when the transmitted
+snapshot omits some records, and excludes retrieval age/generated pending advice.
+
+Model output is bounded to 10,000 characters, six suggestions, a 2,000-character
+explanation and 4,000 characters per suggestion. Schedule entry limits are title
+200/content 2,000/location 300 characters; new entries stop at 128 records without
+erasing existing schedules. Analysis summaries retain the latest 120. Suggestions
+and user decisions are never automatically pruned; at 500 suggestions or a
+200,000-character history-file budget, new writes fail visibly. Historical files
+retain previous valid backups; corrupt originals are preserved. These limits do
+not replace the host's total storage quota, whose failures also remain visible.
+
+`needs_review` preserves previously pending advice when evidence becomes
+insufficient, blocking acceptance until a valid new analysis. Confirmation reads
+persisted caches and rejects missing, demo, changed or >2-hour-old evidence and
+changed evidence date/source metadata. Old proposals without full evidence
+versions require reanalysis. Existing schedule suggestion markers allow a
+partially saved confirmation to recover idempotently. History and schedules are
+separate files, not an atomic database transaction; partial saves expose errors
+and retry paths rather than pretending to be fully saved.

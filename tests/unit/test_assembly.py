@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from assemble import ORDER, assemble, build, source_catalog
+from assemble import ORDER, assemble, build, source_catalog, requested_hosts, city_catalog, cities_script
 
 
 @contextmanager
@@ -45,8 +45,15 @@ class AssemblyTests(unittest.TestCase):
     def test_source_hosts_admitted(self):
         catalog = source_catalog()
         allowed = set(json.loads((ROOT / 'bundle/manifest.json').read_text())['network']['hosts'])
-        requested = {urlsplit(source['url']).hostname for source in catalog['sources']}
-        self.assertTrue((requested | set(catalog['redirect_hosts'])).issubset(allowed))
+        requested = requested_hosts()
+        self.assertTrue(requested.issubset(allowed))
+        self.assertTrue({'api.open-meteo.com', 'cdn.jsdelivr.net', 'www.airchinagroup.com'}.issubset(requested))
+
+    def test_forecast_endpoint_credentials_refused(self):
+        catalog = city_catalog()
+        catalog['endpoint'] = 'https://user:secret@api.open-meteo.com/v1/forecast'
+        with self.assertRaises(ValueError):
+            cities_script(catalog)
 
     def test_invalid_catalog_refused(self):
         catalog = source_catalog()

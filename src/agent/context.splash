@@ -1,8 +1,8 @@
 // Build the bounded, application-owned snapshot passed to the single Agent.
 // Convert observed Unix seconds to UTC; never invent a missing publication date.
 let analysis_schema_version = 1
-let analysis_prompt_revision = "news-impact-v1"
-let analysis_max_text_chars = 6000
+let analysis_prompt_revision = "news-impact-v2"
+let analysis_max_text_chars = 7500
 
 fn analysis_two_digits(value){ if value < 10 { return "0" + value } "" + value }
 fn analysis_four_digits(value){
@@ -50,11 +50,84 @@ fn analysis_make_snapshot(row){
     let published = nil
     if row.published_at != nil { published = analysis_epoch_rfc3339(row.published_at) }
     let evidence = [{evidence_id: row.news_id source_url: row.source_url text: available_text
-        content_kind: "summary" published_at: published retrieved_at: analysis_epoch_rfc3339(row.retrieved_at)}]
+        content_kind: "summary" timestamp_kind: row["timestamp_kind"] published_at: published retrieved_at: analysis_epoch_rfc3339(row.retrieved_at)}]
     let schedules = []
-    for item in user_schedules { schedules.push(item.to_json().parse_json()) }
-    {schema_version: analysis_schema_version request_id: "pending" context_version: 0
-        interests: interests evidence: evidence schedules: schedules previous_decisions: []}
+    let omitted_schedules = 0
+    let active = []
+    let selected = []
+    // Prefer explicit title matches, then upcoming plans in start-time order.
+    for item in user_schedules { if schedule_active(item) { active.push(item) } }
+    for item in active {
+        let matcher = regex(literal_pattern(item.title), "i")
+        if selected.len() < 8 && (matcher.test(row.title) || matcher.test(row.summary)) { selected.push(item) }
+    }
+    let ordered = []
+    for item in active {
+        if schedule_instant(item.end) < time_now() { continue }
+        let entry = {item: item start_seconds: schedule_instant(item.start)}
+        let next = [] let placed = false
+        for old in ordered { if !placed && entry.start_seconds < old.start_seconds { next.push(entry) placed = true } next.push(old) }
+        if !placed { next.push(entry) }
+        if next.len() > 8 { next.pop() }
+        ordered = next
+    }
+    for entry in ordered {
+        let item = entry.item
+        let exists = false
+        for chosen in selected { if chosen.schedule_id == item.schedule_id { exists = true } }
+        if !exists && selected.len() < 8 { selected.push(item) }
+    }
+    for item in selected {
+        if schedule_active(item) {
+            if schedules.len() < 8 {
+                schedules.push({schedule_id: item.schedule_id version: item.version title: item.title
+                    content: item["content"] location: item["location"] start: item.start end: item.end
+                    timezone: item.timezone status: "active" allow_reschedule: item["allow_reschedule"] == true})
+            } else { omitted_schedules = omitted_schedules + 1 }
+        }
+    }
+    omitted_schedules = active.len() - schedules.len()
+    let decisions = []
+    for item in suggestion_history {
+        if item.news_id == row.news_id && (item.state == "accepted" || item.state == "dismissed" || item["user_decision"] == true) {
+            decisions.push({suggestion_id: item.suggestion_id state: item.state evidence_ids: item.evidence_ids change_summary: item.change_summary goal_key: item["goal_key"]})
+        }
+    }
+    let omitted_decisions = 0
+    while decisions.len() > 12 { decisions.remove(0) omitted_decisions = omitted_decisions + 1 }
+    let snapshot = {schema_version: analysis_schema_version request_id: "pending" context_version: 0
+        interests: interests evidence: evidence schedules: schedules previous_decisions: decisions
+        omitted_schedules: omitted_schedules omitted_decisions: omitted_decisions}
+    while snapshot.to_json().len() > analysis_max_text_chars - 500 && snapshot.previous_decisions.len() > 0 {
+        snapshot.previous_decisions.remove(0) snapshot.omitted_decisions = snapshot.omitted_decisions + 1
+    }
+    while snapshot.to_json().len() > analysis_max_text_chars - 500 && snapshot.schedules.len() > 0 {
+        snapshot.schedules.pop() snapshot.omitted_schedules = snapshot.omitted_schedules + 1
+    }
+    snapshot
+}
+
+// Retrieval age and generated pending advice are not user input changes.
+fn analysis_input_key(row){
+    let decisions = []
+    for item in suggestion_history {
+        if item.news_id == row.news_id && (item.state == "accepted" || item.state == "dismissed" || item["user_decision"] == true) {
+            decisions.push({id: item.suggestion_id state: item.state})
+        }
+    }
+    {evidence: {id: row.news_id title: row.title summary: row.summary url: row.source_url
+        published_at: row.published_at timestamp_kind: row["timestamp_kind"] evidence_kind: row["evidence_kind"]}
+        interests: user_interests schedules: user_schedules decisions: decisions}.to_json()
+}
+fn analysis_current_row(id){
+    let newest = nil
+    for source in news_sources {
+        let rows = feed_rows_by_source[source.id]
+        if rows != nil { for row in rows {
+            if row.news_id == id && (newest == nil || row.retrieved_at > newest.retrieved_at) { newest = row }
+        } }
+    }
+    newest
 }
 
 fn analysis_snapshot_text(snapshot){

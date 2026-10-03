@@ -3,6 +3,7 @@
 // re-derived from the same code under test.
 let weather_test_passes = 0
 let weather_test_failures = 0
+let weather_test_requests = []
 fn weather_test(condition, message){
     if condition { weather_test_passes = weather_test_passes + 1 }
     else {
@@ -12,8 +13,16 @@ fn weather_test(condition, message){
         fs.write("weather-failures.txt", previous + "FAIL weather: " + message + "\n")
     }
 }
+fn weather_test_reset(){
+    weather_initialize()
+    weather_tracked = []
+    weather_selection = ""
+    weather_test_requests = []
+}
 
 fn weather_test_run(){
+    // A fixed request adapter records callbacks; these cases never contact a provider.
+    weather_http_request = fn(url, redirects, callback){ weather_test_requests.push({url: url callback: callback}) }
     // --- condition mapping -------------------------------------------------
     weather_test(weather_condition(0) == "晴", "WMO 0 clear")
     weather_test(weather_condition(61) == "小雨" && weather_condition(65) == "大雨", "rain bands separated")
@@ -50,10 +59,23 @@ fn weather_test_run(){
     weather_test(weather_parse(city, "not json", 1000) == nil, "unparseable body refused")
     weather_test(weather_parse(city, "{\"daily\":{\"time\":[\"2026-13-45\"]}}", 1000) == nil, "impossible date refused")
     weather_test(weather_parse(weather_city_by_name("杭州"), "{\"daily\":{\"time\":[]}}", 1000) == nil, "empty day list refused")
+    weather_test(weather_parse(city, "{\"daily\":{\"time\":[\"2026-10-02\"]}}", 1000) == nil, "date without required measurements is not invented sunny weather")
+    weather_test(weather_parse(city, "{\"daily\":{\"time\":[\"2026-10-02\"],\"weather_code\":[null],\"precipitation_sum\":[0]}}", 1000) == nil, "null weather code is unknown, not clear")
+    weather_test(weather_parse(city, "{\"daily\":{\"time\":[\"2026-10-02\"],\"weather_code\":[0],\"precipitation_sum\":[null]}}", 1000) == nil, "null rainfall is unknown, not zero")
+    weather_test(weather_parse(city, "{\"daily\":{\"time\":[\"2026-10-02\",\"2026-10-03\"],\"weather_code\":[0],\"precipitation_sum\":[0,0]}}", 1000) == nil, "truncated measurement arrays refused")
+    weather_test(weather_parse(city, "{\"daily\":{\"time\":[\"2026-02-31\"],\"weather_code\":[0],\"precipitation_sum\":[0]}}", 1000) == nil, "calendar-impossible date refused")
+    weather_test(weather_parse(city, "{\"daily\":{\"time\":[\"2026-10-02\",\"2026-10-02\"],\"weather_code\":[0,0],\"precipitation_sum\":[0,0]}}", 1000) == nil, "duplicate forecast identity refused")
+    weather_test(weather_parse(city, "{\"daily\":{\"time\":[\"2026-10-02\"],\"weather_code\":[0],\"precipitation_sum\":[0]}}", 1000) != nil, "observed clear code and zero rainfall remain valid")
     weather_test(!forecast_valid({}) && !forecast_valid({forecast_id: "w01:2026-10-02"}), "incomplete forecast refused")
     let broken = test_clone(rows[0])
     broken.precipitation_mm = -1
     weather_test(!forecast_valid(broken), "negative precipitation refused")
+    broken = test_clone(rows[0])
+    broken.code = -1
+    weather_test(!forecast_valid(broken), "negative weather code refused")
+    broken = test_clone(rows[0])
+    broken.condition = "晴"
+    weather_test(!forecast_valid(broken), "condition cannot contradict its weather code")
     let mismatched = test_clone(rows[0])
     mismatched.forecast_id = "w02:2026-10-02"
     weather_test(!forecast_valid(mismatched), "identity must match city and day")
@@ -63,10 +85,14 @@ fn weather_test_run(){
 
     // --- city catalog admission -------------------------------------------
     weather_test(city_valid({cid: "w01" name: "北京" lat: "39.9" lon: "116.4"}), "valid city")
+    weather_test(city_valid(weather_cities[0]), "numeric coordinates in generated catalog accepted")
+    weather_test(!city_valid({cid: "w01" name: "北京" lat: 91 lon: 116.4}), "out-of-range numeric coordinate refused")
+    weather_test(!city_valid({cid: "w01" name: "北京" lat: "39.9" lon: "181"}), "out-of-range textual coordinate refused")
     weather_test(!city_valid({cid: "北京" name: "北京" lat: "39.9" lon: "116.4"}), "non-identifier id refused")
     weather_test(!city_valid({cid: "w01" name: "北京" lat: "north" lon: "116.4"}), "non-numeric coordinate refused")
     weather_test(weather_tracked_valid(["w01" "w02"]), "known ids accepted")
     weather_test(!weather_tracked_valid(["w99"]) && !weather_tracked_valid("w01"), "unknown or non-array rejected")
+    weather_test(!weather_tracked_valid(["w01" "w01"]), "duplicate tracked city refused")
 
     // --- host admission ----------------------------------------------------
     weather_test(weather_request_allowed(weather_url(city)), "forecast host admitted")
@@ -99,17 +125,52 @@ fn weather_test_run(){
     weather_selection = "上海"
     weather_test(weather_rows().len() == 3 && weather_rows()[0].city_name == "上海", "selection filters to one city")
     weather_selection = ""
-
-    // --- event risk is a rule, not a judgement -----------------------------
-    weather_test(weather_event_risk({start: 1790755200}) == nil, "no risk without matching day")
-    let wet_city = test_clone(weather_rows()[0])
-    wet_city.day = weather_day_stamp(1790755200)
-    wet_city.precipitation_mm = 9.0
+    start_timeout(0.01, || weather_test_risks())
+}
+fn weather_test_risks(){
+    // --- explicit coverage and freshness, independent of the display filter ---
+    weather_test_reset()
+    let event = {start: 1790755200}
+    let checked_at = 1790755000
+    let risk = weather_event_risk_at(event, checked_at)
+    weather_test(!risk.known && risk.checked_cities == 0, "no tracked city is unknown, not safe")
+    weather_tracked = ["w01"]
+    risk = weather_event_risk_at(event, checked_at)
+    weather_test(!risk.known && risk.missing_cities == 1, "unavailable forecast is unknown")
+    let city = weather_city_by_name("北京")
+    weather_rows_by_city["w01"] = weather_parse(city, fixture_weather, checked_at - 60)
+    risk = weather_event_risk_at(event, checked_at)
+    weather_test(!risk.known && risk.missing_cities == 1, "event outside forecast coverage is unknown")
+    let wet_city = test_clone(weather_rows_by_city["w01"][0])
+    wet_city.day = weather_day_stamp(event.start)
+    wet_city.forecast_id = "w01:" + wet_city.day
+    wet_city.precipitation_mm = 4.9
     weather_rows_by_city["w01"] = [wet_city]
-    let risk = weather_event_risk({start: 1790755200})
-    weather_test(risk != nil && risk.wet_cities == 1, "rain on the event day is reported")
+    risk = weather_event_risk_at(event, checked_at)
+    weather_test(risk.known && risk.wet_cities == 0 && risk.severe == nil, "observed rainfall below 5mm is known without an alert")
+    wet_city.precipitation_mm = 5
+    risk = weather_event_risk_at(event, checked_at)
+    weather_test(risk.known && risk.wet_cities == 1, "5mm boundary produces a wet-city signal")
+    wet_city.precipitation_mm = 0 wet_city.code = 95 wet_city.condition = "雷暴"
+    risk = weather_event_risk_at(event, checked_at)
+    weather_test(risk.known && risk.wet_cities == 0 && risk.severe == "雷暴", "severe code triggers independently of rainfall")
+    wet_city.fetched_at = checked_at - weather_cache_ttl_seconds
+    risk = weather_event_risk_at(event, checked_at)
+    weather_test(!risk.known && risk.severe == nil && risk.missing_cities == 1, "exact TTL expiry cannot support a weather verdict")
+    wet_city.fetched_at = checked_at + 1
+    weather_test(!weather_event_risk_at(event, checked_at).known, "future retrieval time is not fresh evidence")
+    wet_city.fetched_at = checked_at - 60
+    wet_city.code = 3 wet_city.condition = "阴" wet_city.precipitation_mm = 9
+    weather_tracked = ["w01" "w02"]
+    weather_selection = "上海"
+    risk = weather_event_risk_at(event, checked_at)
+    weather_test(!risk.known && risk.checked_cities == 1 && risk.missing_cities == 1 && risk.wet_cities == 1, "partial coverage preserves observed risk and cannot claim complete knowledge")
+    weather_selection = ""
+    weather_test(weather_event_risk_at(event, checked_at).wet_cities == risk.wet_cities, "display selection cannot change event evidence")
     weather_test(weather_event_risk({}) == nil && weather_event_risk({start: "soon"}) == nil, "malformed event refused without crashing")
-
+    start_timeout(0.01, || weather_test_persistence())
+}
+fn weather_test_persistence(){
     // --- persistence -------------------------------------------------------
     for path in ["weather_selection_v1.json"] { if fs.exists(path) { fs.remove(path) } }
     weather_file = {path: "weather_selection_v1.json" writable: true recovered: false}
@@ -128,18 +189,101 @@ fn weather_test_run(){
     weather_tracked = ["w02"]
     weather_load()
     weather_test(weather_tracked.len() == 1 && weather_is_tracked("w02"), "unsupported stored ids ignored, prior selection kept")
+    let unknown_id = fs.read("weather_selection_v1.json")
+    weather_tracked = ["w01"]
+    weather_test(!weather_selection_write() && fs.read("weather_selection_v1.json") == unknown_id, "unsupported stored ids cannot be overwritten by defaults")
+    fs.write("weather_selection_v1.json", "{\"schema_version\":2,\"tracked\":[\"w03\"]}")
+    weather_load()
+    let newer_schema = fs.read("weather_selection_v1.json")
+    weather_test(!weather_file.writable && !weather_selection_write() && fs.read("weather_selection_v1.json") == newer_schema, "unknown storage version preserved across attempted save")
+    fs.write("weather_selection_v1.json", "")
+    weather_load()
+    weather_test(!weather_file.writable && !weather_selection_write() && fs.read("weather_selection_v1.json") == "", "unreadable or empty user record blocks overwrite")
     fs.write("weather_selection_v1.json", "not json")
     weather_load()
     weather_test(weather_warning != "", "corrupt selection warns instead of pretending to be saved")
+    weather_test(!weather_selection_write() && fs.read("weather_selection_v1.json") == "not json", "malformed JSON remains intact")
+    fs.write("weather_selection_v1.json", "{\"schema_version\":1,\"tracked\":[\"w02\"]}")
+    weather_load()
+    weather_tracked = ["w01"]
+    fs.write("weather_selection_v1.json", "{\"schema_version\":9,\"tracked\":[\"w03\"]}")
+    let changed_file = fs.read("weather_selection_v1.json")
+    weather_test(!weather_selection_write() && fs.read("weather_selection_v1.json") == changed_file, "write revalidates user record changed after load")
+    fs.write("weather_selection_v1.json", "{\"schema_version\":1,\"tracked\":[\"w02\"]}")
+    weather_load()
+    weather_tracked = ["w01"]
+    weather_test(weather_selection_write() && fs.read("weather_selection_v1.json.backup") == "{\"schema_version\":1,\"tracked\":[\"w02\"]}", "valid previous selection retained before replacement")
+    start_timeout(0.01, || weather_test_limits())
+}
+fn weather_test_limits(){
+    weather_test_reset()
+    for i in 13 { weather_select_at(weather_cities[i].name, 1000) }
+    weather_test(weather_tracked.len() == weather_max_cities && weather_test_requests.len() == weather_max_cities, "selection enforces the twelve-city request and persistence limit")
+    weather_test(!weather_track_at("w13", weather_generation, 1000) && !weather_track_at("w99", weather_generation, 1000), "tracking cannot add an excess or unknown city")
+    weather_test(weather_selection_document_valid({schema_version: 1 tracked: weather_tracked}), "every selected city list remains persistable")
+    fs.write("weather_selection_v1.json", "{\"schema_version\":1,\"tracked\":[\"w02\"]}")
+    weather_file.writable = true
+    weather_test(weather_selection_write(), "maximum-size valid selection saves")
+    weather_tracked = []
+    weather_load()
+    weather_test(weather_tracked.len() == weather_max_cities, "maximum-size saved selection restores")
+    let before = fs.read("weather_selection_v1.json")
+    weather_tracked = []
+    for i in 13 { weather_tracked.push(weather_cities[i].cid) }
+    weather_test(!weather_selection_write() && fs.read("weather_selection_v1.json") == before, "oversized in-memory selection cannot overwrite valid record")
+    weather_test(!weather_fetch_cities_at(weather_tracked, weather_generation, 1000), "oversized batch rejected before requests")
+    weather_tracked = ["w01" "w01"]
+    weather_test(!weather_selection_write() && fs.read("weather_selection_v1.json") == before, "duplicate selection cannot overwrite valid record")
+    start_timeout(0.01, || weather_test_refresh())
+}
+fn weather_test_refresh(){
+    weather_test_reset()
+    let checked_at = 1790928000
+    let city = weather_city_by_name("北京")
+    weather_tracked = ["w01"]
+    weather_accept(city, {success: true body: fixture_weather}, checked_at)
+    weather_fetch_city("w01", weather_generation)
+    weather_test_requests[0].callback({success: false error: "Fixture unavailable"})
+    weather_select_at("北京", checked_at)
+    weather_test(weather_test_requests.len() == 2, "failed refresh retries despite a still-usable older cache")
+    weather_test_reset()
+    weather_track_at("w01", weather_generation, checked_at)
+    weather_test_requests[0].callback({success: false error: "Fixture unavailable"})
+    weather_select_at("北京", checked_at)
+    weather_test(weather_test_requests.len() == 2 && weather_tracked.len() == 1, "reselecting a tracked city retries failed retrieval without adding a duplicate")
+    weather_test_requests[1].callback({success: false error: "Fixture unavailable"})
+    weather_accept(city, {success: true body: fixture_weather}, checked_at)
+    weather_fetch_cities_at(["w01"], weather_generation, checked_at + weather_cache_ttl_seconds - 1)
+    weather_test(weather_test_requests.len() == 2, "unexpired forecast avoids redundant network work")
+    weather_fetch_cities_at(["w01"], weather_generation, checked_at + weather_cache_ttl_seconds)
+    weather_test(weather_test_requests.len() == 3 && weather_pending == 1, "expired forecast starts a new request at the TTL boundary")
+    weather_fetch_cities_at(["w01"], weather_generation, checked_at + weather_cache_ttl_seconds)
+    weather_test(weather_test_requests.len() == 3, "in-flight city request is not duplicated")
+    let old_reply = weather_test_requests[2].callback
+    weather_cancel()
+    old_reply({success: true body: fixture_weather})
+    weather_test(weather_pending == 0 && weather_status_by_city["w01"].fetched_at == checked_at, "cancelled completion cannot overwrite retained forecast or pending count")
+    weather_refresh()
+    weather_test(weather_test_requests.len() == 4 && weather_pending == 1, "explicit refresh rechecks a tracked city even before cache expiry")
+    let reply = weather_test_requests[3].callback
+    reply({success: true body: fixture_weather})
+    reply({success: false error: "Duplicate fixture callback"})
+    weather_test(weather_pending == 0 && weather_status_by_city["w01"].state == "fresh", "duplicate callback cannot reverse accepted data or underflow pending count")
+    weather_fetch_city("w01", weather_generation)
+    let superseded = weather_test_requests[4].callback
+    weather_initialize()
+    superseded({success: true body: fixture_weather})
+    weather_test(weather_pending == 0 && weather_rows_by_city["w01"].len() == 0, "reinitialization invalidates previous request completions")
+    weather_test_finish()
+}
+fn weather_test_finish(){
+    let report = {passed: weather_test_passes failed: weather_test_failures stage: "complete" failure_detail: ""}
+    if weather_test_failures > 0 {
+        if fs.exists("weather-failures.txt") { report.failure_detail = fs.read("weather-failures.txt") }
+    }
+    fs.write("weather-report.json", report.to_json())
 }
 HostedView{full: View{Label{text: "CFAW weather runtime tests"}}}
 start_timeout(0.05, || {
     weather_test_run()
-    start_timeout(0.02, || {
-        let report = {passed: weather_test_passes failed: weather_test_failures stage: "complete"}
-        if weather_test_failures > 0 {
-            if fs.exists("weather-failures.txt") { report.failure_detail = fs.read("weather-failures.txt") }
-        }
-        fs.write("weather-report.json", report.to_json())
-    })
 })

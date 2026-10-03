@@ -46,6 +46,7 @@ fn test_run(){
     let invalid_feed = news_parse("<html>error</html>", source, 100)
     test_assert(invalid_feed == nil, "HTML response refused")
     test_assert(news_parse("{\"hits\":[]}", news_source("hn"), 100).len() == 0, "valid empty JSON feed accepted")
+    start_timeout(0.02, || {
     test_stage = "merge and interests"
     let other = test_clone(rows[0])
     other.source_id = "guardian"
@@ -59,6 +60,7 @@ fn test_run(){
     test_assert(interest_matches(rows[0], rules).len() == 1 && interest_matches(rows[1], rules).len() == 0, "keyword metacharacters treated literally")
     rules[0].enabled = false
     test_assert(interest_matches(rows[0], rules).len() == 0, "disabled rules ignored")
+    start_timeout(0.02, || {
     test_stage = "persistent records"
     test_reset_records()
     test_assert(records_toggle_bookmark(rows[0]) == "", "bookmark write succeeds")
@@ -75,6 +77,7 @@ fn test_run(){
     records_toggle_source("bbc")
     records_load()
     test_assert(!record_contains(enabled_source_ids, "bbc"), "source selection survives reload")
+    start_timeout(0.02, || {
     test_stage = "tracking changes"
     records_check_tracking(rows, user_interests, 100)
     test_assert(tracking_state.unread_ids.len() == 0, "first successful check establishes baseline")
@@ -87,6 +90,7 @@ fn test_run(){
     records_mark_read(new_row.news_id)
     records_load()
     test_assert(tracking_state.unread_ids.len() == 0 && record_contains(tracking_state.seen_ids, new_row.news_id), "read decision persists")
+    start_timeout(0.02, || {
     test_stage = "storage recovery"
     records_toggle_bookmark(rows[1])
     let damaged = "broken fixture record"
@@ -106,10 +110,12 @@ fn test_run(){
     fs.write("saved.json", "[{\"title\":\"broken fixture\"}]")
     records_load()
     test_assert(!bookmark_file.writable && fs.exists("saved.json") && !fs.exists(bookmark_file.path), "incomplete migration preserves original and refuses overwrite")
+    start_timeout(0.02, || {
     test_stage = "request boundaries"
     test_assert(news_request_allowed(news_source("bbc").url), "catalog HTTPS host allowed")
     test_assert(!news_request_allowed("https://evil.example/feed") && !news_request_allowed("http://feeds.bbci.co.uk/feed"), "unknown hosts and HTTP refused")
     test_assert(news_redirect_url(source.url, "/new") == "https://feeds.bbci.co.uk/new", "same-host redirect resolved")
+    start_timeout(0.02, || {
     test_stage = "refresh cancellation and callbacks"
     feed_load_cache()
     let requests = []
@@ -121,6 +127,7 @@ fn test_run(){
     let first = requests[0].callback
     first({success: true body: fixture_rss})
     first({success: true body: fixture_atom})
+    start_timeout(0.03, || {
     test_assert(updates == 1 && requests.len() == 4 && feed_task.completed == 1, "duplicate callback cannot complete a request twice")
     feed_cancel()
     let prior = feed_rows_by_source["bbc"].to_json()
@@ -130,12 +137,22 @@ fn test_run(){
     feed_refresh(["bbc"], || { updates = updates + 1 }, fn(count){ completions = completions + 1 }, request)
     requests[0].callback({success: false error: "fixture offline"})
     test_assert(feed_rows_by_source["bbc"].len() == 2 && feed_status_by_source["bbc"].state == "error", "failed source retains real cached rows and failure")
+    start_timeout(0.03, || {
     test_assert(completions == 1, "refresh completion delivered once")
     requests = []
     feed_refresh(["hn"], || {}, fn(count){ completions = completions + 1 }, request)
     requests[0].callback({success: true body: "{\"hits\":[]}"})
     test_assert(feed_rows_by_source["hn"].len() == 0 && feed_status_by_source["hn"].state == "fresh", "valid empty result distinct from failed request")
     test_stage = "complete"
+    start_timeout(0.02, || test_capacity_seed(0))
+    })
+    })
+    })
+    })
+    })
+    })
+    })
+    })
 }
 fn test_report(){ fs.write("runtime-report.json", {passed: test_passes.len() failed: test_failures.len() failures: test_failures stage: test_stage}.to_json()) }
 fn test_capacity_seed(index){
@@ -171,5 +188,4 @@ fn test_capacity_seed(index){
 HostedView{full: View{Label{text: "CFAW data runtime tests — synthetic fixtures"}}}
 start_timeout(0.05, || {
     test_run()
-    start_timeout(0.01, || test_capacity_seed(0))
 })

@@ -40,6 +40,7 @@ ORDER = [
     'src/frontend/pages/bookmarks.splash',
     'src/frontend/pages/schedule.splash',
     'src/frontend/pages/detail.splash',
+    'src/frontend/pages/results.splash',
     'src/frontend/pages/settings.splash',
     'src/frontend/app_view.splash',
     'src/app/startup.splash',
@@ -97,7 +98,7 @@ def cities_script(catalog):
             for city in catalog['cities']]
     ids = sorted(city['cid'] for city in catalog['cities'])
     endpoint = urlsplit(catalog['endpoint'])
-    if endpoint.scheme != 'https' or not endpoint.hostname:
+    if endpoint.scheme != 'https' or not endpoint.hostname or endpoint.username or endpoint.password:
         raise ValueError('Invalid forecast endpoint')
     return (
         'let weather_cities = [\n' + '\n'.join(rows) + '\n]\n'
@@ -110,6 +111,25 @@ def cities_script(catalog):
         'let weather_alert_precipitation = ' + value(float(catalog.get('alert_precipitation_mm', 5.0))) + '\n'
         'let weather_all_label = ' + value(catalog.get('all_label', '全部')) + '\n'
     )
+
+
+def requested_hosts(root=ROOT):
+    """Declared news and signal hosts that the bundle must admit."""
+    catalog = source_catalog(root)
+    hosts = {urlsplit(source['url']).hostname for source in catalog['sources']} | set(catalog.get('redirect_hosts', []))
+    cities = city_catalog(root)
+    cities_script(cities)  # Validate the configured endpoint before admitting it.
+    hosts.add(urlsplit(cities['endpoint']).hostname)
+    for module, name in (('holidays', 'holiday_hosts'), ('fx', 'fx_hosts')):
+        source = (root / f'src/data/ingestion/{module}.splash').read_text(encoding='utf-8')
+        declaration = re.search(r'\blet\s+' + name + r'\s*=\s*(\[[^\]]*\])', source)
+        if not declaration:
+            raise ValueError(f'Missing host declaration: {name}')
+        values = json.loads(declaration.group(1))
+        if not values or any(not isinstance(host, str) or not re.fullmatch(r'[a-z0-9.-]+', host) for host in values):
+            raise ValueError(f'Invalid host declaration: {name}')
+        hosts.update(values)
+    return hosts
 
 
 def assemble(root=ROOT, paths=None):
