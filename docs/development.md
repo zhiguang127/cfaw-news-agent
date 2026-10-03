@@ -98,7 +98,7 @@ Agent 的两个开发者可以分别侧重流程与宿主适配、提示词与�
 
 - **应用负责**关注、新闻证据、日程、提示词、结果核验和用户决策记录；Octos 承担 Agent 推理执行。
 - **宿主负责**模型配置、凭据、服务连接、运行时生命周期与工具审批。独立 Rinx 使用配套 Octos 可执行文件；OctoSense 模块模式使用 Shell 注入的 app-peer 服务，不给每个应用另起内核。
-- **版本成套固定**：Rinx `68afcf79`、`octosense-app-peers` `35d9d121`、Octos `a6ea8505`。完整提交与来源见 `dev-dependencies.lock.json` 的 `host_runtime_dependencies`；这些是宿主依赖，不是打入新闻应用 ZIP 的依赖。
+- **版本成套固定**：Rinx `3bedeadf`、`octosense-app-peers` `98666deb`、Octos `fe08d8e6`。完整提交与来源见 `dev-dependencies.lock.json` 的 `host_runtime_dependencies`；这些是宿主依赖，不是打入新闻应用 ZIP 的依赖。
 
 当前固定 Rinx 的接口如下（已核对宿主源码；开发者已反馈本应用的连通性测试成功，history 和超时中断仍未完成实测）：
 
@@ -123,20 +123,20 @@ Agent 的两个开发者可以分别侧重流程与宿主适配、提示词与�
 
 ### 1. 准备官方 Rinx
 
-目标宿主已改为[官方 hagency-org/Rinx](https://github.com/hagency-org/Rinx)，固定提交 `68afcf796d303aaf646eeb832d65c450a56c92b5`。本机已有的干净检出位于 `../demo-workspace/vendor/Rinx`；依赖记录不再指向个人 fork，也不再记录原定制宿主的二进制摘要。
+目标宿主已改为[官方 hagency-org/Rinx](https://github.com/hagency-org/Rinx)，固定提交 `3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9`。当前干净检出位于 `.dev/vendor/Rinx`，原共享目录保留不动。完整宿主、参考工具、配套内核和实际构建摘要见依赖锁。
 
-`dev-dependencies.lock.json` 只记录版本和路径，不自动下载、切换或编译宿主。源码提交与其 AppPolicy、Makepad、OctoScript-Makepad 依赖已核对；**此应用在干净官方宿主上的 UI 验收仍待完成**。原定制宿主及其未提交修改保留不动。
+`dev-dependencies.lock.json` 固定本次官方 main 的提交。执行 `python scripts/prepare_dev_dependencies.py` 创建缺失检出，Windows 编译使用 `scripts/build_windows_tools.ps1`；已有不同提交或修改不会自动切换。Rinx 与参考 App Hub 各自的运行时依赖分别核对，最新 Rinx 的实际 UI 重启验收本轮未执行。
 
 若已经安装官方 Rinx，可以直接启动，但应核对版本。若使用上述源码检出，从本项目根目录在单独终端执行：
 
 ```bash
-cd ../demo-workspace/vendor/Rinx
+cd .dev/vendor/Rinx
 cargo run --locked --release --features agent_chat
 ```
 
-该命令按照[固定版本的官方 README](https://github.com/hagency-org/Rinx/blob/68afcf796d303aaf646eeb832d65c450a56c92b5/README.md#build-and-run)的构建方式启动，增加 `--release` 用于演示；首次运行会编译和下载依赖。当前开发机已发现配套的 `target/release/rinx` 与 `target/release/octos`；构建完成后可直接运行 `./target/release/rinx`，其他机器仍需自行准备。Rust 工具链由宿主的 `rust-toolchain.toml` 固定为 `1.98.0`。
+该命令按照[固定版本的官方 README](https://github.com/hagency-org/Rinx/blob/3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9/README.md#build-and-run)的构建方式启动，增加 `--release` 用于演示；首次运行会编译和下载依赖。构建并打包配套内核后可直接运行 `./target/release/rinx`；Windows 建议使用项目启动脚本以启用临时 SDF 保护。Rust 工具链由宿主的 `rust-toolchain.toml` 固定为 `1.98.0`。
 
-Linux 需要图形会话和原生构建依赖。Debian/Ubuntu 可按照[固定版本的 Linux 构建说明](https://github.com/hagency-org/Rinx/blob/68afcf796d303aaf646eeb832d65c450a56c92b5/docs/robrix-upstream-readme.md#building--running-robrix-on-desktop)准备：
+Linux 需要图形会话和原生构建依赖。Debian/Ubuntu 可按照[固定版本的 Linux 构建说明](https://github.com/hagency-org/Rinx/blob/3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9/docs/robrix-upstream-readme.md#building--running-robrix-on-desktop)准备：
 
 ```bash
 sudo apt-get update
@@ -147,7 +147,7 @@ sudo apt-get install libssl-dev cmake llvm clang libclang-dev libsqlite3-dev pkg
 
 ### 准备独立 Rinx 的 Octos
 
-当前新闻浏览无需模型配置。要准备独立 Rinx 的本地 Agent 运行环境，在 Rinx 检出目录执行以下命令（参考其 [Octos 打包说明](https://github.com/hagency-org/Rinx/blob/68afcf796d303aaf646eeb832d65c450a56c92b5/packaging/README-octos.md)）：
+当前新闻浏览无需模型配置。要准备独立 Rinx 的本地 Agent 运行环境，在 Rinx 检出目录执行以下命令（参考其 [Octos 打包说明](https://github.com/hagency-org/Rinx/blob/3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9/packaging/README-octos.md)）：
 
 ```bash
 cargo build --locked --release --features agent_chat
@@ -161,7 +161,7 @@ cargo run --locked --release --features agent_chat
 
 ### Windows 本地运行
 
-Windows 环境与固定版本构建步骤见 [Windows 开发说明](windows-development.md)。已准备的工具放在项目相邻的 `../demo-workspace/vendor/` 中，与依赖锁中的相对路径一致；在本项目根目录可直接执行：
+Windows 环境与固定版本构建步骤见 [Windows 开发说明](windows-development.md)。已准备的工具放在项目内隔离的 `.dev/vendor/` 中，与依赖锁中的相对路径一致；在本项目根目录可直接执行：
 
 ```powershell
 # 启动真实新闻界面；无需 Matrix 或模型密钥
@@ -171,9 +171,9 @@ powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1
 powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1 -Mode Rinx
 ```
 
-脚本核对宿主检出的固定提交、重新打包，再打开可交互窗口；不下载或编译工具。参考宿主的数据保存在 `.local-state/windows-preview/`，Rinx 的数据和缓存默认保存在 `.local-state/rinx/`；已设置 `RINX_DATA_DIR` 或 `ROBRIX_DATA_DIR` 时沿用该配置。直接运行 `rinx.exe` 会使用宿主自身的默认数据目录，建议通过脚本启动以沿用迁移后的登录状态。使用其他开发依赖目录时传入 `-DevRoot`。
+脚本核对固定提交、重新打包，再打开可交互窗口。Windows Rinx 默认将已编译的同一 App 重新链接为 SDF 字体模式，首次需要 Rust；不修改上游源码。用 `-RinxTextRasterizer Default` 可比较原始宿主。参考宿主的数据保存在 `.local-state/windows-preview/`，Rinx 的数据和缓存默认保存在 `.local-state/rinx/`；已设置 `RINX_DATA_DIR` 或 `ROBRIX_DATA_DIR` 时沿用该配置。直接运行 `rinx.exe` 会使用宿主自身的默认数据目录，建议通过脚本启动以沿用迁移后的登录状态。使用其他开发依赖目录时传入 `-DevRoot`。
 
-固定宿主限制每次脚本回调为 64 ms。缓存只恢复启用源；列表按最多 64 条/8 ms 分批，app 合并同时到达的更新，避免反复取消全量排序。启动只更新缺失或达到 5 分钟的来源，手动刷新仍覆盖全部启用源。关键词匹配器复用，页面每次渲染只筛选一次。Windows 宿主提供 `User-Agent`，应用不能自行覆盖。参考宿主依赖与 Rinx 的依赖不同；运行与验证范围见 [验收记录](acceptance.md)。
+固定宿主限制每次脚本回调为 64 ms。缓存只恢复启用源；列表按最多 64 条/8 ms 分批，app 合并同时到达的更新，避免反复取消全量排序。启动只更新缺失或达到 5 分钟的来源，手动刷新仍覆盖全部启用源。关键词匹配器复用，页面每次渲染只筛选一次。关注状态检查也分批执行，保持 busy 至保存完成；列表渲染合并到独立定时器，在新列表分配前执行当前脚本 VM 的回收，以保护 32 MiB 堆上限。该保护和 SDF 均为临时宿主兼容措施，移除条件见 [白屏调查](../reports/FAILURE_ANALYSIS.md)。Windows 宿主提供 `User-Agent`，应用不能自行覆盖。参考宿主依赖与 Rinx 的依赖不同；运行与验证范围见 [验收记录](acceptance.md)。
 
 ### 2. 打包当前应用
 

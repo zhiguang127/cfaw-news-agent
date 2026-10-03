@@ -3,37 +3,65 @@
   "repositories": [
     {
       "name": "Rinx",
-      "commit": "68afcf796d303aaf646eeb832d65c450a56c92b5",
+      "commit": "3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9",
       "origin": "https://github.com/hagency-org/Rinx.git",
       "dirty": false,
       "purpose": "target host",
-      "relative_checkout": "../demo-workspace/vendor/Rinx"
+      "relative_checkout": ".dev/vendor/Rinx"
     },
     {
       "name": "OctoSense-App-Hub",
-      "commit": "a72989ff2e4d51562693d05210b68e11f3bf3fcd",
-      "origin": "git@github.com:OctoSense-org/OctoSense-App-Hub.git",
+      "commit": "2bcb8985bc1d2c8856f2a61e65baa7ed443ae817",
+      "origin": "https://github.com/OctoSense-org/OctoSense-App-Hub.git",
       "dirty": false,
-      "purpose": "local bundle digest tool (hub stamp)",
-      "relative_checkout": "../demo-workspace/vendor/OctoSense-App-Hub"
+      "purpose": "bundle tooling and reference runtime",
+      "relative_checkout": ".dev/vendor/OctoSense-App-Hub"
+    },
+    {
+      "name": "makepad",
+      "commit": "c155f61d0e1600d2ec474209374444a38a09a470",
+      "origin": "https://github.com/OctoSense-org/makepad.git",
+      "dirty": false,
+      "purpose": "App Hub sibling runtime dependency",
+      "relative_checkout": ".dev/vendor/makepad"
+    },
+    {
+      "name": "octoscript-makepad",
+      "commit": "2cc5ef37d7d6a3d2992673389ce74488f7bb2d87",
+      "origin": "https://github.com/OctoSense-org/Octoscript-Makepad.git",
+      "dirty": false,
+      "purpose": "App Hub sibling runtime dependency",
+      "relative_checkout": ".dev/vendor/octoscript-makepad"
+    },
+    {
+      "name": "octoscript",
+      "commit": "f67cb843dddb045a75a13b7d166994fc13acd17c",
+      "origin": "https://github.com/OctoSense-org/Octoscript.git",
+      "dirty": false,
+      "purpose": "App Hub sibling runtime dependency",
+      "relative_checkout": ".dev/vendor/octoscript"
     }
   ],
-  "note": "Version record only; never updates shared checkouts.",
+  "note": "Checked official main branches on 2026-10-03. Isolated project checkouts; shared vendor trees remain unchanged. Build with each upstream Cargo.lock, never cargo update all transitive crates independently.",
   "target_pins": {
-    "app_policy": "e8601b80ce104db2e48208094714bdcffdce6b5a",
-    "makepad": "6cf03859630761f5cb99ce7fcdfd8c30475d9ab8",
-    "octoscript_makepad": "6881fb6c3c3220e407633b0ba5211c3d42c7e625"
+    "makepad": "1f3b1dedfbb81424eb8dbf69e5e2c634fa73dc54",
+    "octoscript_makepad": "cb66de073469063abeb2a5ab2a2bbf3cdb365745",
+    "octoscript": "dbd48cfb799551c11e30970c393777d29644a605",
+    "app_contract": "1.0.0"
   },
   "toolchain": {
-    "python": "3.14.4",
-    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
-    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
-    "rinx_rust_channel": "1.98.0"
+    "python_tested": "Python 3.12.8",
+    "rinx_rust_channel": "1.98.0",
+    "rustc_tested": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
   },
   "binary_sha256": {
-    "hub": "b2a450aa6f34ddd123e1df8a4402910b29a0d36cf87ba4a606488f7eac2f37d2"
+    "rinx": "c61bcffa5b53031f3c5dcb0f9ff1334b195c94b5b8eb9c32a98f1259bdcf227a",
+    "octos": "f82d1b5defc10527ca67d49cd4dbbb1f40ee9dcd9ff731627f9dd5d4c2caad0b",
+    "hub": "57fe2033f8960dfef3f16fac2f3673896565560b17726268c7e584d0dde5b7ad",
+    "card_host": "a54cf2cd1dd9c5bf3db8e60324995dc6409b33fb3dc5efd630ffdba54f8eb61e",
+    "rinx_sdf": "c67eb957e5ef4cfde24f5aa2bee29a5b41182ee3ce9e5267ad4f19354ac8bc42"
   },
-  "target_worktree_note": "Official Rinx checkout is clean at the recorded commit. Source and dependency pins verified; this app has not yet passed UI acceptance on a clean official build. No official Rinx binary digest is recorded. Historical acceptance on a modified local host does not apply to this target.",
+  "target_worktree_note": "Latest official Rinx main at the recorded commit; clean source. Windows host, matching Octos, hub/card-host and project SDF entry built successfully. The SDF entry uses this compiled App. New Rinx UI restart/inference acceptance was not run at the user request; older white-screen evidence retains its original pins.",
   "application_source": {
     "repository": "https://github.com/OctoSense-org/OctoSense.git",
     "commit": "d1596d739e187c689ada4b59093ca8086c23bbbe",
@@ -46,7 +74,7 @@
     "app_peers": {
       "package": "octosense-app-peers",
       "origin": "https://github.com/OctoSense-org/OctoSense.git",
-      "commit": "35d9d1218e1b8b165977a4f019fdea9f2675dc90",
+      "commit": "98666debcf466a6322ba2f1cc5150ad7ffe5890c",
       "verified_against": [
         "Cargo.toml",
         "Cargo.lock"
@@ -56,7 +84,7 @@
       "package": "octos-cli",
       "version": "2.0.3-rc.13",
       "origin": "https://github.com/octos-org/octos.git",
-      "commit": "a6ea8505170735f191a12bb47629a6728415d417",
+      "commit": "fe08d8e6b3b32e672b0f956a2b692c3c8205b167",
       "default_features": false,
       "features": [
         "api",
@@ -69,6 +97,19 @@
       ],
       "desktop_packaging_script": "tools/package-octos.py"
     },
-    "note": "Paths are relative to the recorded Rinx checkout. Cargo and the host packaging helper manage these sources; no separate app-owned kernel checkout is required. Pins verified from source only; runtime build and inference remain unverified."
-  }
+    "note": "Standalone Rinx runtime pins are derived from its Cargo.lock and packaging/octos.lock.json, and move together. Latest App Hub uses a separate reference-runtime graph; neither graph overrides the other."
+  },
+  "reference_pins": {
+    "makepad": "c155f61d0e1600d2ec474209374444a38a09a470",
+    "octoscript-makepad": "2cc5ef37d7d6a3d2992673389ce74488f7bb2d87",
+    "octoscript": "f67cb843dddb045a75a13b7d166994fc13acd17c"
+  },
+  "upstream_check": {
+    "checked_on": "2026-10-03",
+    "branch": "main",
+    "OctoSense": "4a541777298eb4f85d9ac8ec2b83fab9e12ce909",
+    "octoscript_makepad_runtime_requirement": "5991dfae9344589e732b2605b530f788e8bbcd11",
+    "note": "The current Octoscript main only repins Makepad since the required L0 revision; the reference graph resolves it to the latest sibling checkout. application_source records historical attribution, not a live executable dependency."
+  },
+  "built_on": "2026-10-04"
 }

@@ -21,6 +21,8 @@ let app_feed_build_task = nil
 let app_feed_build_counter = 0
 let refresh_successes_seen = 0
 let display_rows = []
+let feed_render_pending = false
+let feed_reset_scroll_pending = false
 let schedule_edit_id = nil
 let schedule_edit_version = nil
 let schedule_title_draft = ""
@@ -135,7 +137,27 @@ fn sync_status(){
     render_analysis_controls()
 }
 fn render_feed(){
+    if feed_render_pending { return }
+    feed_render_pending = true
+    start_timeout(0.01, || {
+        // The host's growth-only GC can exhaust a bounded isolate before its
+        // next collection. Collect between events, before building a new list.
+        // Remove when host GC accounts for heap pressure; keep the 32 MiB cap.
+        mod.gc.run()
+        feed_render_pending = false
+        render_feed_now()
+    })
+}
+fn render_feed_now(){
     display_rows = visible_rows()
+    if feed_reset_scroll_pending {
+        feed_reset_scroll_pending = false
+        ui.list_container.render()
+        // Container replacement is applied after this callback. Render its
+        // new child in the next event, through the same GC-protected path.
+        render_feed()
+        return
+    }
     ui.list.render()
     let empty = display_rows.len() == 0
     ui.list_container.set_visible(!empty)
@@ -316,8 +338,8 @@ fn return_feed_top(){
     last_return_top_at = time_now()
     // The pinned script UI has no scroll-position method. Recreate only the
     // scroll child for this explicit action; ordinary updates retain it.
-    ui.list_container.render()
-    start_timeout(0.01, || ui.list.render())
+    feed_reset_scroll_pending = true
+    render_feed()
 }
 fn rebuild_feed(complete){
     let source_key = enabled_source_ids.to_json()
@@ -361,6 +383,7 @@ fn refresh_sources(ids){
     if ids.len() == 0 { return }
     busy = true
     refresh_successes_seen = 0
+    let generation = feed_generation + 1
     feed_refresh(ids, || {
         if feed_task.successes > refresh_successes_seen {
             refresh_successes_seen = feed_task.successes
@@ -370,12 +393,9 @@ fn refresh_sources(ids){
     }, fn(successes){
         if successes == 0 { busy = false render_feed() if detail_kind == "settings" { ui.source_list.render() } return }
         rebuild_feed(|| {
-            busy = false
-            if successes > 0 {
-                let error = records_check_tracking(app_feed_rows, user_interests, time_now())
+            records_check_tracking(app_feed_rows, user_interests, time_now(), || generation == feed_generation, fn(error){
+                busy = false
                 if error != "" { notice(error) }
-            }
-            start_timeout(0.01, || {
                 render_feed()
                 if detail_kind == "settings" { ui.source_list.render() }
             })

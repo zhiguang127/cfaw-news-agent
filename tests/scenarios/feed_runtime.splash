@@ -13,7 +13,7 @@ fn feed_test_report(){
 }
 fn feed_test_wait_ready(deadline, complete){
     if time_now() > deadline { feed_test_assert(false, "refresh/list build finished before deadline") feed_test_stage = "complete" feed_test_report() return }
-    if busy || app_feed_build_task != nil { start_timeout(0.02, || feed_test_wait_ready(deadline, complete)) return }
+    if busy || app_feed_build_task != nil || feed_render_pending { start_timeout(0.02, || feed_test_wait_ready(deadline, complete)) return }
     complete()
 }
 fn feed_test_run(){
@@ -73,10 +73,42 @@ fn feed_test_failure_and_cancel(){
             enabled_source_ids = ["guardian"]
             rebuild_feed(|| {
                 feed_test_assert(!obsolete_called && app_feed_rows.len() == 1 && app_feed_rows[0].source_id == "guardian", "changed source selection rejects an older list completion")
+                feed_test_capacity_refresh(0)
+            })
+        })
+    })
+}
+fn feed_test_capacity_refresh(round){
+    feed_test_stage = "full capacity refresh " + round
+    if round == 0 {
+        enabled_source_ids = []
+        for source in news_sources { if source.enabled { enabled_source_ids.push(source.id) } }
+        tracking_state = {schema_version: 1 last_checked_at: 0 seen_ids: [] unread_ids: []}
+        tracking_unread_index = {}
+    }
+    news_http_request = fn(url, redirects, callback){
+        let source = nil
+        for s in news_sources { if s.url == url { source = s } }
+        // Input bodies are prepared by the Python harness; generating a large
+        // RSS body with script concatenation would test the fixture's heap use.
+        let body = fixture_capacity_rss[source.id]
+        if source.kind == "hn" { body = fixture_capacity_hn[source.id] }
+        start_timeout(0.03, || callback({success: true body: body}))
+    }
+    refresh_sources(enabled_source_ids)
+    feed_test_wait_ready(time_now() + 12, || {
+        feed_test_assert(app_feed_rows.len() == news_config.max_feed_items && display_rows.len() == app_feed_rows.len(), "full capacity refresh publishes every retained news row")
+        feed_test_assert(!busy && tracking_state.last_checked_at > 0 && tracking_state.unread_ids.len() == 0, "full capacity baseline/repeated refresh finishes tracking without unread duplicates")
+        if round < 11 { start_timeout(0.02, || feed_test_capacity_refresh(round + 1)) }
+        else {
+            let saved = tracking_state.to_json()
+            records_check_tracking(app_feed_rows, user_interests, time_now(), || false, fn(error){ feed_test_assert(false, "cancelled tracking completion is suppressed") })
+            start_timeout(0.05, || {
+                feed_test_assert(tracking_state.to_json() == saved, "cancelled full capacity check leaves tracking untouched")
                 feed_test_stage = "complete"
                 feed_test_report()
             })
-        })
+        }
     })
 }
 start_timeout(0.05, || feed_test_run())

@@ -450,6 +450,8 @@ let user_interests = []
 let enabled_source_ids = []
 let tracking_state = {schema_version: 1 last_checked_at: 0 seen_ids: [] unread_ids: []}
 let tracking_unread_index = {}
+let tracking_revision = 0
+let tracking_check_id = 0
 fn records_index_unread(){
     tracking_unread_index = {}
     for id in tracking_state.unread_ids { tracking_unread_index[id] = true }
@@ -535,6 +537,7 @@ fn records_write(file, value, kind){
     error
 }
 fn records_load(){
+    tracking_revision = tracking_revision + 1
     user_bookmarks = []
     user_interests = []
     enabled_source_ids = []
@@ -634,32 +637,77 @@ fn records_toggle_source(id){
     else { enabled_source_ids.push(id) }
     records_save_interests()
 }
-fn records_check_tracking(rows, interests, checked_at){
-    let baseline = tracking_state.last_checked_at == 0
-    let seen = tracking_state.seen_ids
-    let unread = tracking_state.unread_ids
-    let seen_index = {}
-    let unread_index = {}
-    for id in seen { seen_index[id] = true }
-    for id in unread { unread_index[id] = true }
-    for row in rows {
-        let new = seen_index[row.news_id] != true
-        if new {
-            seen.push(row.news_id)
-            seen_index[row.news_id] = true
-            if !baseline && interest_matches(row, interests).len() > 0 && unread_index[row.news_id] != true { unread.push(row.news_id) unread_index[row.news_id] = true }
-        }
+fn records_check_tracking(rows, interests, checked_at, current, complete){
+    tracking_check_id = tracking_check_id + 1
+    let work = {id: tracking_check_id revision: tracking_revision rows: rows interests: interests checked_at: checked_at
+        current: current complete: complete previous: tracking_state baseline: tracking_state.last_checked_at == 0
+        phase: "seen" index: 0 seen: [] unread: [] seen_index: {} unread_index: {}
+        retained_seen: [] retained_unread: [] retained_index: {} retained_unread_index: {}}
+    // Copy and match on fresh slices; publish only a complete, current snapshot.
+    start_timeout(0.01, || records_tracking_step(work))
+}
+fn records_tracking_step(work){
+    if work.id != tracking_check_id || !work.current() { return }
+    if work.revision != tracking_revision {
+        // Reading a story while checking must not be undone by an older snapshot.
+        records_check_tracking(work.rows, work.interests, work.checked_at, work.current, work.complete)
+        return
     }
-    while seen.len() > news_config.max_seen_ids { seen.remove(0) }
-    seen_index = {}
-    for id in seen { seen_index[id] = true }
-    unread.retain(|id| seen_index[id] == true)
-    tracking_state.last_checked_at = checked_at
-    records_index_unread()
-    records_save_tracking()
+    let processed = 0
+    let started_at = time_now()
+    while processed < news_config.work_batch_items && time_now() - started_at < news_config.work_slice_seconds {
+        if work.phase == "seen" {
+            if work.index >= work.previous.seen_ids.len() { work.phase = "unread" work.index = 0 continue }
+            let id = work.previous.seen_ids[work.index]
+            work.seen.push(id) work.seen_index[id] = true
+        } else if work.phase == "unread" {
+            if work.index >= work.previous.unread_ids.len() { work.phase = "news" work.index = 0 continue }
+            let id = work.previous.unread_ids[work.index]
+            work.unread.push(id) work.unread_index[id] = true
+        } else if work.phase == "news" {
+            if work.index >= work.rows.len() {
+                work.phase = "retain_seen" work.index = max(0, work.seen.len() - news_config.max_seen_ids) continue
+            }
+            let row = work.rows[work.index]
+            if work.seen_index[row.news_id] != true {
+                work.seen.push(row.news_id) work.seen_index[row.news_id] = true
+                if !work.baseline {
+                    if work.unread_index[row.news_id] != true && interest_matches(row, work.interests).len() > 0 {
+                        work.unread.push(row.news_id) work.unread_index[row.news_id] = true
+                    }
+                }
+            }
+        } else if work.phase == "retain_seen" {
+            if work.index >= work.seen.len() { work.phase = "retain_unread" work.index = 0 continue }
+            let id = work.seen[work.index]
+            work.retained_seen.push(id) work.retained_index[id] = true
+        } else if work.phase == "retain_unread" {
+            if work.index >= work.unread.len() {
+                start_timeout(0.01, || records_tracking_commit(work))
+                return
+            }
+            let id = work.unread[work.index]
+            if work.retained_index[id] == true {
+                work.retained_unread.push(id) work.retained_unread_index[id] = true
+            }
+        }
+        work.index = work.index + 1 processed = processed + 1
+    }
+    start_timeout(0.01, || records_tracking_step(work))
+}
+fn records_tracking_commit(work){
+    if work.id != tracking_check_id || !work.current() { return }
+    if work.revision != tracking_revision { records_tracking_step(work) return }
+    tracking_state = {schema_version: 1 last_checked_at: work.checked_at seen_ids: work.retained_seen unread_ids: work.retained_unread}
+    tracking_unread_index = work.retained_unread_index
+    tracking_revision = tracking_revision + 1
+    let error = records_save_tracking()
+    // Saving/validating a full history must not share the UI completion's budget.
+    start_timeout(0.01, || { if work.id == tracking_check_id && work.current() { work.complete(error) } })
 }
 fn records_mark_read(id){
     if !record_contains(tracking_state.unread_ids, id) { return "" }
+    tracking_revision = tracking_revision + 1
     tracking_state.unread_ids.retain(|value| value != id)
     tracking_unread_index[id] = false
     records_save_tracking()
@@ -3116,6 +3164,8 @@ let app_feed_build_task = nil
 let app_feed_build_counter = 0
 let refresh_successes_seen = 0
 let display_rows = []
+let feed_render_pending = false
+let feed_reset_scroll_pending = false
 let schedule_edit_id = nil
 let schedule_edit_version = nil
 let schedule_title_draft = ""
@@ -3230,7 +3280,27 @@ fn sync_status(){
     render_analysis_controls()
 }
 fn render_feed(){
+    if feed_render_pending { return }
+    feed_render_pending = true
+    start_timeout(0.01, || {
+        // The host's growth-only GC can exhaust a bounded isolate before its
+        // next collection. Collect between events, before building a new list.
+        // Remove when host GC accounts for heap pressure; keep the 32 MiB cap.
+        mod.gc.run()
+        feed_render_pending = false
+        render_feed_now()
+    })
+}
+fn render_feed_now(){
     display_rows = visible_rows()
+    if feed_reset_scroll_pending {
+        feed_reset_scroll_pending = false
+        ui.list_container.render()
+        // Container replacement is applied after this callback. Render its
+        // new child in the next event, through the same GC-protected path.
+        render_feed()
+        return
+    }
     ui.list.render()
     let empty = display_rows.len() == 0
     ui.list_container.set_visible(!empty)
@@ -3411,8 +3481,8 @@ fn return_feed_top(){
     last_return_top_at = time_now()
     // The pinned script UI has no scroll-position method. Recreate only the
     // scroll child for this explicit action; ordinary updates retain it.
-    ui.list_container.render()
-    start_timeout(0.01, || ui.list.render())
+    feed_reset_scroll_pending = true
+    render_feed()
 }
 fn rebuild_feed(complete){
     let source_key = enabled_source_ids.to_json()
@@ -3456,6 +3526,7 @@ fn refresh_sources(ids){
     if ids.len() == 0 { return }
     busy = true
     refresh_successes_seen = 0
+    let generation = feed_generation + 1
     feed_refresh(ids, || {
         if feed_task.successes > refresh_successes_seen {
             refresh_successes_seen = feed_task.successes
@@ -3465,12 +3536,9 @@ fn refresh_sources(ids){
     }, fn(successes){
         if successes == 0 { busy = false render_feed() if detail_kind == "settings" { ui.source_list.render() } return }
         rebuild_feed(|| {
-            busy = false
-            if successes > 0 {
-                let error = records_check_tracking(app_feed_rows, user_interests, time_now())
+            records_check_tracking(app_feed_rows, user_interests, time_now(), || generation == feed_generation, fn(error){
+                busy = false
                 if error != "" { notice(error) }
-            }
-            start_timeout(0.01, || {
                 render_feed()
                 if detail_kind == "settings" { ui.source_list.render() }
             })

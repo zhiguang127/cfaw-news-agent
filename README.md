@@ -17,13 +17,15 @@
 
 ## 本地运行
 
-先按 [Windows 开发说明](docs/windows-development.md) 准备固定宿主、配套 Octos、打包工具和资源。已有环境时，在项目根目录执行：
+先按 [Windows 开发说明](docs/windows-development.md) 准备锁定的最新宿主、配套 Octos、打包工具和资源。本轮依赖默认放在项目 `.dev/vendor/`；旧共享检出保留。已有环境时，在项目根目录执行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1 -Mode Rinx
 ```
 
 在 Rinx 的 **Mini apps → Import an app** 选择本项目 `bundle/`，执行 **Review bundle → Run**。只浏览新闻无需模型；分析功能需在 Rinx 配置助手。修改运行代码后退出旧应用并重新导入，启动脚本会刷新未签名包。Linux 运行、模型配置和故障处理见 [开发与运行说明](docs/development.md)。
+
+Windows 启动默认为同一 Rinx App 启用临时 SDF 字体模式，以避开本机大量真实标题触发的整窗白屏；首次启动会链接宿主入口。新闻列表在重建前回收临时脚本对象，保留 32 MiB 堆上限。对照、已验证范围和上游 issue 草稿见 [调查报告](reports/FAILURE_ANALYSIS.md)；新依赖上的重启与长期显示仍待验收。
 
 ## 开发与验证
 

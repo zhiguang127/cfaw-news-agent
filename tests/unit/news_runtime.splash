@@ -79,13 +79,13 @@ fn test_run(){
     test_assert(!record_contains(enabled_source_ids, "bbc"), "source selection survives reload")
     start_timeout(0.02, || {
     test_stage = "tracking changes"
-    records_check_tracking(rows, user_interests, 100)
+    records_check_tracking(rows, user_interests, 100, || true, fn(error){
     test_assert(tracking_state.unread_ids.len() == 0, "first successful check establishes baseline")
     let new_row = test_clone(rows[0])
     new_row.news_id = "https://example.org/new"
     new_row.source_url = new_row.news_id
-    records_check_tracking([new_row], user_interests, 101)
-    records_check_tracking([new_row], user_interests, 102)
+    records_check_tracking([new_row], user_interests, 101, || true, fn(error){
+    records_check_tracking([new_row], user_interests, 102, || true, fn(error){
     test_assert(tracking_state.unread_ids.len() == 1, "new matching news marked once across repeated checks")
     records_mark_read(new_row.news_id)
     records_load()
@@ -156,6 +156,9 @@ fn test_run(){
     })
     })
     })
+    })
+    })
+    })
 }
 fn test_report(){ fs.write("runtime-report.json", {passed: test_passes.len() failed: test_failures.len() failures: test_failures stage: test_stage}.to_json()) }
 fn test_simultaneous_completion(){
@@ -186,8 +189,9 @@ fn test_capacity_seed(index){
             test_assert(seeded >= news_config.max_feed_items, "fixture seeds more rows than the feed cap")
             test_assert(rows.len() == news_config.max_feed_items && rows[0].published_at == newest && rows[news_config.max_feed_items - 1].published_at == oldest_kept, "every enabled source merges and sorts within runtime budgets")
             test_assert(test_stale_builds == 0, "superseded asynchronous list build ignored")
-            test_stage = "complete"
-            test_report()
+            tracking_state = {schema_version: 1 last_checked_at: 1 seen_ids: [] unread_ids: []}
+            tracking_unread_index = {}
+            test_tracking_seed(rows, 0)
         })
         return
     }
@@ -200,6 +204,24 @@ fn test_capacity_seed(index){
     }
     feed_rows_by_source[source.id] = rows
     start_timeout(0.01, || test_capacity_seed(index + 1))
+}
+fn test_tracking_seed(rows, index){
+    test_stage = "bounded tracking capacity"
+    let end = min(index + news_config.work_batch_items, news_config.max_seen_ids)
+    while index < end { tracking_state.seen_ids.push("https://example.org/history/" + index) index = index + 1 }
+    if index < news_config.max_seen_ids { start_timeout(0.01, || test_tracking_seed(rows, index)) return }
+    let interests = [{interest_id: "keyword:Synthetic" kind: "keyword" value: "Synthetic" enabled: true created_at: 1}]
+    records_check_tracking(rows, interests, 200, || true, fn(error){
+        test_assert(error == "" && tracking_state.seen_ids.len() == news_config.max_seen_ids, "full tracking history is pruned and persisted within runtime budgets")
+        test_assert(tracking_state.unread_ids.len() == rows.len() && tracking_state.seen_ids[0] == "https://example.org/history/" + rows.len(), "new matching capacity rows become unread and only oldest IDs are evicted")
+        let read_id = rows[0].news_id
+        records_check_tracking(rows, interests, 201, || true, fn(error){
+            test_assert(!records_is_unread(read_id) && tracking_state.unread_ids.len() == rows.len() - 1, "reading during a batched check survives its completion")
+            test_stage = "complete"
+            test_report()
+        })
+        start_timeout(0.02, || records_mark_read(read_id))
+    })
 }
 HostedView{full: View{Label{text: "CFAW data runtime tests — synthetic fixtures"}}}
 start_timeout(0.05, || {

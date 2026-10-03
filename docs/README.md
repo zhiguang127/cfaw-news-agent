@@ -16,5 +16,6 @@
 | [Fixture 预期规则](fixture-expectations.md) | 固定样例的 expected 字段与测试语义 |
 | [共享契约](../src/contracts/analysis.md) | 生产方和消费方共同使用的输入、结果与动作结构 |
 | [历史归档](archive/README.md) | 日期审查、旧验证、原始计划；保留依据，不指导当前开发 |
+| [白屏调查](../reports/FAILURE_ANALYSIS.md) | 本机故障对照、临时宿主保护和复现证据；当前验证状态仍以验收记录为准 |
 
 更新功能时同步相关契约、调用方和验收记录。改变启动方式时更新对应运行说明。旧报告不追写成最新状态，也不在 README 为每次开发追加一份审查。

@@ -1,7 +1,7 @@
 param(
     [ValidateSet('Preview', 'Rinx')]
     [string]$Mode = 'Preview',
-    [string]$DevRoot = (Join-Path (Split-Path -Parent $PSScriptRoot) '../demo-workspace/vendor')
+    [string]$DevRoot = (Join-Path (Split-Path -Parent $PSScriptRoot) '.dev/vendor')
 )
 
 $ErrorActionPreference = 'Stop'

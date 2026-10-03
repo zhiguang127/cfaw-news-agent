@@ -8,6 +8,7 @@ import socket
 import subprocess
 import time
 from urllib.request import urlopen
+from urllib.parse import urlencode
 from uuid import uuid4
 from assemble import ROOT, ORDER, assemble
 
@@ -36,11 +37,80 @@ def collect_reports(report_paths):
     return report
 
 
+def inspect_feed_ui(work, port):
+    """Exercise the full-capacity fixture feed through native widget events."""
+    def get(route, **params):
+        query = '?' + urlencode(params) if params else ''
+        with urlopen(f'http://127.0.0.1:{port}{route}{query}', timeout=5) as response:
+            return response.read()
+
+    def snapshot(label):
+        data = get('/snap')
+        (work / (label + '.json')).write_bytes(data)
+        (work / (label + '.png')).write_bytes(get('/g', raw=1))
+        return json.loads(data)['s']
+
+    def click(widget):
+        x, y, width, height = widget['r']
+        get('/click', x=x + width / 2, y=y + height / 2, wait=1)
+        time.sleep(.15)
+
+    time.sleep(.3)
+    widgets = snapshot('feed-after-refresh')
+    titles = [w for w in widgets if w.get('ty') == 'Label' and w.get('t', '').startswith('Synthetic capacity news')]
+    # /snap reports painted widgets in the viewport, not every off-screen row.
+    if len(titles) < 4 or not any(w.get('t') == '240 条新闻' for w in widgets):
+        raise SystemExit('Full-capacity native list is not visible')
+    first = next(w for w in titles if 180 < w['r'][1] < 360)
+    click(first)
+    detail = snapshot('feed-story')
+    back = next((w for w in detail if w.get('t') == '‹ 返回' and w.get('ty') != 'Label'), None)
+    if back is None:
+        raise SystemExit('News detail did not open after full-capacity refresh')
+    click(back)
+    get('/m', k='scroll', x=170, y=500, dy=8500, wait=1)
+    time.sleep(.3)
+    scrolled = snapshot('feed-scrolled')
+    if not any(w.get('ty') == 'Label' and w.get('t', '').startswith('Synthetic capacity news') and 180 < w['r'][1] < 750 for w in scrolled):
+        raise SystemExit('Feed cannot be scrolled after repeated refreshes')
+    click(next(w for w in scrolled if w.get('t') == '↑' and w.get('ty') != 'Label'))
+    time.sleep(.3)
+    top = snapshot('feed-returned-top')
+    if not any(w.get('t') == first['t'] and abs(w['r'][1] - first['r'][1]) < 1 for w in top):
+        raise SystemExit('Return-to-top stopped working after repeated refreshes')
+    click(next(w for w in top if w.get('t') == '收藏' and w.get('ty') != 'Label' and 180 < w['r'][1] < 650))
+    saved = snapshot('feed-bookmarked')
+    if not any(w.get('t') == '已收藏' for w in saved):
+        raise SystemExit('Bookmark callback failed after repeated refreshes')
+    click(max((w for w in saved if w.get('t') == '收藏' and w.get('ty') != 'Label'), key=lambda w: w['r'][1]))
+    bookmarks = snapshot('feed-bookmarks-page')
+    if not any(w.get('t') == '1 条收藏' for w in bookmarks) or not any(w.get('t') == first['t'] for w in bookmarks):
+        raise SystemExit('Deferred rendering lost the saved news row')
+    click(next(w for w in bookmarks if w.get('t') == '动态' and w.get('ty') != 'Label'))
+    widgets = json.loads(get('/snap'))['s']
+    click(next(w for w in widgets if w.get('t') == '科技' and w.get('ty') != 'Label'))
+    filtered = snapshot('feed-category')
+    if not any(w.get('t', '').startswith('Synthetic capacity news') for w in filtered):
+        raise SystemExit('Category callback lost the feed')
+    click(next(w for w in filtered if w.get('t') == '全部' and w.get('ty') != 'Label'))
+    widgets = json.loads(get('/snap'))['s']
+    click(next(w for w in widgets if w.get('i') == 'search' and w.get('ty') == 'TextInput'))
+    get('/t', t='capacity')
+    time.sleep(.3)
+    searched = snapshot('feed-search')
+    if not any(w.get('t', '').startswith('Synthetic capacity news') for w in searched):
+        raise SystemExit('Search callback lost the feed')
+    errors = (work / 'host.log').read_text(encoding='utf-8', errors='replace')
+    if '[E]' in errors:
+        raise SystemExit(f'Runtime error during feed interaction; inspect {work / "host.log"}')
+    print(f'Native feed UI checked at 430x860 (detail, scroll, bookmark, category, search): {work}')
+
+
 def run():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', type=Path, help='Pinned card-host executable')
     parser.add_argument('--agent-only', action='store_true', help='Run isolated agent validation tests')
-    parser.add_argument('--inspect-ui', action='store_true', help='Capture and exercise the fixture results/detail UI (agent-only)')
+    parser.add_argument('--inspect-ui', action='store_true', help='Capture and exercise the fixture UI (agent-only or --suites feed)')
     parser.add_argument('--suites', nargs='+', choices=('news', 'weather', 'holiday', 'fx', 'feed'), help='Run selected suites; feed exercises application refresh (default: data suites)')
     args = parser.parse_args()
     if args.agent_only and args.suites:
@@ -58,6 +128,19 @@ def run():
     bundle.mkdir(parents=True)
     paths = ORDER[:-1] if args.agent_only or 'feed' in suites else ORDER[:ORDER.index('src/agent/runtime/connectivity.splash')]
     source, _ = assemble(paths=paths)
+    if 'feed' in suites:
+        summary = 'Synthetic retained summary for bounded-memory refresh regression. ' * 24
+        items, hits = [], []
+        for index in range(20):
+            link = f'https://example.org/capacity/__SOURCE__/{index}'
+            title = f'Synthetic capacity news __SOURCE__/{index}'
+            items.append(f'<item><title>{title}</title><link>{link}</link><description>{summary}</description></item>')
+            hits.append({'objectID': str(index), 'title': title, 'url': link, 'created_at_i': None})
+        catalog = json.loads((ROOT / 'src/data/ingestion/sources.json').read_text(encoding='utf-8'))['sources']
+        for name, value in [('fixture_capacity_rss', '<rss><channel>' + ''.join(items) + '</channel></rss>'),
+                            ('fixture_capacity_hn', json.dumps({'hits': hits}))]:
+            bodies = {item['id']: value.replace('__SOURCE__', item['id']) for item in catalog}
+            source += '\nlet ' + name + ' = ' + json.dumps(bodies) + '\n'
     for name, file in [('fixture_rss', 'news-rss.xml'), ('fixture_atom', 'news-atom.xml'), ('fixture_hn', 'news-hn.json'),
                        ('fixture_weather', 'weather-daily.json'),
                        ('fixture_holiday_2026', 'holiday-cn-2026.json'),
@@ -107,9 +190,12 @@ start_timeout(0.05, || agent_test_validation(|| {
         for label in suites
     }
     with (work / 'host.log').open('w', encoding='utf-8') as log:
-        process = subprocess.Popen([str(host), '--bundle', str(bundle), '--allow-unsigned', '--stamp', '--app-data', str(work / 'data'), '--remote', str(port)], cwd=host.parents[2], stdout=log, stderr=log, startupinfo=startup)
+        command = [str(host), '--bundle', str(bundle), '--allow-unsigned', '--stamp', '--app-data', str(work / 'data'), '--remote', str(port)]
+        if args.inspect_ui and 'feed' in suites:
+            command += ['--size', '430x860']
+        process = subprocess.Popen(command, cwd=host.parents[2], stdout=log, stderr=log, startupinfo=startup)
         try:
-            deadline = time.monotonic() + 20
+            deadline = time.monotonic() + (45 if 'feed' in suites else 20)
             while time.monotonic() < deadline and process.poll() is None:
                 if all(path.exists() for path in report_paths.values()):
                     break
@@ -125,6 +211,8 @@ start_timeout(0.05, || agent_test_validation(|| {
             except ValueError as error:
                 raise SystemExit(f'{error}; inspect {work / "host.log"}') from error
             (work / 'combined-report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+            if args.inspect_ui and 'feed' in suites:
+                inspect_feed_ui(work, port)
             if args.inspect_ui and args.agent_only:
                 time.sleep(1)
                 with urlopen(f'http://127.0.0.1:{port}/snap', timeout=3) as response:
