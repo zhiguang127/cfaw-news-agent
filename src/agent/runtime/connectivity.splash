@@ -4,7 +4,7 @@ let octos_timeout_seconds = 90
 let octos_message = "未测试。点击后显示真实回复或错误。"
 fn set_octos_message(text){
     octos_message = text
-    if detail_kind == "settings" { ui.octos_status.set_text(text) }
+    if detail_kind == "settings" && settings_show_diagnostics { ui.octos_status.set_text(text) }
 }
 
 // Uses the assistant selected in Rinx, never a model endpoint or app-owned key.

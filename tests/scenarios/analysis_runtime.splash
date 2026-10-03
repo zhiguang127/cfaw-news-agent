@@ -10,6 +10,8 @@ fn logic_prepare(){
     feed_rows_by_source[news_sources[0].id] = [logic_row]
     app_feed_rows = [logic_row]
     analysis_busy = false analysis_terminal = false analysis_needs_reopen = false analysis_batch_busy = false
+    busy = false analysis_check_message = "" analysis_batch_no_change = 0 analysis_batch_insufficient = 0
+    logic_reply = nil logic_interrupt = nil
     reading = nil detail_kind = ""
     analysis_host_has = |name| true
     analysis_host_request = |name, data, callback| {
@@ -142,6 +144,42 @@ fn logic_test_batch_results(){
             logic_reply({is_ok: true data: {text: "invalid-json"}})
             start_timeout(0.04, || {
                 agent_assert(!analysis_batch_busy && analysis_batch_done == 1 && analysis_batch_failed == 1, "batch accounts for success and failure and finishes")
+                start_timeout(0.02, || logic_test_check_feedback())
+            })
+        })
+    })
+}
+fn logic_test_check_feedback(){
+    logic_prepare()
+    user_interests = []
+    analyze_changes()
+    agent_assert(!analysis_busy && !analysis_batch_busy && logic_reply == nil, "missing focus never starts model or batch")
+    logic_prepare()
+    busy = true
+    analyze_changes()
+    agent_assert(!analysis_busy && !analysis_batch_busy && logic_reply == nil, "refreshing feed defers analysis instead of checking partial input")
+    logic_prepare()
+    logic_row.title = "Unrelated news"
+    analyze_changes()
+    start_timeout(0.04, || {
+        agent_assert(!analysis_busy && !analysis_batch_busy && logic_reply == nil && analysis_history.len() == 0, "unmatched candidates never produce an AI verdict")
+        agent_assert(analysis_check_message == "暂无需要分析的关注更新，本次未调用助手。", "selection-only result says assistant was not called")
+        logic_prepare()
+        history_record_analysis(logic_row, "unchanged-feedback", 1, "t", {outcome: "no_change" explanation: "Fixture" suggestions: []})
+        start_timeout(0.02, || {
+            analyze_changes()
+            start_timeout(0.04, || {
+                agent_assert(!analysis_busy && !analysis_batch_busy && logic_reply == nil && analysis_history.len() == 1, "unchanged input skips a second model call")
+                analysis_batch_done = 1 analysis_batch_failed = 0 analysis_batch_no_change = 1
+                agent_assert(analysis_batch_result_message() == "本次分析未发现调整建议。", "completed no-change verdict differs from a skipped check")
+                analysis_batch_insufficient = 1
+                agent_assert(analysis_batch_result_message() == "检查完成，部分新闻证据不足，尚不能确定如何调整。", "insufficient evidence does not claim no adjustment is needed")
+                analysis_batch_done = 0 analysis_batch_failed = 1
+                agent_assert(analysis_batch_result_message() == "本次分析未能完成，查看提示后可重试。", "all failed requests do not claim partial successful analysis")
+                logic_prepare()
+                analysis_check_message = "本次分析未发现调整建议。"
+                toggle_follow(logic_row)
+                agent_assert(analysis_check_status() == "检查相关新闻是否影响你关注的事和已有日程。" && logic_reply == nil, "changed focus clears old verdict without starting a model call")
                 start_timeout(0.02, || logic_test_capacity())
             })
         })

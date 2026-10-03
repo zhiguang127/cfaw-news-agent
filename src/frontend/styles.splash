@@ -11,7 +11,7 @@ let Section = Text{draw_text.text_style: theme.font_bold{font_size: 13 line_spac
 let Divider = SolidView{width: Fill height: 1 draw_bg.color: line}
 let QuietButton = ButtonFlat{height: 30 padding: Inset{left: 7 right: 7} margin: 0
     draw_bg +: {color: #x00000000 color_hover: #x00000008 color_down: #x00000010 border_size: 0.0 border_radius: 6.0}
-    draw_text +: {color: secondary color_hover: ink color_down: ink text_style +: {font_size: 11}}
+    draw_text +: {color: secondary color_hover: ink color_down: ink text_style: theme.font_regular{font_size: 11}}
 }
 let LinkButton = QuietButton{draw_text +: {color: accent color_hover: accent color_down: accent}}
 let HintButton = LinkButton{width: Fill height: 28 align: Align{x: 0.0} padding: 0

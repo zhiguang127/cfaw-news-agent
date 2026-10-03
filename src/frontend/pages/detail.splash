@@ -38,7 +38,7 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
             let saved_suggestions = history_suggestions_for_news(reading.news_id)
             if saved_suggestions.len() > 0 {
                 Divider{}
-                Section{text: "建议历史"}
+                Section{text: "分析与建议"}
                 if saved_suggestions.len() > 30 { Small{text: "显示最近30条建议；较早待处理项可从顶部建议入口打开。"} }
                 for i saved in saved_suggestions {
                     if i >= saved_suggestions.len() - 30 || saved.suggestion_id == suggestion_focus_id {
@@ -47,8 +47,9 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
                     Text{text: saved.rationale}
                     for uncertainty in saved.uncertainties { Small{text: "不确定性：" + uncertainty} }
                     if saved.proposed_action != nil {
-                        Small{text: "拟议日程：" + saved.proposed_action.kind + " · " + saved.proposed_action.title}
-                        Small{text: saved.proposed_action.start + " → " + saved.proposed_action.end + " · " + saved.proposed_action.timezone}
+                        if saved.proposed_action.kind == "create" { Small{text: "建议新增安排：" + saved.proposed_action.title} }
+                        else { Small{text: "建议调整时间：" + saved.proposed_action.title} }
+                        Small{text: schedule_display_time(saved.proposed_action.start, saved.proposed_action.timezone) + " → " + schedule_display_time(saved.proposed_action.end, saved.proposed_action.timezone)}
                     }
                     if saved.state == "pending" {
                         View{width: Fill height: Fit flow: Right spacing: 8
@@ -66,7 +67,10 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
                         Small{text: "确认时重新读取日程版本并检查时间冲突；失败不会将建议标记为已接受。"}
                         if saved.proposed_action == nil { Small{text: "此建议没有日程动作；确认仅记录你的决定。"} }
                         else {
-                            if saved.proposed_action.kind == "reschedule" { Small{text: "更新日程 " + saved.proposed_action.schedule_id + "（预期 v" + saved.proposed_action.schedule_version + "）"} }
+                            if saved.proposed_action.kind == "reschedule" {
+                                let current = schedule_find(saved.proposed_action.schedule_id)
+                                if current != nil { Small{text: "当前安排：" + current.title} Small{text: schedule_display_time(current.start, current.timezone) + " → " + schedule_display_time(current.end, current.timezone)} }
+                            }
                             let collisions = schedule_conflicts(saved.proposed_action, saved.proposed_action.schedule_id)
                             if collisions.len() > 0 { Small{text: "当前时间冲突：" + change_join(collisions) draw_text.color: accent} }
                         }
@@ -84,7 +88,7 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
             }
             View{width: Fill height: Fit flow: Right spacing: 10
                 if records_has_interest("source", reading.source) { SecondaryButton{text: "已跟踪来源" on_click: || toggle_follow(reading)} }
-                else { SecondaryButton{text: "跟踪来源" on_click: || toggle_follow(reading)} }
+                else { SecondaryButton{text: "关注来源" on_click: || toggle_follow(reading)} }
                 if records_is_bookmarked(reading.news_id) { SecondaryButton{text: "已收藏" on_click: || toggle_save(reading)} }
                 else { SecondaryButton{text: "收藏" on_click: || toggle_save(reading)} }
             }
