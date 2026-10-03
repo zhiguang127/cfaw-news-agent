@@ -39,7 +39,7 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
             if saved_suggestions.len() > 0 {
                 Divider{}
                 Section{text: "分析与建议"}
-                if saved_suggestions.len() > 30 { Small{text: "显示最近30条建议；较早待处理项可从顶部建议入口打开。"} }
+                if saved_suggestions.len() > 30 { Small{text: "显示最近30条建议；较早待处理项可从菜单的分析与建议入口打开。"} }
                 for i saved in saved_suggestions {
                     if i >= saved_suggestions.len() - 30 || saved.suggestion_id == suggestion_focus_id {
                     Small{text: history_state_label(saved.state)}

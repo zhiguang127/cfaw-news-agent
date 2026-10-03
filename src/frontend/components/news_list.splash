@@ -1,21 +1,22 @@
 let NewsList = ScrollYView{width: Fill height: Fill flow: Down on_render: || {
     for i row in display_rows {
-        if i >= visible_limit { break }
-        View{width: Fill height: Fit flow: Down
+        let hint = row_match_hint(row)
+        let cache_note = row_cache_note(row)
+        GestureView{width: Fill height: Fit flow: Down on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
             View{width: Fill height: Fit flow: Right spacing: 10 padding: Inset{left: 18 right: 18 top: 12 bottom: 8}
                 RoundedView{width: 32 height: 32 show_bg: true draw_bg.color: soft draw_bg.border_radius: 16.0 align: Align{x: 0.5 y: 0.5}
                     Label{text: news_avatar(row) draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 12}}
                 }
                 View{width: Fill height: Fit flow: Down spacing: 4
                     Small{text: news_meta(row) draw_text.text_style: theme.font_bold{font_size: 11 line_spacing: 1.15}}
-                    GestureView{width: Fill height: Fit on_tap: |x, y| open_story(row)
+                    GestureView{width: Fill height: Fit on_tap: |x, y| open_story(row) on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
                         Text{text: row.title max_lines: 3 draw_text.text_style.font_size: 14}
                     }
-                    if row_match_hint(row) != "" {
-                        Small{text: row_match_hint(row) max_lines: 1 draw_text.color: accent}
+                    if hint != "" {
+                        Small{text: hint max_lines: 1 draw_text.color: accent}
                     }
-                    if row_is_new(row) { Small{text: "新消息 · 首次检查后的新增" draw_text.color: accent} }
-                    if row_cache_note(row) != "" { Small{text: row_cache_note(row)} }
+                    if records_is_unread(row.news_id) && hint != "" { Small{text: "新消息 · 首次检查后的新增" draw_text.color: accent} }
+                    if cache_note != "" { Small{text: cache_note} }
                     View{width: Fill height: 28 flow: Right spacing: 10
                         if records_has_interest("source", row.source) { LinkButton{text: "已跟踪" on_click: || toggle_follow(row)} }
                         else { QuietButton{text: "关注来源" on_click: || toggle_follow(row)} }

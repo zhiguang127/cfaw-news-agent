@@ -27,8 +27,13 @@ fn feed_test_run(){
     feed_test_stage = "coalesced source completions"
     let requests = []
     news_http_request = fn(url, redirects, callback){ requests.push(callback) }
-    refresh_sources(enabled_source_ids)
+    feed_swipe_refresh(0, 90)
+    feed_test_assert(!busy && requests.len() == 0, "downward gesture does not request news")
+    feed_swipe_refresh(0, -90)
     feed_test_assert(requests.len() == 3 && busy, "application starts bounded refresh")
+    let generation = feed_generation
+    feed_swipe_refresh(0, -90)
+    feed_test_assert(busy && generation == feed_generation && requests.len() == 3, "repeated upward gesture neither cancels nor restarts an active refresh")
     requests[0]({success: true body: fixture_rss})
     // Start one construction before the other sources complete, so the newer
     // evidence must accumulate rather than cancelling it.

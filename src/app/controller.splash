@@ -8,6 +8,9 @@ let keyword_draft = ""
 let reading = nil
 let detail_kind = ""
 let busy = false
+let menu_open = false
+let last_swipe_refresh_at = 0
+let last_return_top_at = 0
 let settings_show_diagnostics = false
 let results_show_error_detail = false
 let analysis_check_message = ""
@@ -17,7 +20,6 @@ let app_feed_rows = []
 let app_feed_build_task = nil
 let app_feed_build_counter = 0
 let refresh_successes_seen = 0
-let visible_limit = 40
 let display_rows = []
 let schedule_edit_id = nil
 let schedule_edit_version = nil
@@ -111,9 +113,9 @@ fn empty_text(){
         if user_interests.len() == 0 { return "还没有关注。添加主题、关键词或关注新闻来源后，相关消息会出现在这里。" }
         return "暂时没有与你关注内容匹配的新闻，可以刷新或调整关注。"
     }
-    if enabled_source_ids.len() == 0 { return "尚未启用新闻源。打开更多，选择需要获取的来源。" }
+    if enabled_source_ids.len() == 0 { return "尚未启用新闻源。打开左上角菜单，选择需要获取的来源。" }
     if busy { return "正在获取真实新闻，来源完成后会逐步显示。" }
-    "暂无可显示的新闻。点击刷新重试，或到来源查看请求错误。"
+    "暂无可显示的新闻，可从菜单查看来源状态。"
 }
 fn notice(text){ ui.feedback.set_text(text) ui.feedback_panel.set_visible(text != "") }
 fn sync_status(){
@@ -128,8 +130,7 @@ fn sync_status(){
     if page == "tracking" && !busy { text = "" + display_rows.len() + " 条相关新闻" }
     if failed > 0 && page != "saved" { text = text + " · 部分来源暂时不可用" }
     ui.status.set_text(text)
-    ui.refresh_button.set_text("刷新")
-    if busy { ui.refresh_button.set_text("取消刷新") }
+    ui.menu_cancel_update.set_visible(busy)
     ui.tracking_summary.set_text("我的关注 · " + tracking_new_count() + " 条未读更新")
     render_analysis_controls()
 }
@@ -140,7 +141,7 @@ fn render_feed(){
     ui.list_container.set_visible(!empty)
     ui.empty_panel.set_visible(empty)
     ui.empty_message.set_text(empty_text())
-    ui.more_button.set_visible(display_rows.len() > visible_limit)
+    ui.back_to_top.set_visible(!empty)
     sync_status()
     ui.tile_list.render()
 }
@@ -148,7 +149,6 @@ fn render_main(){
     ui.categories.render()
     ui.navigation.render()
     ui.feed_filters.set_visible(page == "feed")
-    ui.weather_glance.set_visible(page == "feed")
     ui.tracking_header.set_visible(page == "tracking")
     ui.bookmarks_header.set_visible(page == "saved")
     ui.search_box.set_visible(page != "schedule")
@@ -158,11 +158,11 @@ fn render_main(){
     render_feed()
 }
 fn select_page(id){
+    close_menu()
     notice("")
     page = id
     category = "all"
     query = ""
-    visible_limit = 40
     reading = nil
     detail_kind = ""
     ui.search.set_text("")
@@ -310,9 +310,15 @@ fn schedule_confirm(){
     ui.story_content.render()
     render_analysis_controls()
 }
-fn pick_category(id){ category = id visible_limit = 40 ui.categories.render() render_feed() }
-fn set_query(text){ query = text.trim() visible_limit = 40 render_feed() }
-fn show_more(){ visible_limit = visible_limit + 40 render_feed() }
+fn pick_category(id){ category = id ui.categories.render() render_feed() }
+fn set_query(text){ query = text.trim() render_feed() }
+fn return_feed_top(){
+    last_return_top_at = time_now()
+    // The pinned script UI has no scroll-position method. Recreate only the
+    // scroll child for this explicit action; ordinary updates retain it.
+    ui.list_container.render()
+    start_timeout(0.01, || ui.list.render())
+}
 fn rebuild_feed(complete){
     let source_key = enabled_source_ids.to_json()
     if app_feed_build_task != nil {
@@ -343,6 +349,13 @@ fn refresh(){
     analysis_check_message = ""
     if busy { feed_cancel() busy = false render_feed() notice("已取消等待；迟到结果不会更新新闻。") return }
     refresh_sources(enabled_source_ids)
+}
+fn feed_swipe_refresh(dx, dy){
+    if dy >= 0 || dx != 0 || page != "feed" || detail_kind != "" || busy { return }
+    let checked_at = time_now()
+    if checked_at - last_swipe_refresh_at < news_config.refresh_gesture_cooldown_seconds { return }
+    last_swipe_refresh_at = checked_at
+    refresh()
 }
 fn refresh_sources(ids){
     if ids.len() == 0 { return }
@@ -382,8 +395,9 @@ fn suggestion_attention_count(){
 }
 fn render_analysis_controls(){
     let count = suggestion_attention_count()
-    ui.suggestions_button.set_visible(count > 0)
-    ui.suggestions_button.set_text("建议 " + count)
+    ui.menu_badge.set_visible(count > 0)
+    ui.suggestions_button.set_text("分析与建议")
+    if count > 0 { ui.suggestions_button.set_text("分析与建议 · " + count + " 待处理") }
     ui.manage_tracking_button.set_visible(analysis_has_focus())
     if page == "tracking" { ui.tracking_analysis_actions.render() }
 }
@@ -535,6 +549,7 @@ fn render_detail(){
     if detail_kind == "weather" { ui.weather_content.render() }
 }
 fn show_detail(kind, title){
+    close_menu()
     detail_kind = kind
     ui.detail_title.set_text(title)
     ui.main.set_visible(false)
@@ -542,6 +557,9 @@ fn show_detail(kind, title){
     render_detail()
 }
 fn open_story(row){
+    // The pinned GestureView can also deliver a tap through a sibling overlay.
+    // Remove this guard when host capture excludes overlapping sibling controls.
+    if time_now() - last_return_top_at < news_config.overlay_tap_guard_seconds { return }
     suggestion_focus_id = nil
     schedule_confirmation_id = nil
     if !analysis_busy { analysis_result = nil analysis_state = "idle" }
@@ -559,6 +577,7 @@ fn update_suggestion_state(id, state){
     render_analysis_controls()
 }
 fn close_detail(){
+    close_menu()
     detail_kind = ""
     reading = nil
     ui.detail_pane.set_visible(false)
@@ -567,6 +586,8 @@ fn close_detail(){
     sync_status()
 }
 fn show_settings(){ notice("") settings_show_diagnostics = false ui.diagnostics_controls.render() show_detail("settings", "设置") }
+fn close_menu(){ menu_open = false ui.menu_panel.set_visible(false) }
+fn toggle_menu(){ menu_open = !menu_open ui.menu_panel.set_visible(menu_open) }
 fn manage_tracking(){ notice("") show_detail("tracking", "管理关注") }
 fn add_keyword(){
     analysis_check_message = ""

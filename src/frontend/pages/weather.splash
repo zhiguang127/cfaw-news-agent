@@ -73,14 +73,6 @@ let WeatherPage = View{visible: false width: Fill height: Fill flow: Down
                 }
                 if weather_app_rows().len() == 0 { Small{text: "暂无有效日期的预报；旧日期不会显示为今天。"} }
             }
-            Box{
-                Section{text: "位置来源"}
-                if city != nil {
-                    Text{text: "手动选择 · " + city.name}
-                    Small{text: "城市参考坐标 " + city.lat + ", " + city.lon + "；预报代表城市区域，可能与你所在街区不同。"}
-                } else { Text{text: "尚未选择城市"} }
-                Small{text: "自动定位暂不可用，请手动选择城市。不会读取设备位置；查询时只向 Open-Meteo 发送所选城市的参考坐标。"}
-            }
             if weather_tracked.len() > 0 {
                 Section{text: "已保存的城市"}
                 for cid in weather_tracked {

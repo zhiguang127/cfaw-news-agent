@@ -37,6 +37,7 @@ ORDER = [
     'src/frontend/styles.splash',
     'src/frontend/components/news_list.splash',
     'src/frontend/components/weather_widget.splash',
+    'src/frontend/components/menu.splash',
     'src/frontend/pages/feed.splash',
     'src/frontend/pages/tracking.splash',
     'src/frontend/pages/bookmarks.splash',

@@ -1,7 +1,7 @@
 let SourcesPage = View{visible: false width: Fill height: Fill flow: Down
     ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 12
         Heading{text: "选择新闻来源"}
-        Small{text: "启用来源后点击顶部刷新。来源不可用时，已有缓存继续可读。"}
+        Small{text: "来源不可用时，已有缓存继续可读。"}
         source_list := View{width: Fill height: Fit flow: Down spacing: 8 on_render: || {
             for source in news_sources {
                 View{width: Fill height: Fit flow: Down spacing: 4

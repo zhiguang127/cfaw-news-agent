@@ -56,34 +56,26 @@ let ForecastSky = RoundedView{width: Fill height: Fit flow: Down show_bg: true
         }
     }
 }
-let WeatherGlance = View{width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 6 bottom: 8}
-    weather_glance_content := View{width: Fill height: Fit flow: Down on_render: || {
+let WeatherHeaderWidget = View{width: 132 height: 50
+    weather_header_content := View{width: Fill height: Fill on_render: || {
         let city = weather_primary_city()
         let today = weather_today()
-        GestureView{width: Fill height: Fit on_tap: |x, y| show_weather()
-            ForecastSky{padding: Inset{left: 12 right: 14 top: 10 bottom: 9} spacing: 4
-                View{width: Fill height: 50 flow: Right spacing: 10 align: Align{y: 0.5}
-                    ForecastGlyph{width: 48 height: 48 draw_bg.condition: weather_glyph_condition(today)}
+        GestureView{width: Fill height: Fill on_tap: |x, y| show_weather()
+            ForecastSky{width: Fill height: Fill padding: 8 draw_bg.border_radius: 12.0
+                View{width: Fill height: Fill flow: Right spacing: 6 align: Align{y: 0.5}
+                    ForecastGlyph{width: 30 height: 30 draw_bg.condition: weather_glyph_condition(today)}
                     View{width: Fill height: Fit flow: Down spacing: 3
                         if city != nil {
-                            Section{text: city.name + " · " + weather_glance_condition(today) draw_text.color: white}
-                            Small{text: "今日预报 · 低 / 高" draw_text.color: #xc6d8ec max_lines: 1 draw_text.text_style.font_size: 9}
+                            Small{text: city.name + " · " + weather_header_condition(today) draw_text.color: #xd7e6f7 max_lines: 1 draw_text.text_style.font_size: 9}
+                            if today != nil {
+                                Text{text: weather_temperature(today.temp_min_c) + " / " + weather_temperature(today.temp_max_c)
+                                    max_lines: 1 draw_text.color: white draw_text.text_style: theme.font_bold{font_size: 13}}
+                            } else { Small{text: "查看预报 ›" draw_text.color: white max_lines: 1} }
                         } else {
-                            Section{text: "天气与你的出行" draw_text.color: white}
-                            Small{text: "选择所在城市或目的地" draw_text.color: #xc6d8ec}
+                            Small{text: "城市天气" draw_text.color: #xd7e6f7 max_lines: 1 draw_text.text_style.font_size: 9}
+                            Small{text: "选择城市 ›" draw_text.color: white max_lines: 1}
                         }
                     }
-                    if today != nil {
-                        Text{width: Fit text: weather_temperature(today.temp_min_c) + " / " + weather_temperature(today.temp_max_c)
-                            draw_text.color: white draw_text.text_style: theme.font_bold{font_size: 21}}
-                    } else {
-                        if city == nil { Small{width: Fit text: "选城市 ›" draw_text.color: #xe1ecfa} }
-                        else { Small{width: Fit text: "待更新" draw_text.color: #xe1ecfa} }
-                    }
-                }
-                View{width: Fill height: 18 flow: Right align: Align{y: 0.5}
-                    Small{width: Fill text: weather_glance_status() draw_text.color: #xc6d8ec max_lines: 1 draw_text.text_style.font_size: 10}
-                    Small{width: Fit text: "7 日预报 ›" draw_text.color: #xe1ecfa draw_text.text_style.font_size: 10}
                 }
             }
         }

@@ -42,17 +42,15 @@ fn weather_glyph_condition(row){
     if code >= 51 && code <= 82 { return 3 }
     7
 }
-fn weather_glance_condition(row){ if row == nil { return "预报待更新" } row.condition }
-fn weather_glance_status(){
+fn weather_header_condition(row){
     let city = weather_primary_city()
-    if city == nil { return "城市天气 · 无需开启设备定位" }
+    if city == nil { return "选择城市" }
     let status = weather_status_by_city[city.cid]
-    if status.state == "loading" { return "正在更新 · Open-Meteo" }
-    if status.state == "error" { return "更新失败 · 点击查看或重试" }
-    if !weather_city_fresh_at(city.cid, time_now()) { return "缓存待更新 · Open-Meteo" }
-    let row = weather_today()
-    if row == nil { return "今日预报缺失 · 点击更新" }
-    "降水 " + row.precipitation_mm + " mm · " + age_label(status.fetched_at) + "获取"
+    if status.state == "loading" { return "更新中" }
+    if status.state == "error" { return "更新失败" }
+    if row == nil { return "待更新" }
+    if !weather_city_fresh_at(city.cid, time_now()) { return "缓存预报" }
+    row.condition
 }
 fn weather_app_status(){
     let city = weather_primary_city()
@@ -73,7 +71,7 @@ fn weather_choose_name(){
     weather_choose_city(city.cid)
 }
 fn weather_render(){
-    ui.weather_glance_content.render()
+    ui.weather_header_content.render()
     if detail_kind == "weather" { ui.weather_content.render() }
 }
 fn weather_app_restore(index, generation){
@@ -99,7 +97,7 @@ fn show_weather(){
     notice("")
     weather_picker_open = weather_primary_city() == nil
     weather_city_query = ""
-    show_detail("weather", "天气与位置")
+    show_detail("weather", "天气预报")
 }
 fn weather_choose_city(cid){
     if !weather_app_ready { return }
