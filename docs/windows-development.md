@@ -83,7 +83,7 @@ powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1
 powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1 -Mode Rinx
 ```
 
-默认启动 `card-host`，自动获取真实新闻，可操作收藏与来源/主题/关键词追踪。它未实现 Octos 服务，来源页底部的 Test Octos 应显示真实服务不可用错误。`-Mode Rinx` 打开正式宿主，Matrix 登录、bundle 导入和模型配置见 [README](../README.md#3-导入并运行)。用户自己在宿主中输入凭据。
+默认启动 `card-host`，自动获取真实新闻，可操作收藏与来源/主题/关键词追踪。它未实现 Octos 服务，“更多 → 连接诊断 → 测试连接”应显示真实服务不可用错误。`-Mode Rinx` 打开正式宿主，Matrix 登录、bundle 导入和模型配置见 [开发说明](development.md#3-导入并运行)。用户自己在宿主中输入凭据。
 
 数据逻辑检查运行 `python scripts/test_runtime.py`，组装检查运行 `python scripts/assemble.py --check`。原生测试在独立 `.test-state/runtime-*/` 中执行实际 OctoScript 模块，不读写 `.local-state/`。公开来源复测需要允许宿主访问 manifest 声明的 HTTPS 域名。Windows 固定宿主拥有 `User-Agent`，应用不能自行覆盖；请求头中的值必须为字符串数组。
 
@@ -91,4 +91,4 @@ powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1 -Mode Rinx
 
 启动脚本只使用已编译、已复制资源的工具，缺少资源时显示对应错误。Windows Git 的 CRLF 转换可能改变 bundle 摘要。启动脚本通过 `package.py` 调用固定 `hub.exe` 刷新未签名包，生成 `build/cfaw-news.zip`。仅摘要不同不表示业务代码改变；签名包不能用这个开发流程重写。
 
-本次检查结果见 README 的 Windows 运行段落。参考宿主的交互验证、Rinx 启动、实际 Matrix/Octos 联调和 App Hub 发布验收分别报告，不能互相替代。
+当前检查结果见 [验收记录](acceptance.md)。参考宿主的交互验证、Rinx 启动、实际 Matrix/Octos 联调和 App Hub 发布验收分别报告，不能互相替代。

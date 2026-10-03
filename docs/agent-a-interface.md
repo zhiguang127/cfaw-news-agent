@@ -6,10 +6,15 @@ host-managed Octos services, owns request lifecycle, and hands a validated
 result to the application. It does not add a second Agent or an app-owned
 Octos kernel.
 
-The current executable entry point is still `bundle/main.splash`. The files in
-`src/agent/runtime/` are not loaded automatically, so this document describes
-the interface to implement and test before one designated integrator moves the
-minimum flow into the bundle.
+The executable entry point is generated `bundle/main.splash`.
+`scripts/assemble.py` explicitly includes the context, history, validator,
+change helpers, connectivity probe, and business runtime in its `ORDER`.
+These modules are already assembled and wired to the UI. This document
+describes the required interface; it does not certify that every requirement
+is satisfied. See [current capability and acceptance record](acceptance.md), updated on
+2026-10-03 against `641910a` plus the local product UI changes, for implemented
+behavior, remaining gaps, and the distinction between substituted host/model
+reply tests and real Rinx acceptance.
 
 Related contracts:
 
