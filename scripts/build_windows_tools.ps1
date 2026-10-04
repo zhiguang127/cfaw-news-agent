@@ -54,8 +54,17 @@ try {
         $taskRinx = $taskDrive + '/Rinx'
         Set-Location $taskRinx
         $env:CARGO_TARGET_DIR = $taskRinx + '/target'
+        Invoke-ToolBuild 'cargo' @('fetch', '--locked') (Join-Path $taskLogRoot 'rinx-fetch.log')
+        Invoke-ToolBuild 'python' @((Join-Path $PSScriptRoot 'patch_windows_render_host.py'), '--dev-root', ($taskDrive + '/')) (Join-Path $taskLogRoot 'rinx-render-patch.log')
+        & python (Join-Path $PSScriptRoot 'patch_windows_render_host.py') --dev-root ($taskDrive + '/') --check-artifacts
+        if ($LASTEXITCODE -eq 1) {
+            # Cargo treats Git sources as immutable; source edits alone can
+            # leave the old library marked fresh. Invalidate this crate only.
+            Invoke-ToolBuild 'cargo' @('clean', '--release', '-p', 'makepad-platform') (Join-Path $taskLogRoot 'rinx-render-clean.log')
+        } elseif ($LASTEXITCODE -ne 0) { throw 'Could not verify the compiled D3D11 patch' }
         Write-Output ('Building pinned Rinx; log: ' + (Join-Path $taskLogRoot 'rinx.log'))
         Invoke-ToolBuild 'cargo' @('build', '--locked', '--release', '--bin', 'rinx', '--features', 'agent_chat') (Join-Path $taskLogRoot 'rinx.log')
+        Invoke-ToolBuild 'python' @((Join-Path $PSScriptRoot 'patch_windows_render_host.py'), '--dev-root', ($taskDrive + '/'), '--record') (Join-Path $taskLogRoot 'rinx-render-patch.log')
         Write-Output ('Packaging matching Octos; log: ' + (Join-Path $taskLogRoot 'octos.log'))
         Invoke-ToolBuild 'python' @('tools/package-octos.py', 'desktop', '--app-binary', 'target/release/rinx.exe') (Join-Path $taskLogRoot 'octos.log')
         & ./target/release/octos.exe --version

@@ -30,7 +30,7 @@ python scripts/prepare_dev_dependencies.py
 powershell -ExecutionPolicy Bypass -File scripts/build_windows_tools.ps1
 ```
 
-准备脚本只创建锁中不存在的检出，遇到已有不同提交或修改会停止并保留它。构建脚本核对五个提交、加载 Visual Studio 环境，使用私有 Cargo cache 和临时短盘符，依次构建固定 Rinx、打包配套 Octos、构建 hub/card-host 并复制资源。日志在 `build/dependency-update/`。可用 `-Mode Rinx` 或 `-Mode Preview` 只构建对应工具。
+准备脚本只创建锁中不存在的检出，遇到已有不同提交或修改会停止并保留它。构建脚本核对五个提交、加载 Visual Studio 环境，使用私有 Cargo cache 和临时短盘符，依次构建固定 Rinx、打包配套 Octos、构建 hub/card-host 并复制资源。Windows Rinx 构建先应用下述 D3D11 本地补丁，必要时清理该依赖的编译产物，防止 Cargo 复用未修补的 Git 依赖库。日志在 `build/dependency-update/`。可用 `-Mode Rinx` 或 `-Mode Preview` 只构建对应工具。
 
 Rinx 的 `tools/package-octos.py` 同时验证 Cargo.lock 与 packaging/octos.lock.json；配套 `octos.exe --version` 应包含 `fe08d8e`，版本号仍为 `2.0.3-rc.13`。不能仅凭相同版本号复用旧内核。本项目不安装全局 Octos，也不复制模型配置。
 
@@ -42,17 +42,21 @@ Rinx 的 `tools/package-octos.py` 同时验证 Cargo.lock 与 packaging/octos.lo
 powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1 -Mode Rinx
 ```
 
-Windows Rinx 模式默认将同一固定宿主 App 重新链接为 `build/windows-rinx-sdf/rinx-sdf.exe`，在 Startup 中将共享字体栅格化模式切换为 SDF。它使用相同宿主服务和配套内核，不修改上游源码；第一次需要编译好的 `librinx` 和 Rust 工具链，后续复用构建缓存。每次确保资源及内核副本完整。
+Windows Rinx 模式默认将同一固定宿主 App 重新链接到 `build/windows-rinx-sdf/`，在 Startup 中将共享字体栅格化模式切换为 SDF。入口使用相同宿主服务和配套内核；第一次需要编译好的 `librinx` 和 Rust 工具链，后续复用构建缓存。可执行文件名包含构建摘要，启动脚本读取 `build-info.json` 选择它，避免改写正在运行的 Windows 程序。每次确保资源及内核副本完整。
+
+[D3D11 本地补丁](../scripts/patches/makepad-d3d11-buffer-accounting.patch) 修正普通缓冲区复用时重复记账、GPU 完成状态未持续刷新导致旧额度滞留，以及额度不足时静默跳过可见绘制的问题。每次重绘按真实 GPU query 更新完成状态，再以有限扫描回收旧 lease；没有伪造 GPU 完成或提高生产额度。它只应用到本项目私有 Cargo cache 内固定 `1f3b1de` 的 Makepad，不切换依赖版本，不修改 App Hub 的独立参考图。构建脚本核对源文件摘要，并在编译库中验证补丁标记后记录 `cfaw-render-patch.json`；启动和 SDF 链接拒绝不匹配的库。启动日志应包含 `CFAW D3D11 buffer accounting v3`。默认字体选项也使用这份修补后的宿主库。
+
+该补丁不是正式上游发行版。移除条件是固定宿主的上游实现通过相同缓冲区压力复现；真实驱动分配或映射失败仍由宿主记录错误，脚本堆、存储和请求额度保持原值。问题与验证范围见调查报告第 7 节。
 
 这是本机 MSDF 白屏触发的临时保护。SDF 可能改变字形边缘；新依赖上的实际显示与长期稳定性仍须验收。移除条件是上游默认模式通过真实标题/原始 My Notes 复现和新闻连续刷新。原因和对照见 [白屏调查](../reports/FAILURE_ANALYSIS.md)。
 
-比较原始宿主或采集本机日志时使用：
+比较默认字体模式或采集本机日志时使用（仍含 D3D11 修补）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1 -Mode Rinx -RinxTextRasterizer Default -Diagnostic
 ```
 
-`-Diagnostic` 记录 stdout、stderr 和 session.json 到 `.local-state/diagnostics/`，启用仅 loopback 的原生诊断 API。日志可能含宿主账户信息，不随 issue 或应用包分发。
+`-Diagnostic` 将 stdout、stderr **重定向到文件**，宿主自己的控制台可以没有输出。日志与 session.json 位于 `.local-state/diagnostics/`，启动脚本打印文件位置和实时查看命令，并启用仅 loopback 的原生诊断 API。日志可能含宿主账户信息，不随 issue 或应用包分发。没有错误日志也不能排除渲染失败：本次发现的旧 D3D11 额度拒绝路径没有打印错误。
 
 在 Rinx 的 **Mini apps → Import an app** 选本项目 `bundle/`，执行 **Review bundle → Run**。分析模型由用户在 Rinx 配置，新闻浏览不需要模型。完整导入、模型与 Linux 说明见 [开发说明](development.md)。
 
@@ -66,9 +70,14 @@ Rinx 默认沿用项目 `.local-state/rinx/`，此目录不入 Git。设置 `RIN
 python scripts/test_runtime.py
 python scripts/test_runtime.py --agent-only
 python scripts/test_runtime.py --suites feed --inspect-ui
+python scripts/test_runtime.py --suites feed --rinx-render-probe --navigation-rounds 1000
 python -m unittest discover -s tests/unit -p "test_*.py"
 python scripts/assemble.py --check
 python scripts/package.py
 ```
 
 原生固定输入测试使用独立 `.test-state/`，不调用真实模型。最新结果、未覆盖的重启/模型业务闭环和 App Hub 发布见 [验收记录](acceptance.md)。包完整性、参考宿主行为、Rinx 行为和实际发布分别验收。
+
+`--rinx-render-probe` 使用固定 Rinx 的真实 App/Modal 和 SDF，直接挂载合成新闻 fixture，不登录或读取账户。它在测试实例中将绘制计账额度收紧到 64 MiB，连续排队 4,000 次切页并检查 PNG 中的品牌、四页标题、额度峰值与拒绝数。GPU 完成状态的测试探针只读取计数，不代替宿主刷新。此检查不包含真实 bundle 导入审查或 Octos 服务租约。
+
+原生宿主修补需要完整退出旧 Rinx，再通过项目脚本启动新程序；仅重跑 bundle 不会加载新的 D3D11 代码。

@@ -35,10 +35,17 @@ foreach ($taskResource in $taskRequiredResources) {
         throw ('Stage the Windows host resources first; missing: ' + $taskResourcePath)
     }
 }
+if ($Mode -eq 'Rinx') {
+    & python (Join-Path $PSScriptRoot 'patch_windows_render_host.py') --dev-root $taskDevRoot --check-artifacts
+    if ($LASTEXITCODE -ne 0) { throw 'Build the recorded D3D11 host fix first: scripts/build_windows_tools.ps1 -Mode Rinx' }
+}
 if ($Mode -eq 'Rinx' -and $RinxTextRasterizer -eq 'Sdf') {
     & python (Join-Path $PSScriptRoot 'build_windows_sdf_host.py') --dev-root $taskDevRoot
     if ($LASTEXITCODE -ne 0) { throw 'SDF host build failed; see Windows development instructions' }
-    $taskHost = Join-Path $taskRoot 'build/windows-rinx-sdf/rinx-sdf.exe'
+    $taskSdfInfo = Get-Content -LiteralPath (Join-Path $taskRoot 'build/windows-rinx-sdf/build-info.json') -Raw | ConvertFrom-Json
+    if ($taskSdfInfo.build_id -notmatch '^[a-f0-9]{12}$' -or $taskSdfInfo.executable -ne ('rinx-sdf-' + $taskSdfInfo.build_id + '.exe')) { throw 'Invalid SDF build output; rebuild the host' }
+    $taskSdfDirectory = Join-Path (Join-Path $taskRoot 'build/windows-rinx-sdf') $taskSdfInfo.build_id
+    $taskHost = Join-Path $taskSdfDirectory $taskSdfInfo.executable
     Write-Output 'Rinx text rasterizer: SDF (temporary Windows white-screen workaround)'
 }
 
@@ -91,4 +98,6 @@ if ($Diagnostic) {
     $taskDiagnosticInfo | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $taskDiagnosticRoot 'session.json') -Encoding UTF8
     Write-Output ('Diagnostic logs: ' + $taskDiagnosticRoot)
     Write-Output ('Native diagnostic API: http://127.0.0.1:' + $taskRemotePort)
+    Write-Output 'Diagnostic mode redirects host output to stdout.log / stderr.log; the host console can remain empty.'
+    Write-Output ('Live log: Get-Content -LiteralPath "' + (Join-Path $taskDiagnosticRoot 'stdout.log') + '" -Tail 40 -Wait')
 }
