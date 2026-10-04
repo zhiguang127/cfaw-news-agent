@@ -36,7 +36,7 @@ let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
         Divider{}
         Section{text: "我的关注"}
         interest_list := View{width: Fill height: Fit flow: Down spacing: 4 on_render: || {
-            if user_interests.len() == 0 { Small{text: "尚未添加关注。也可在新闻条目上关注来源。"} }
+            if user_interests.len() == 0 && topic_records.topics.len() == 0 { Small{text: "尚未添加关注。也可在新闻条目上关注来源。"} }
             for topic in topic_records.topics {
                 View{width: Fill height: Fit flow: Down spacing: 4
                     Text{text: topic.title}

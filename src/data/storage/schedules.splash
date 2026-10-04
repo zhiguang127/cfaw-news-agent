@@ -213,6 +213,7 @@ fn schedule_update_options(id, expected_version, title, content, location, start
     let conflicts = schedule_conflicts(candidate, id)
     if conflicts.len() > 0 { return {success: false error: "Schedule conflict" conflicts: conflicts} }
     let previous = user_schedules.to_json()
+    if current["time_precision"] == "day" && (current.start != candidate.start || current.end != candidate.end) { current.time_precision = "exact" }
     current.version = candidate.version current.title = candidate.title current.start = candidate.start current.end = candidate.end current.timezone = candidate.timezone
     current.content = content.trim() current.location = location.trim()
     current.allow_reschedule = allow

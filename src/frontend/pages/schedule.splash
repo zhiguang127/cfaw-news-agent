@@ -10,7 +10,9 @@ let SchedulePage = View{visible: false width: Fill height: Fill flow: Down
                     Text{text: item.title}
                     if record_string(item["content"]) && item.content != "" { Small{text: item.content} }
                     if record_string(item["location"]) && item.location != "" { Small{text: "地点：" + item.location} }
-                    Small{text: schedule_display_time(item.start, item.timezone) + " → " + schedule_display_time(item.end, item.timezone)}
+                    if item["time_precision"] == "day" {
+                        Small{text: schedule_entry_parts(item.start, item.timezone).date + " · 具体时间待补充（按全天预设）"}
+                    } else { Small{text: schedule_display_time(item.start, item.timezone) + " → " + schedule_display_time(item.end, item.timezone)} }
                     Small{text: schedule_zone_label(item.timezone) + " · 24 小时制"}
                     Small{text: schedule_status_label(item)}
                     QuietButton{text: "编辑" on_click: || schedule_begin_edit(item.schedule_id)}

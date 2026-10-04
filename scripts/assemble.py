@@ -42,6 +42,7 @@ ORDER = [
     'src/app/controller.splash',
     'src/app/tracking.splash',
     'src/app/intents.splash',
+    'src/app/presets.splash',
     'src/app/feed_presentation.splash',
     'src/app/weather.splash',
     'src/frontend/styles.splash',
