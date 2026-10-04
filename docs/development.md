@@ -255,7 +255,7 @@ Rinx 导入的是 `bundle/` 文件夹，不是 ZIP。分享 `build/cfaw-news.zip
 2. 在 **动态** 按分类或搜索筛选，或切换底部 **跟踪** 查看关注的新闻；失败时显示错误与旧缓存，不替换为虚构新闻。
 3. 点击条目的 **关注来源**，或在 **跟踪** 页点击 **添加关注**（已有关注时为 **管理关注**）添加主题、关键词。相关条目明确显示规则匹配原因。
 4. 点击 **收藏** 后重开应用，到 **收藏** 查看新闻快照；清理新闻缓存不会删除收藏。
-5. 查看详情中的摘要、时间与链接。HN 时间是提交时间；未知日期保持未知；摘要不代表文章全文。点击“分析影响”请求单条新闻分析。若出现日程建议，先点击“接受”查看确认区，再核对时间、冲突与版本，点击“确认并保存”；不点击确认不会修改日程。
+5. 查看详情中的来源正文阅读模式；加载失败或来源不支持时明确保留 RSS 摘要、时间与原文地址。HN 时间是提交时间；未知日期保持未知；摘要不代表文章全文。展开分析后点击“分析影响”请求单条新闻分析。若出现日程建议，先点击“接受”查看确认区，再核对时间、冲突与版本，点击“确认并保存”；不点击确认不会修改日程。
 6. 后续刷新出现新相关新闻时显示“新”。打开详情记为已读，重复抓取不会再次标记。
 
 在 **日程** 页面依次填写标题、内容、地点，再选择北京时间（默认）或美国东部时间（纽约）。日期默认所选时区的今天，可选明天或指定日期；开始时间和预计结束时间只需分别填写“时、分”，采用 24 小时制（时 0–23、分 0–59）。跨午夜选择次日结束。纽约时间自动处理 2007 年起的美国夏令时规则；切换日不存在或重复的小时会提示重新选择，避免保存含糊时间。保存后可编辑，旧日程仍可读取；Agent 改期保留内容和地点。同时间冲突或旧版本会拒绝写入。重开应用确认日程和建议状态保持。点击跟踪页的“检查关注更新”只分析未分析或内容已变化的新闻，不自动执行建议。可选 **菜单 → 新闻来源 → 连接诊断 → 测试连接** 仅测试固定宿主调用；天气联合分析尚未开放。
@@ -269,13 +269,13 @@ Rinx 导入的是 `bundle/` 文件夹，不是 ZIP。分享 `build/cfaw-news.zip
 本项目通过 **Use this device** 使用 Rinx 配套 Octos 来执行和管理 Agent。先完成上面的配套内核准备，再启动 Rinx；后续由 Rinx 管理 Octos 的启动和生命周期。“本地”指 Octos 在本机运行，模型仍可调用云端 API。
 
 1. 在 Rinx 登录 Matrix，进入 **Mini apps → Import an app**。
-2. 填写本地助手的四个字段。以下是使用 DeepSeek 的填写示例；其他提供方按其实际支持的 Provider 和模型 ID 配置。
+2. 填写本地助手的四个字段。本项目默认使用 MiniMax-M3，配置与 [MiniMax 官方 OpenAI 兼容接口](https://platform.minimax.cn/docs/api-reference/text-openai-api) 一致。无需在脚本应用中安装 Python SDK；真实请求由固定 Octos 的 OpenAI 兼容提供方实现。
 
 | Rinx 字段 | 填写内容 |
 | --- | --- |
-| `Assistant on this device: provider (e.g. deepseek)` | `deepseek`，填写提供方标识 |
-| `Model` | 提供方为该账号开放的模型 ID；不是模型显示名称 |
-| `Base URL (optional)` | 使用默认 DeepSeek 官方端点时留空；自定义端点时填写模型 API 基地址 |
+| `Assistant on this device: provider (e.g. deepseek)` | `minimax` |
+| `Model` | `MiniMax-M3` |
+| `Base URL (optional)` | `https://api.minimax.cn/v1`（需明确填写，minimax 默认端点为国际站） |
 | `API key (kept in Rinx's own runtime)` | 在模型提供方控制台获取的 API key；不要填 Matrix 密码 |
 
 3. 点击 **Use this device**。配置保存到 Rinx 自己的 Octos profile；个人 `~/.octos` 中的登录或配置不会自动带入。**Octos server URL / Octos profile / Octos access token** 留空，本项目无需点击 **Connect Octos**。
@@ -296,3 +296,20 @@ Rinx 导入的是 `bundle/` 文件夹，不是 ZIP。分享 `build/cfaw-news.zip
 Matrix 的 `m.secret_storage.default_key` / `moments.preferences` 账户数据 404 并非 Octos 调用错误；应依据测试按钮反馈继续诊断。
 
 参考 card-host 没有 Octos 服务，已验证新版连接页显示其真实错误。开发者曾反馈 Rinx / Octos 连通测试成功；新版界面的成功回复、超时中断与完整业务流程仍待在实际宿主验证。
+
+
+### MiniMax 自动联调
+
+`python3 scripts/test_runtime.py --live-minimax` 读取 `MINIMAX_API_KEY`、`--minimax-key-file` 指定的私有文件或已保存的 Rinx MiniMax 密钥；均没有时使用隐藏输入。默认启动固定 Rinx，支持桌面和移动导航，自动填写本项目 bundle 的绝对地址及模型配置、执行 Review / Run，再请求测试意图。`--rinx-data-dir` 指定已有 Matrix 登录的数据目录；`--rinx-remote-port` 可复用正在运行的 Rinx 本机 remote 端口。脚本不自动登录、不绕过账户准入，也不确认保存测试关注；成功后丢弃测试草稿，已有非空用户草稿保留并注明未测试业务。
+
+默认自动测试在结束（含超时）后请求退出自己启动的 Rinx，会明确输出清理提示。不要同时手动输入；使用 `--live-minimax --minimax-manual` 只自动配置并启动，之后由你操作，关闭窗口才结束命令。手动模式不会自动填写、提交或清理草稿，也不等待意图控件。复用已有 remote 实例时不关闭该宿主。自动点击等待连续快照中的控件位置一致；失败报告包含阶段、控件类型/ID/位置和宿主退出原因，不包含控件文本、密钥或草稿。
+
+默认 `MiniMax-M3` 使用模型自带思考；`reasoning_effort` 的分档控制仅对 Flash Preview 生效。本次账号的 Flash Preview 返回 unknown model；显式选择该模型时失败会如实报告，不偷偷切换模型。Flash 配置通过固定 Octos 支持的 `primary.reasoning_effort=max` 和 `model_hints.reasoning_style=effort_max_only` 发送 max；通用 effort 方言会降为 high，因此不能直接用于本例。每次配置仍写入 Rinx 自己的 profile，不给应用 turn 参数增加未实现字段。
+
+Linux 桌面 GPU 抓图不稳定时，可用已安装的 Xvfb/软件 OpenGL 运行原生测试：`xvfb-run -a env -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 python3 scripts/test_runtime.py --suites tracking --inspect-ui --timeout-seconds 120`。截图失败与模型验证分别记录；截图失败不代表模型成功，固定输入通过也不代表真实模型成功。
+
+## 全屏意图交互
+
+悬浮小球和 reveal shader 位于 `frontend/components/intent_orb.splash`，全屏场景挂在 app view 的 overlay；`app/intent_motion.splash` 负责有界动画及前页恢复，动画时长 420 ms，空闲无重绘计时器。意图面板不复用普通详情页的标题栏。
+
+“我想做…”/“关注新闻”沿用 parse_intent，“安排日程”用同一 Agent 的 parse_schedule_intent，全部仍是 octos.turn.start 的 text，未添加宿主 API 参数。任务结构、草稿兼容和保存规则见[意图契约](../src/contracts/intents.md)。自然语言日程的真实联调执行 `python3 scripts/test_runtime.py --live-minimax --minimax-intent schedule`，只校验预览，不自动确认保存。

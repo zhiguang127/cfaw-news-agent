@@ -5,12 +5,24 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
             Heading{text: reading.title}
             if reading["demo_data"] == true { Small{text: "演示缓存 · 非实时新闻" draw_text.color: accent} }
             if reading.evidence_kind == "hn_submission" { Small{text: "HN 提交记录；提交时间不等于原文发布时间"} }
-            else { Small{text: "真实 RSS / Atom 摘要，非文章全文"} }
+            else if article_state.state == "ready" { Small{text: "来源网页正文 · 阅读模式" draw_text.color: accent} }
+            else { Small{text: "来源提供的新闻摘要"} }
+            Divider{}
+            if !story_show_analysis {
+            if article_state.state == "loading" { Small{text: "正在读取来源网页正文…" draw_text.color: accent} }
+            if article_state.error != "" { Small{text: article_state.error} }
+            if article_state.state == "ready" {
+                for paragraph in article_state.paragraphs { Text{text: paragraph draw_text.text_style.font_size: 16 draw_text.text_style.line_spacing: 1.55} }
+                if article_state.truncated { Small{text: "正文过长，阅读模式仅展示部分段落。"} }
+                Small{text: "阅读模式可能省略原网页的图片、表格和其他内容。Agent 判断仍仅依据标题与摘要。"}
+            } else {
             if reading.summary == "" { Text{text: "来源未提供摘要，请通过条目链接查看。" draw_text.color: secondary} }
-            else { Text{text: reading.summary} }
-            Small{text: "抓取于 " + age_label(reading.retrieved_at)}
-            Section{text: "条目链接（可复制）"}
-            Search{text: reading.source_url empty_text: "条目 URL"}
+            else { Text{text: reading.summary draw_text.text_style.font_size: 16 draw_text.text_style.line_spacing: 1.55} }
+            }
+            Small{text: "新闻列表抓取于 " + age_label(reading.retrieved_at)}
+            Section{text: "原文地址"}
+            Search{text: reading.source_url empty_text: "可复制原文地址"}
+            if article_state.state == "failed" { LinkButton{text: "重试读取正文" on_click: || article_load(reading, || ui.story_content.render())} }
             if news_source(reading.source_id) != nil {
                 Small{text: "抓取来源：" + news_source(reading.source_id).label}
                 if news_source(reading.source_id).kind == "google" { Small{text: "通过 Google News 聚合；条目可能保留聚合跳转链接。"} }
@@ -19,22 +31,64 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
                 Small{text: "相同链接已合并；重复收录不代表独立证据。"}
                 for ref in reading.references { Small{text: ref.source + " · " + ref.source_id} }
             }
-            let reasons = interest_matches(reading, user_interests)
-            if reasons.len() > 0 {
-                Divider{}
-                Section{text: "与你有关 · 规则匹配" draw_text.color: accent}
-                for reason in reasons { Text{text: reason} }
             }
             Divider{}
-            Section{text: "Agent 影响分析"}
-            Small{text: "分析仅使用此条新闻的标题和摘要；日程变更须经用户确认。"}
-            agent_status := Small{text: analysis_status_for_news(reading.news_id)}
+            View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
+                Section{width: Fill text: "✦ 这条新闻会影响我吗？" draw_text.color: accent}
+                if story_show_analysis { LinkButton{text: "阅读新闻" on_click: || {story_show_analysis = false ui.story_content.render()}} }
+                else { LinkButton{text: "展开分析" on_click: || {story_show_analysis = true ui.story_content.render()}} }
+            }
+            if story_show_analysis {
+            Divider{}
+            Section{text: "追踪关系与日程提醒"}
+            let tracked = tracking_latest_item(reading)
+            if tracked == nil {
+                Small{text: "尚无当前有效的 Agent 追踪结果；旧结果可能已过期。"}
             let latest = history_latest_analysis(reading.news_id)
             if latest != nil {
                 Small{text: "最近分析：" + history_outcome_label(latest.outcome) + " · " + age_label(latest.created_at)}
                 Text{text: latest.explanation}
                 if latest["session_unsaved"] == true { Small{text: "本次结果尚未完整保存，请到建议页重试保存。" draw_text.color: accent} }
             }
+            } else {
+                Text{text: tracked.item.why_related}
+                let relevance_label = "关系尚不确定"
+                if tracked.item.relevance == "related" { relevance_label = "关注相关" }
+                if tracked.item.relevance == "unrelated" { relevance_label = "与关注无关" }
+                Small{text: relevance_label + " · 检查于 " + age_label(tracked.run.checked_at)}
+                Text{text: tracked.run.result.explanation}
+                for uncertainty in tracked.item.uncertainties { Small{text: "不确定性：" + uncertainty} }
+                for reminder in tracking_item_reminders(tracked) {
+                    let schedule = schedule_find(reminder.schedule_id)
+                    Section{text: "可能影响日程「" + schedule.title + "」" draw_text.color: accent}
+                    Text{text: reminder.impact_summary}
+                    Small{text: "时段依据：" + reminder.overlap_reason}
+                    Small{text: schedule_display_time(schedule.start, schedule.timezone) + " → " + schedule_display_time(schedule.end, schedule.timezone)}
+                    for uncertainty in reminder.uncertainties { Small{text: "不确定性：" + uncertainty} }
+                    if reminder.material_change != "" { Small{text: "变化：" + reminder.material_change} }
+                    View{width: Fill height: Fit flow: Right spacing: 8
+                        SecondaryButton{text: "忽略提醒" on_click: || tracking_dismiss(reminder.reminder_id)}
+                        SecondaryButton{text: "关注这类信息" on_click: || intent_follow_reminder(reminder.reminder_id)}
+                    }
+                }
+                for impact in tracked.item.schedule_impacts {
+                    let reminder = tracking_reminder(tracked.item, impact, tracked.run)
+                    if tracking_reminder_suppressed(reminder) { Small{text: "已记录决定：相同证据不重复提醒"} }
+                }
+                Small{text: "未覆盖目标 " + tracked.run.snapshot.omitted_targets + " · 候选 " + tracked.run.snapshot.omitted_candidates}
+                Section{text: "判断所用依据（标题 / 摘要）"}
+                for id in tracked.item.evidence_ids {
+                    let evidence = tracking_find(tracked.run.snapshot.evidence, "news_id", id)
+                    Small{text: evidence.title}
+                    Small{text: evidence.source_url}
+                    if evidence.published_at == nil { Small{text: "发布日期未知"} }
+                    if evidence.summary_truncated { Small{text: "摘要已缩减；未读取全文"} }
+                }
+            }
+            Divider{}
+            Section{text: "历史分析 / 新检查"}
+            Small{text: "本轮检查关注关系及已有日程影响；提醒不修改日程。"}
+            agent_status := Small{text: analysis_status_for_news(reading.news_id)}
             let saved_suggestions = history_suggestions_for_news(reading.news_id)
             if saved_suggestions.len() > 0 {
                 Divider{}
@@ -85,6 +139,7 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
             View{width: Fill height: Fit flow: Right spacing: 10
                 if analysis_busy { SecondaryButton{text: "取消分析" on_click: || analysis_cancel()} }
                 else { SecondaryButton{text: "分析影响" on_click: || analysis_start(reading)} }
+            }
             }
             View{width: Fill height: Fit flow: Right spacing: 10
                 if records_has_interest("source", reading.source) { SecondaryButton{text: "已跟踪来源" on_click: || toggle_follow(reading)} }

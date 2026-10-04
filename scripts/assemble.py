@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ORDER = [
     'src/app/config.splash',
     'src/contracts/news.splash',
+    'src/contracts/tracking.splash',
     'src/contracts/weather.splash',
     'src/contracts/holiday.splash',
     'src/contracts/fx.splash',
@@ -20,8 +21,12 @@ ORDER = [
     'src/data/storage/schedules.splash',
     'src/data/storage/schedule_time.splash',
     'src/data/storage/weather.splash',
+    'src/data/storage/topics.splash',
     'src/data/retrieval/interests.splash',
+    'src/data/retrieval/tracking.splash',
+    'src/data/retrieval/bm25.splash',
     'src/data/ingestion/http.splash',
+    'src/data/ingestion/articles.splash',
     'src/data/ingestion/feeds.splash',
     'src/data/ingestion/weather.splash',
     'src/data/ingestion/holidays.splash',
@@ -32,14 +37,21 @@ ORDER = [
     'src/agent/results/validator.splash',
     'src/agent/results/change.splash',
     'src/agent/runtime/connectivity.splash',
-    'src/agent/runtime/analysis.splash',
+    'src/agent/prompts/tracking.splash',
+    'src/agent/results/tracking.splash',
+    'src/agent/runtime/tracking.splash',
     'src/app/controller.splash',
+    'src/app/tracking.splash',
+    'src/app/intent_motion.splash',
+    'src/app/intents.splash',
     'src/app/feed_presentation.splash',
     'src/app/weather.splash',
     'src/frontend/styles.splash',
     'src/frontend/components/news_list.splash',
     'src/frontend/components/weather_widget.splash',
     'src/frontend/components/menu.splash',
+    'src/frontend/components/intent_orb.splash',
+    'src/frontend/components/intent_panel.splash',
     'src/frontend/pages/feed.splash',
     'src/frontend/pages/tracking.splash',
     'src/frontend/pages/bookmarks.splash',
@@ -126,7 +138,7 @@ def requested_hosts(root=ROOT):
     cities = city_catalog(root)
     cities_script(cities)  # Validate the configured endpoint before admitting it.
     hosts.add(urlsplit(cities['endpoint']).hostname)
-    for module, name in (('holidays', 'holiday_hosts'), ('fx', 'fx_hosts')):
+    for module, name in (('holidays', 'holiday_hosts'), ('fx', 'fx_hosts'), ('articles', 'article_hosts')):
         source = (root / f'src/data/ingestion/{module}.splash').read_text(encoding='utf-8')
         declaration = re.search(r'\blet\s+' + name + r'\s*=\s*(\[[^\]]*\])', source)
         if not declaration:

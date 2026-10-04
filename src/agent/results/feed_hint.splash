@@ -19,8 +19,9 @@ fn analysis_feed_hint(row, latest, suggestions_by_id){
         }
         if chosen == nil { return nil }
         let text = "Agent · "
-        if schedule_title != "" { text = text + "日程「" + schedule_title + "」：" }
-        {text: text + chosen.change_summary suggestion_id: chosen.suggestion_id priority: true}
+        if schedule_title != "" { text = text + "可能影响日程「" + schedule_title + "」：" }
+        let group = 1 if schedule_title != "" { group = 2 }
+        {text: text + chosen.change_summary suggestion_id: chosen.suggestion_id priority: true group: group}
     } else {
         let label = ""
         if latest.outcome == "no_change" { label = "暂无需调整：" }

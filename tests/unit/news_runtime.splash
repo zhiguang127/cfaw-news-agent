@@ -30,6 +30,22 @@ fn test_run(){
     test_assert(!records_document_valid({schema_version: 1 items: rows}, "bookmarks"), "bookmark without saved timestamp refused")
     let atom = news_parse(fixture_atom, source, 100)
     test_assert(atom.len() == 1 && atom[0].source_url == "https://example.org/atom", "Atom link parsed")
+    let article = article_extract("<html><nav><p>Navigation</p></nav><article><p>First &amp; evidence.</p><p>Second <b>paragraph</b>.</p></article></html>")
+    test_assert(article.paragraphs.len() == 2 && article.paragraphs[0] == "First & evidence." && article.paragraphs[1] == "Second paragraph.", "reader extracts decoded article paragraphs and excludes navigation")
+    test_assert(article_extract("<html><p>Cookie consent only</p></html>").paragraphs.len() == 0, "reader refuses non-article page text")
+    test_assert(article_url_allowed("https://www.bbc.com/news/fixture") && !article_url_allowed("https://www.bbc.com@evil.example/fixture") && !article_url_allowed("javascript:alert(1)"), "reader confines source pages to configured HTTPS hosts")
+    let old_article_request = article_http_request
+    let article_replies = []
+    article_http_request = fn(url, redirects, callback){ article_replies.push(callback) }
+    let obsolete_article_callbacks = 0
+    article_load({source_url: "https://www.bbc.com/news/first"}, || { obsolete_article_callbacks = obsolete_article_callbacks + 1 })
+    article_load({source_url: "https://www.bbc.com/news/second"}, || {})
+    article_replies[0]({success: true body: "<article><p>Old article</p></article>"})
+    test_assert(article_state.state == "loading" && article_state.paragraphs.len() == 0 && obsolete_article_callbacks == 0, "late article cannot replace a newer reader request")
+    article_replies[1]({success: true body: "<article><p>Current article</p></article>"})
+    article_replies[1]({success: true body: "<article><p>Duplicate callback</p></article>"})
+    test_assert(article_state.paragraphs[0] == "Current article", "reader ignores duplicate completions")
+    article_http_request = old_article_request
     test_stage = "HN JSON decode"
     let hn_data = fixture_hn.parse_json()
     test_assert(record_object(hn_data) && record_array(hn_data.hits), "HN JSON object and hits validated")

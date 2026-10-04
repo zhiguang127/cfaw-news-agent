@@ -1,9 +1,13 @@
 HostedView{width: Fill height: Fill
-    full: View{width: Fill height: Fill flow: Down show_bg: true draw_bg.color: white
-        View{width: Fill height: 70 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 14} spacing: 8
+    full: View{width: Fill height: Fill flow: Overlay
+    app_shell := View{width: Fill height: Fill flow: Down show_bg: true draw_bg.color: white
+        View{width: Fill height: 62 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 14} spacing: 8
             menu_button := MenuToggle{}
             menu_badge := Small{visible: false width: Fit text: "•" draw_text.color: accent}
-            Label{width: Fill text: "cfaw-news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18} max_lines: 1}
+            View{width: Fill height: Fit flow: Down spacing: 2
+                Label{text: "cfaw-news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18} max_lines: 1}
+                Small{text: "NEWS THAT MOVES YOU" draw_text.color: accent draw_text.text_style.font_size: 8}
+            }
             weather_widget := WeatherHeaderWidget{}
         }
         Divider{}
@@ -33,7 +37,7 @@ HostedView{width: Fill height: Fill
                     list := NewsList{}
                     on_render: || { list := NewsList{} }
                 }
-                View{width: Fill height: Fill align: Align{x: 1.0 y: 1.0} padding: Inset{right: 14 bottom: 18}
+                View{width: Fill height: Fill align: Align{x: 0.0 y: 1.0} padding: Inset{left: 14 bottom: 18}
                     back_to_top := Primary{visible: false width: 40 height: 40 text: "↑" on_click: || return_feed_top()
                         draw_bg +: {border_radius: 20.0 color: #x2e4b75 color_hover: #x3c5d89 color_down: #x496f9e}
                         draw_text.text_style.font_size: 20}
@@ -60,6 +64,22 @@ HostedView{width: Fill height: Fill
         search_box := View{width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 10 bottom: 12}
             search := Search{height: 36 on_change: |text| set_query(text)}
         }
+    }
+    floating_ai := View{width: Fill height: Fill align: Align{x: 1.0 y: 1.0} padding: Inset{right: 18 bottom: 100}
+        View{width: 72 height: Fit flow: Down align: Align{x: 0.5}
+            ai_orb := AIOrb{on_click: || { if !intent_open { intent_begin(nil) } }}
+        }
+    }
+    intent_overlay := View{visible: false width: Fill height: Fill flow: Overlay
+        intent_wave := View{width: Fill height: Fill on_render: || { IntentReveal{draw_bg.progress: intent_reveal} }}
+        intent_scene := IntentBackdrop{visible: false flow: Down
+            View{width: Fill height: 64 flow: Right padding: Inset{left: 22 right: 18 top: 14 bottom: 10} align: Align{y: 0.5}
+                Section{width: Fill text: "✦ 意图空间" draw_text.color: #x455789 draw_text.text_style.font_size: 14}
+                intent_close := QuietButton{width: 36 height: 36 text: "×" draw_text.text_style.font_size: 22 on_click: || intent_cancel()}
+            }
+            intent_panel := IntentPanel{visible: true}
+        }
+    }
     }
     tile: View{width: Fill height: Fill flow: Down padding: 14 spacing: 8 show_bg: true draw_bg.color: white
         Section{text: "cfaw news" draw_text.color: accent}

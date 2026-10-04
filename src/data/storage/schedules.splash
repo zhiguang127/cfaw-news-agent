@@ -80,6 +80,7 @@ fn schedule_valid(item){
     if item["location"] != nil && !record_string(item["location"]) { return false }
     if item["status"] != nil && item.status != "active" && item.status != "cancelled" && item.status != "completed" { return false }
     if item["allow_reschedule"] != nil && item.allow_reschedule != true && item.allow_reschedule != false { return false }
+    if item["origin_intent_id"] != nil && (!record_string(item.origin_intent_id) || item.origin_intent_id == "" || item.origin_intent_id.len() > 200) { return false }
     schedule_interval(item["start"], item["end"])
 }
 fn schedule_doc_valid(value){
@@ -154,6 +155,9 @@ fn schedule_create_details(title, content, location, start, end, timezone, sugge
     schedule_create_options(title, content, location, start, end, timezone, suggestion_id, false)
 }
 fn schedule_create_options(title, content, location, start, end, timezone, suggestion_id, allow){
+    schedule_create_record(title, content, location, start, end, timezone, suggestion_id, allow, nil)
+}
+fn schedule_create_record(title, content, location, start, end, timezone, suggestion_id, allow, intent_id){
     if !record_string(content) || !record_string(location) { return {success: false error: "Invalid schedule content or location"} }
     if record_string(title) && (title.len() > 200 || content.len() > 2000 || location.len() > 300) { return {success: false error: "标题最多200字，内容最多2000字，地点最多300字"} }
     if !schedule_interval(start, end) || !record_string(title) || title.trim() == "" { return {success: false error: "Invalid schedule title or interval"} }
@@ -163,10 +167,21 @@ fn schedule_create_options(title, content, location, start, end, timezone, sugge
     if suggestion_id != nil {
         for item in user_schedules { if item["origin_suggestion_id"] == suggestion_id { return {success: true item: item idempotent: true} } }
     }
+    if intent_id != nil {
+        for item in user_schedules {
+            if item["origin_intent_id"] == intent_id {
+                if item.title != title.trim() || item.content != content.trim() || item.location != location.trim() || item.start != start || item.end != end || item.timezone != timezone {
+                    return {success: false error: "这份草稿已经保存为日程；请丢弃草稿后创建新的安排"}
+                }
+                return {success: true item: item idempotent: true}
+            }
+        }
+    }
     if user_schedules.len() >= 128 { return {success: false error: "日程容量已达128条；原日程保留，请先备份并整理日程记录"} }
     let id = "schedule-" + time_now() + "-" + schedule_counter
     while schedule_find(id) != nil { schedule_counter = schedule_counter + 1 id = "schedule-" + time_now() + "-" + schedule_counter }
     let candidate = {schedule_id: id version: 1 title: title.trim() content: content.trim() location: location.trim() start: start end: end timezone: timezone origin_suggestion_id: suggestion_id status: "active" allow_reschedule: allow}
+    if intent_id != nil { candidate.origin_intent_id = intent_id }
     let conflicts = schedule_conflicts(candidate, nil)
     if conflicts.len() > 0 { return {success: false error: "Schedule conflict" conflicts: conflicts} }
     schedule_counter = schedule_counter + 1
@@ -213,6 +228,7 @@ fn schedule_update_options(id, expected_version, title, content, location, start
     let conflicts = schedule_conflicts(candidate, id)
     if conflicts.len() > 0 { return {success: false error: "Schedule conflict" conflicts: conflicts} }
     let previous = user_schedules.to_json()
+    if current["time_precision"] == "day" && (current.start != candidate.start || current.end != candidate.end) { current.time_precision = "exact" }
     current.version = candidate.version current.title = candidate.title current.start = candidate.start current.end = candidate.end current.timezone = candidate.timezone
     current.content = content.trim() current.location = location.trim()
     current.allow_reschedule = allow

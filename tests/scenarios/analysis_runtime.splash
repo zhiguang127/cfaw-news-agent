@@ -9,8 +9,8 @@ fn logic_prepare(){
     feed_initialize()
     feed_rows_by_source[news_sources[0].id] = [logic_row]
     app_feed_rows = [logic_row]
-    analysis_busy = false analysis_terminal = false analysis_needs_reopen = false analysis_batch_busy = false
-    busy = false analysis_check_message = "" analysis_batch_no_change = 0 analysis_batch_insufficient = 0
+    analysis_busy = false analysis_terminal = false analysis_needs_reopen = false
+    busy = false analysis_check_message = ""
     logic_reply = nil logic_interrupt = nil
     reading = nil detail_kind = ""
     analysis_host_has = |name| true
@@ -70,120 +70,7 @@ fn logic_test_evidence(){
     agent_assert(merged[0].summary == "Newest" && logic_row.summary == "A", "merge uses latest without mutating source")
     merged[0].references.push({source_id: "extra"})
     agent_assert(copy.references.len() == 1 && logic_row.references.len() == 1, "merged references owned separately")
-    start_timeout(0.02, || logic_test_runtime())
-}
-fn logic_test_runtime(){
-    print("stage logic runtime")
-    logic_prepare()
-    analysis_start(logic_row)
-    agent_assert(analysis_busy, "analysis started without open detail")
-    reading = {news_id: "different"}
-    logic_reply(logic_no_change())
-    agent_assert(analysis_state == "succeeded" && analysis_history.len() == 1, "navigation does not reject valid analysis")
-    logic_reply(logic_no_change())
-    agent_assert(analysis_history.len() == 1, "duplicate completion ignored")
-    analysis_start(logic_row)
-    let old_reply = logic_reply
-    analysis_cancel()
-    agent_assert(analysis_busy && analysis_terminal, "cancel waits for stop acknowledgment")
-    logic_interrupt({is_ok: true})
-    agent_assert(!analysis_busy && analysis_state == "cancelled", "cancel acknowledgment ends request")
-    analysis_start(logic_row)
-    old_reply(logic_no_change())
-    agent_assert(analysis_busy, "late old completion cannot finish new request")
-    logic_row.summary = "New evidence"
-    logic_reply(logic_no_change())
-    agent_assert(analysis_error_category == "stale_context", "changed input rejects in-flight result")
-    start_timeout(0.02, || logic_test_storage())
-}
-fn logic_test_storage(){
-    print("stage logic storage")
-    logic_prepare()
-    analysis_start(logic_row)
-    analysis_history_file.writable = false
-    logic_reply(logic_no_change())
-    agent_assert(analysis_state == "failed" && analysis_error_category == "storage_error" && history_dirty, "storage failure never reports analysis success")
-    analysis_history_file.writable = true
-    agent_assert(history_retry_save() == "" && !history_dirty, "explicit retry saves session result")
-    analysis_start(logic_row)
-    analysis_timeout()
-    analysis_stop_ack(analysis_request_id, false)
-    agent_assert(!analysis_busy && analysis_needs_reopen, "unacknowledged timeout blocks later requests")
-    start_timeout(0.02, || logic_test_batch())
-}
-fn logic_test_batch(){
-    print("stage logic batch")
-    logic_prepare()
-    app_feed_rows = []
-    for i in 12 {
-        let row = news_normalize({title: "Fixture " + i summary: "A" link: "https://example.invalid/batch/" + i}, news_sources[0], time_now())
-        app_feed_rows.push(row)
-    }
-    analyze_changes()
-    start_timeout(0.10, || {
-        agent_assert(analysis_batch_rows.len() == 8 && analysis_batch_skipped == 4, "batch lexical selection capped at eight")
-        agent_assert(analysis_busy && analysis_batch_busy, "batch starts first request without detail")
-        analysis_cancel()
-        agent_assert(!analysis_batch_busy && analysis_batch_skipped == 11, "cancel stops whole batch")
-        logic_interrupt({is_ok: true})
-        start_timeout(0.03, || {
-            agent_assert(!analysis_busy && !analysis_batch_busy, "cancelled batch does not restart")
-            start_timeout(0.02, || logic_test_batch_results())
-        })
-    })
-}
-fn logic_test_batch_results(){
-    logic_prepare()
-    let other = news_normalize({title: "Fixture second" summary: "A" link: "https://example.invalid/second"}, news_sources[0], time_now())
-    app_feed_rows = [logic_row other]
-    feed_rows_by_source[news_sources[0].id] = app_feed_rows
-    analyze_changes()
-    start_timeout(0.08, || {
-        logic_reply(logic_no_change())
-        start_timeout(0.04, || {
-            logic_reply({is_ok: true data: {text: "invalid-json"}})
-            start_timeout(0.04, || {
-                agent_assert(!analysis_batch_busy && analysis_batch_done == 1 && analysis_batch_failed == 1, "batch accounts for success and failure and finishes")
-                start_timeout(0.02, || logic_test_check_feedback())
-            })
-        })
-    })
-}
-fn logic_test_check_feedback(){
-    logic_prepare()
-    user_interests = []
-    analyze_changes()
-    agent_assert(!analysis_busy && !analysis_batch_busy && logic_reply == nil, "missing focus never starts model or batch")
-    logic_prepare()
-    busy = true
-    analyze_changes()
-    agent_assert(!analysis_busy && !analysis_batch_busy && logic_reply == nil, "refreshing feed defers analysis instead of checking partial input")
-    logic_prepare()
-    logic_row.title = "Unrelated news"
-    analyze_changes()
-    start_timeout(0.04, || {
-        agent_assert(!analysis_busy && !analysis_batch_busy && logic_reply == nil && analysis_history.len() == 0, "unmatched candidates never produce an AI verdict")
-        agent_assert(analysis_check_message == "暂无需要分析的关注更新，本次未调用助手。", "selection-only result says assistant was not called")
-        logic_prepare()
-        history_record_analysis(logic_row, "unchanged-feedback", 1, "t", {outcome: "no_change" explanation: "Fixture" suggestions: []})
-        start_timeout(0.02, || {
-            analyze_changes()
-            start_timeout(0.04, || {
-                agent_assert(!analysis_busy && !analysis_batch_busy && logic_reply == nil && analysis_history.len() == 1, "unchanged input skips a second model call")
-                analysis_batch_done = 1 analysis_batch_failed = 0 analysis_batch_no_change = 1
-                agent_assert(analysis_batch_result_message() == "本次分析未发现调整建议。", "completed no-change verdict differs from a skipped check")
-                analysis_batch_insufficient = 1
-                agent_assert(analysis_batch_result_message() == "检查完成，部分新闻证据不足，尚不能确定如何调整。", "insufficient evidence does not claim no adjustment is needed")
-                analysis_batch_done = 0 analysis_batch_failed = 1
-                agent_assert(analysis_batch_result_message() == "本次分析未能完成，查看提示后可重试。", "all failed requests do not claim partial successful analysis")
-                logic_prepare()
-                analysis_check_message = "本次分析未发现调整建议。"
-                toggle_follow(logic_row)
-                agent_assert(analysis_check_status() == "检查相关新闻是否影响你关注的事和已有日程。" && logic_reply == nil, "changed focus clears old verdict without starting a model call")
-                start_timeout(0.02, || logic_test_capacity())
-            })
-        })
-    })
+    start_timeout(0.02, || logic_test_capacity())
 }
 fn logic_test_capacity(){
     logic_prepare()

@@ -1,0 +1,68 @@
+// Tracking v2 domain contract. Unix seconds; schedule times remain RFC3339.
+// Model values pass tracking_validate before the application can persist them.
+fn tracking_text(value, limit){
+    if !record_string(value) { return false }
+    value.to_chars().len() <= limit
+}
+fn tracking_strings(value, count, limit){
+    if !record_array(value) { return false }
+    if value.len() > count { return false }
+    for text in value { if !tracking_text(text, limit) || text.trim() == "" { return false } }
+    true
+}
+fn topic_understanding_valid(value){
+    if !record_object(value) { return false }
+    if !tracking_text(value["title"], 120) || value["title"].trim() == "" || !tracking_text(value["purpose"], 400) { return false }
+    if !tracking_strings(value["scope"], 6, 160) || value["scope"].len() == 0 || !tracking_strings(value["preferences"], 6, 160) { return false }
+    if !record_array(value["recall_rules"]) || value["recall_rules"].len() == 0 || value["recall_rules"].len() > tracking_config.max_rules { return false }
+    for rule in value["recall_rules"] {
+        if !record_object(rule) || !tracking_text(rule["value"], 120) || rule["value"].trim() == "" { return false }
+        if rule["kind"] != "keyword" && rule["kind"] != "category" && rule["kind"] != "source" { return false }
+    }
+    true
+}
+fn topic_valid(value){
+    if !topic_understanding_valid(value) { return false }
+    if !tracking_text(value["topic_id"], 120) || value["topic_id"] == "" || !record_number(value["version"]) || value["version"] < 1 || floor(value["version"]) != value["version"] { return false }
+    if !tracking_text(value["original_input"], tracking_config.max_input_chars) || !tracking_text(value["supplement"], tracking_config.max_input_chars) { return false }
+    if value["status"] != "active" && value["status"] != "paused" { return false }
+    record_number(value["created_at"]) && record_number(value["updated_at"])
+}
+fn topic_draft_valid(value){
+    if value == nil { return true }
+    if !record_object(value) || !tracking_text(value["draft_id"], 120) || !record_number(value["version"]) || value["version"] < 1 { return false }
+    if !tracking_text(value["original_input"], tracking_config.max_input_chars) || !tracking_text(value["supplement"], tracking_config.max_input_chars) || !tracking_text(value["question"], 300) { return false }
+    if value["target_topic_id"] != nil && !tracking_text(value["target_topic_id"], 120) { return false }
+    if value["target_version"] != nil && !record_number(value["target_version"]) { return false }
+    if value["state"] != "editing" && value["state"] != "ready" && value["state"] != "needs_clarification" { return false }
+    if value["understanding"] != nil && !topic_understanding_valid(value["understanding"]) { return false }
+    if value["origin_reminder_id"] != nil && !tracking_text(value["origin_reminder_id"], 400) { return false }
+    if value["intent_kind"] != nil && value.intent_kind != "goal" && value.intent_kind != "news" && value.intent_kind != "schedule" { return false }
+    if value["schedule_timezone"] != nil && value.schedule_timezone != "Asia/Shanghai" && value.schedule_timezone != "America/New_York" { return false }
+    if value["schedule_understanding"] != nil && !schedule_intent_understanding_valid(value.schedule_understanding) { return false }
+    if value["intent_kind"] == "schedule" && value.state == "ready" && value["schedule_understanding"] == nil { return false }
+    true
+}
+fn schedule_intent_time_valid(text, zone){
+    if schedule_instant(text) == nil { return false }
+    let parts = text.split("T")
+    let clock = parts[1].split(":")
+    let expected = schedule_entry_timestamp(parts[0], clock[0], clock[1], zone)
+    expected.valid && expected.timestamp == text
+}
+fn schedule_intent_understanding_valid(value){
+    if !record_object(value) { return false }
+    if !tracking_text(value["title"], 120) || value.title.trim() == "" || value.title.to_bytes().len() > 200 { return false }
+    if !tracking_text(value["content"], 600) || !tracking_text(value["location"], 100) { return false }
+    if value["timezone"] != "Asia/Shanghai" && value["timezone"] != "America/New_York" { return false }
+    schedule_interval(value["start"], value["end"]) && schedule_intent_time_valid(value.start, value.timezone) && schedule_intent_time_valid(value.end, value.timezone)
+}
+fn tracking_evidence_key(row){
+    {news_id: row.news_id title: row.title summary: row.summary source_url: row.source_url
+        published_at: row.published_at timestamp_kind: row.timestamp_kind evidence_kind: row.evidence_kind references: row.references}.to_json()
+}
+
+// Compatibility for saved starter records. Never delete user files. An edited
+// starter (version > 1) is user-owned and remains visible and usable.
+fn topic_is_user_record(item){ item.topic_id != "preset-agent-development-v1" || item.version > 1 }
+fn schedule_is_user_record(item){ item.schedule_id != "preset-shanghai-trip-v1" || item.version > 1 }

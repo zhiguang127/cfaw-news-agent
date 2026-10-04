@@ -205,11 +205,11 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
     click(next(w for w in forecast if w.get('t') == '选择城市' and w.get('ty') == 'Button'))
     picker = snapshot('feed-weather-picker')
     click(next(w for w in picker if w.get('t') == '杭州' and w.get('ty') == 'Button'))
-    selected = snapshot('feed-weather-selected')
+    selected = snapshot('feed-weather-selected', lambda ws: any(w.get('t') == '杭州' and w.get('ty') == 'Label' for w in ws))
     if not any(w.get('t') == '杭州' and w.get('ty') == 'Label' for w in selected):
         raise SystemExit('Weather city selection stopped working')
     click(next(w for w in selected if w.get('t') == '‹ 返回' and w.get('ty') == 'Button'))
-    widgets = snapshot('feed-weather-returned')
+    widgets = snapshot('feed-weather-returned', lambda ws: sum(w.get('ty') == 'Label' and w.get('t', '').startswith('Synthetic capacity news') for w in ws) >= 3)
     if not any(w.get('t', '').startswith('杭州 ·') for w in widgets):
         raise SystemExit('Selected weather city missing after returning to the home feed')
     titles = [w for w in widgets if w.get('ty') == 'Label' and w.get('t', '').startswith('Synthetic capacity news')]
@@ -217,21 +217,22 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
     if len(titles) < 3 or not any(w.get('t') == '240 条新闻' for w in widgets):
         raise SystemExit('Full-capacity native list is not visible')
     first = min(titles, key=lambda w: w['r'][1])
-    inline = next((w for w in widgets if w.get('ty') == 'Label' and w.get('t', '').startswith('Agent · 日程「Synthetic evaluation」')), None)
+    inline = next((w for w in widgets if w.get('ty') == 'Button' and w.get('t', '').startswith('Agent · 可能影响日程「Synthetic evaluation」')), None)
     if inline is None:
         raise SystemExit('Validated schedule impact is missing from its prioritized news row')
     click(inline)
-    impact_detail = snapshot('feed-impact-detail')
+    impact_detail = snapshot('feed-impact-detail', lambda ws: any(w.get('t') == 'Synthetic impact explanation' for w in ws))
     if not any(w.get('t') == 'Synthetic impact explanation' for w in impact_detail):
         raise SystemExit('Inline Agent hint cannot open its evidence and explanation')
     click(next(w for w in impact_detail if w.get('t') == '‹ 返回' and w.get('ty') == 'Button'))
-    widgets = json.loads(get('/snap'))['s']
+    widgets = snapshot('feed-impact-returned', lambda ws: any(w.get('t') == '查看' and w.get('ty') == 'Button' for w in ws))
     click(min((w for w in widgets if w.get('t') == '查看' and w.get('ty') == 'Button'), key=lambda w: w['r'][1]))
-    detail = snapshot('feed-story')
+    detail = snapshot('feed-story', lambda ws: any(w.get('t') == '‹ 返回' and w.get('ty') == 'Button' for w in ws))
     back = next((w for w in detail if w.get('t') == '‹ 返回' and w.get('ty') != 'Label'), None)
     if back is None:
         raise SystemExit('News detail did not open after full-capacity refresh')
     click(back)
+    snapshot('feed-story-returned', lambda ws: any(w.get('t') == '查看' and w.get('ty') == 'Button' for w in ws))
     get('/m', k='scroll', x=170, y=500, dy=8500, wait=1)
     time.sleep(.3)
     scrolled = snapshot('feed-scrolled')
@@ -239,7 +240,7 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
         raise SystemExit('Feed cannot be scrolled after repeated refreshes')
     click(next(w for w in scrolled if w.get('t') == '↑' and w.get('ty') != 'Label'))
     time.sleep(.3)
-    top = snapshot('feed-returned-top')
+    top = snapshot('feed-returned-top', lambda ws: any(w.get('t') == first['t'] and abs(w['r'][1] - first['r'][1]) < 1 for w in ws))
     if not any(w.get('t') == first['t'] and abs(w['r'][1] - first['r'][1]) < 1 for w in top):
         raise SystemExit('Return-to-top stopped working after repeated refreshes')
     click(next(w for w in top if w.get('t') == '收藏' and w.get('ty') != 'Label' and 180 < w['r'][1] < 650))
@@ -252,24 +253,20 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
         raise SystemExit('Deferred rendering lost the saved news row')
     click(next(w for w in bookmarks if w.get('t') == '首页' and w.get('ty') == 'Button'))
     menu_action('管理关注')
-    widgets = json.loads(get('/snap'))['s']
-    click(next(w for w in widgets if w.get('i') == 'keyword_input' and w.get('ty') == 'TextInput'))
-    get('/t', t='/1')
-    widgets = json.loads(get('/snap'))['s']
-    click(next(w for w in widgets if w.get('t') == '添加关注' and w.get('ty') == 'Button'))
-    widgets = json.loads(get('/snap'))['s']
-    click(next(w for w in widgets if w.get('t') == '‹ 返回' and w.get('ty') == 'Button'))
-    priority = snapshot('feed-priority', lambda ws: any(w.get('t') == '匹配关键词：/1' for w in ws))
-    ranked = sorted((w for w in priority if w.get('ty') == 'Label' and w.get('t', '').startswith('Synthetic capacity news')), key=lambda w: w['r'][1])
-    if not ranked or '/1' not in ranked[0]['t'] or ranked[0]['t'] == first['t']:
-        raise SystemExit('Followed news did not move to the top of the same feed')
-    if not any(w.get('t') == '匹配关键词：/1' for w in priority):
-        raise SystemExit('Prioritized rule match has no honest relevance explanation')
-    if any(w.get('ty') == 'Label' and w.get('t', '').startswith('Agent · 日程') for w in priority):
-        raise SystemExit('Context change left an old Agent impact in the feed')
+    managed = snapshot('feed-managed-interests')
+    if any(w.get('i') == 'keyword_input' or '规则匹配' in w.get('t', '') or '（预设）' in w.get('t', '') for w in managed if w.get('ty') != 'Splash'):
+        raise SystemExit('Removed rule editor or starter records remain visible')
+    if not any(w.get('t') == '表达关注 / 继续草稿' and w.get('ty') == 'Button' for w in managed):
+        raise SystemExit('Interest management lost the intent entry')
+    click(next(w for w in managed if w.get('t') == '‹ 返回' and w.get('ty') == 'Button'))
+    widgets = snapshot('feed-managed-returned')
+    click(next(w for w in widgets if w.get('t') == '关注来源' and w.get('ty') == 'Button'))
+    priority = snapshot('feed-priority', lambda ws: any(w.get('t') == '已跟踪' for w in ws))
+    if any('规则匹配' in w.get('t', '') for w in priority if w.get('ty') in ('Label', 'Button')):
+        raise SystemExit('Lexical recall leaked into product relevance hints')
     stored = json.loads((work / 'data/dev.cfaw.runtime-tests/interests_v1.json').read_text(encoding='utf-8'))
-    if not any(i.get('kind') == 'keyword' and i.get('value') == '/1' for i in stored['items']):
-        raise SystemExit('Interest management did not persist its rule')
+    if not any(i.get('kind') == 'source' for i in stored['items']):
+        raise SystemExit('Following a source did not persist')
     menu_action('关注动态')
     followed = snapshot('feed-followed')
     if not any('我的关注' in w.get('t', '') for w in followed):
@@ -314,24 +311,204 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
     print(f'Native feed UI checked at {logical_size} (single search, priority, inline Agent impact, weather, city selection, detail, scroll, menu interests/bookmarks, filters, 80 rapid page switches): {work}')
 
 
+def inspect_tracking_ui(work, port, logical_size, rinx=False):
+    """Actual widget events; labeled fixture replies; filesystem assertions."""
+    checks = []
+    captures = []
+    def get(route, **params):
+        query = '?' + urlencode(params) if params else ''
+        with urlopen(f'http://127.0.0.1:{port}{route}{query}', timeout=12) as response:
+            return response.read()
+    def snapshot(label):
+        time.sleep(.12)
+        # Wait for the bounded orb reveal/contraction, then inspect the page
+        # where controls are actually interactive, rather than a halfway frame.
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            current = json.loads(get('/snap'))['s']
+            wants_intent = label in ('tracking-orb-opened', 'tracking-follow-scope', 'tracking-new-intent', 'tracking-draft-reopened')
+            wants_closed = label in ('tracking-home', 'tracking-orb-returned', 'tracking-follow-confirmed', 'tracking-draft-return')
+            if wants_intent:
+                ready = any(w.get('i') == 'intent_input' for w in current)
+            elif wants_closed:
+                ready = any(w.get('i') == 'ai_orb' for w in current)
+            else:
+                ready = any(w.get('t') == 'cfaw-news' or w.get('i') == 'intent_input' for w in current if w.get('ty') != 'Splash')
+            if ready:
+                break
+            time.sleep(.05)
+        data = get('/snap')
+        (work / (label + '.json')).write_bytes(data)
+        widgets = json.loads(data)['s']
+        # Old target-host Wayland capture can hang; widget-event checks continue,
+        # and the missing pixel verification is reported separately.
+        if not rinx or not captures:
+            try:
+                png = get('/g', raw=1)
+                (work / (label + '.png')).write_bytes(png)
+                brand = next(w for w in widgets if w.get('ty') == 'Label' and w.get('t') in ('cfaw-news', '✦ 意图空间'))
+                if not region_has_ink(png, brand['r'], tuple(map(int, logical_size.split('x')))):
+                    raise SystemExit('Tracking header painted blank')
+                captures.append('verified:' + label)
+            except (OSError, ValueError) as error:
+                if not rinx:
+                    raise
+                captures.append('unverified:' + type(error).__name__)
+        return widgets
+    def click(widget):
+        x, y, width, height = widget['r']
+        get('/click', x=x + width / 2, y=y + height / 2, wait=1)
+        time.sleep(.12)
+    def find(widgets, text=None, ident=None):
+        return next(w for w in widgets if (text is None or w.get('t') == text) and (ident is None or w.get('i') == ident) and w.get('ty') in ('Button', 'TextInput', 'GestureView'))
+    def button(text):
+        widgets = json.loads(get('/snap'))['s']
+        for _ in range(8):
+            available = next((w for w in widgets if w.get('t') == text and w.get('ty') == 'Button'), None)
+            if available:
+                click(available)
+                return
+            get('/m', k='scroll', x=180, y=620, dy=230, wait=1)
+            widgets = json.loads(get('/snap'))['s']
+        raise SystemExit(f'Native tracking button missing: {text}; inspect {work}')
+    home = snapshot('tracking-home')
+    orb = find(home, ident='ai_orb')
+    x, y, width, height = orb['r']
+    get('/click', x=x + width / 2, y=y + height / 2, wait=1)
+    if not rinx:
+        (work / 'intent-orb-expanding.png').write_bytes(get('/g', raw=1))
+        time.sleep(.1)
+        (work / 'intent-orb-expanding-mid.png').write_bytes(get('/g', raw=1))
+    expanded = snapshot('tracking-orb-opened')
+    if any(w.get('t') == 'cfaw-news' for w in expanded if w.get('ty') == 'Label'):
+        raise SystemExit('Intent scene did not occupy the full application viewport')
+    if not all(any(w.get('t') == t and w.get('ty') == 'Button' for w in expanded) for t in ('我想做…', '关注新闻', '安排日程')):
+        raise SystemExit('Unified intent modes are missing')
+    click(find(expanded, ident='intent_close'))
+    home = snapshot('tracking-orb-returned')
+    checks.append('floating orb expands into full-screen intent modes; closing preserves news context')
+    titles = [w for w in home if w.get('ty') == 'Label' and w.get('t', '').startswith('固定测试：')]
+    if len(titles) < 3:
+        raise SystemExit('Tracking home no longer has a compact multi-item feed')
+    hint = next(w for w in home if w.get('ty') == 'Button' and w.get('t', '').startswith('Agent · 可能影响日程'))
+    click(hint)
+    detail = snapshot('tracking-detail')
+    if not any('2026-10-09' in w.get('t', '') for w in detail if w.get('ty') == 'Label'):
+        raise SystemExit('Reminder detail lost its source evidence')
+    button('关注这类信息')
+    panel = snapshot('tracking-follow-scope')
+    if not any(w.get('i') == 'intent_input' for w in panel):
+        raise SystemExit('Follow action did not open an independent confirmation panel')
+    records_path = work / 'data/dev.cfaw.runtime-tests/topics_v2.json'
+    if len(json.loads(records_path.read_text())['topics']) != 1:
+        raise SystemExit('Follow action saved an unconfirmed permanent topic')
+    checks.append('reminder opens independent scope confirmation, no implicit save')
+    # Confirm the fixed understanding using the actual submit and confirm buttons.
+    submit = '重试整理' if any(w.get('t') == '重试整理' for w in panel) else '整理我的想法 ↗'
+    button(submit)
+    time.sleep(.15)
+    ready = snapshot('tracking-intent-understood')
+    button('确认关注并保存')
+    returned = snapshot('tracking-follow-confirmed')
+    back = next((w for w in returned if w.get('t') == '‹ 返回' and w.get('ty') == 'Button'), None)
+    if back:
+        click(back)
+        returned = snapshot('tracking-follow-returned')
+    record = json.loads(records_path.read_text())
+    if len(record['topics']) != 2 or not any(d['state'] == 'followed' for d in record['decisions']):
+        raise SystemExit('Confirmed follow did not persist topic and decision together')
+    checks.append('confirmed scope persists topic and shared decision')
+    if any(w.get('ty') == 'Button' and w.get('t', '').startswith('Agent · 可能影响日程') for w in returned):
+        raise SystemExit('Handled reminder still visible after confirmation')
+    checks.append('home reminder updates after decision')
+    # Menu -> draft input -> submit -> ready -> cancel -> resume existing draft.
+    click(find(returned, ident='menu_button'))
+    button('表达关注 / 继续草稿')
+    edit = snapshot('tracking-new-intent')
+    click(find(edit, ident='intent_input'))
+    get('/t', t='关注开源 Agent 离线部署，融资少一点')
+    button('整理我的想法 ↗')
+    time.sleep(.15)
+    snapshot('tracking-new-understanding')
+    button('取消并保留草稿')
+    resumed_home = snapshot('tracking-draft-return')
+    if not any(w.get('i') == 'search' for w in resumed_home):
+        raise SystemExit('Returning from intent lost the sole news search input')
+    record = json.loads(records_path.read_text())
+    if record['draft'] is None or record['draft']['state'] != 'ready':
+        raise SystemExit('Cancel did not preserve the understood draft')
+    checks.append('native input, submit, cancel and persisted draft')
+    click(find(resumed_home, ident='menu_button'))
+    button('表达关注 / 继续草稿')
+    resumed = snapshot('tracking-draft-reopened')
+    if not any(w.get('ty') == 'Label' and w.get('t') == '待确认的理解' for w in resumed):
+        raise SystemExit('Reopening draft lost understanding')
+    button('取消并保留草稿')
+    checks.append('reopened draft retains understanding and return context')
+    home = snapshot('tracking-draft-return')
+    click(find(home, ident='ai_orb'))
+    edit = snapshot('tracking-new-intent')
+    click(find(edit, text='安排日程'))
+    edit = snapshot('tracking-schedule-input')
+    click(find(edit, text='北京时间'))
+    edit = snapshot('tracking-schedule-input-zone')
+    click(find(edit, ident='intent_input'))
+    get('/key', c='KeyA', ctrl=1, wait=1)
+    get('/t', t='固定测试：11月3日12点到13点，线上设计讨论')
+    button('整理我的想法 ↗')
+    preview = snapshot('tracking-schedule-preview')
+    if not any('2026-11-03' in w.get('t', '') for w in preview if w.get('ty') == 'Label'):
+        raise SystemExit('Schedule preview lost its explicit date')
+    schedule_path = work / 'data/dev.cfaw.runtime-tests/schedules_v1.json'
+    count = len(json.loads(schedule_path.read_text())['items'])
+    button('确认日程并保存')
+    snapshot('tracking-schedule-saved')
+    saved = json.loads(schedule_path.read_text())['items']
+    if len(saved) != count + 1 or not any(s.get('origin_intent_id') and s.get('title') == '固定测试：设计讨论' for s in saved):
+        raise SystemExit('Native schedule confirmation did not persist exactly one plan')
+    checks.append('native schedule mode, timezone, preview and explicit confirmation save one in-app plan')
+    (work / 'tracking-ui-report.json').write_text(json.dumps({'viewport': logical_size, 'host': 'pinned Rinx App' if rinx else 'reference card-host', 'checks': checks, 'captures': captures}, ensure_ascii=False, indent=2))
+    if '[E]' in (work / 'host.log').read_text(encoding='utf-8', errors='replace'):
+        raise SystemExit('Native tracking UI script failure; inspect ' + str(work))
+    print(f'Tracking native events checked at {logical_size}: {work}', flush=True)
+
+
 def run():
     parser = argparse.ArgumentParser(description=__doc__)
+    from test_live_minimax import add_arguments, run_live
+    add_arguments(parser)
     parser.add_argument('--host', type=Path, help='Pinned card-host executable')
     parser.add_argument('--agent-only', action='store_true', help='Run isolated agent validation tests')
+    parser.add_argument('--restart', action='store_true', help='Restart tracking fixture in a fresh native process and verify persisted records/cache')
     parser.add_argument('--inspect-ui', action='store_true', help='Capture and exercise the fixture UI (agent-only or --suites feed)')
     parser.add_argument('--ui-size', choices=('360x860', '430x860'), default='430x860', help='Feed UI inspection viewport')
     parser.add_argument('--timeout-seconds', type=int, help='Report deadline for slower native/software-rendered hosts (1..600)')
+    parser.add_argument('--rinx-runtime', action='store_true', help='Linux pinned Rinx App/Modal, isolated fixtures, no login/admission/model lease')
     parser.add_argument('--rinx-render-probe', action='store_true', help='Use pinned Windows Rinx App/Modal with isolated fixtures; no login or admission')
     parser.add_argument('--navigation-rounds', type=int, default=1000, help='Rinx render-probe rounds, four queued page clicks each (1..2000)')
-    parser.add_argument('--suites', nargs='+', choices=('news', 'weather', 'holiday', 'fx', 'feed'), help='Run selected suites; feed exercises application refresh (default: data suites)')
+    parser.add_argument('--suites', nargs='+', choices=('news', 'weather', 'holiday', 'fx', 'feed', 'tracking'), help='Run selected suites; feed exercises application refresh (default: data suites)')
     args = parser.parse_args()
+    if args.live_minimax:
+        if args.suites or args.agent_only or args.restart or args.rinx_runtime or args.rinx_render_probe or args.host:
+            parser.error('--live-minimax is a separate real-service test; omit fixture suite flags')
+        try:
+            run_live(args)
+        except KeyboardInterrupt:
+            raise SystemExit(130) from None
+        except (OSError, ValueError, RuntimeError) as error:
+            raise SystemExit(str(error)) from None
+        return
+    if args.restart and (args.agent_only or args.suites != ['tracking']):
+        parser.error('--restart requires --suites tracking')
     if args.agent_only and args.suites:
         parser.error('--suites cannot be combined with --agent-only')
     suites = args.suites or ['news', 'weather', 'holiday', 'fx']
-    if 'feed' in suites and len(suites) != 1:
+    if ('feed' in suites or 'tracking' in suites) and len(suites) != 1:
         parser.error('feed uses the application UI; run it separately from data suites')
     if args.rinx_render_probe and (os.name != 'nt' or args.host or args.agent_only or suites != ['feed']):
         parser.error('--rinx-render-probe requires Windows and --suites feed, without --host/--agent-only')
+    if args.rinx_runtime and (os.name != 'posix' or args.host or args.agent_only or suites not in (['tracking'], ['feed'])):
+        parser.error('--rinx-runtime requires Linux and --suites tracking or feed')
     if args.rinx_render_probe and args.ui_size != '430x860':
         parser.error('The pinned Rinx render probe has a fixed 430x860 window')
     if not 1 <= args.navigation_rounds <= 2000:
@@ -364,7 +541,18 @@ def run():
         host_data.mkdir()
         host_environment['RINX_DATA_DIR'] = str(host_data)
         print(f'Rinx render probe artifacts: {work}', flush=True)
-    paths = ORDER[:-1] if args.agent_only or 'feed' in suites else ORDER[:ORDER.index('src/agent/runtime/connectivity.splash')]
+    if args.rinx_runtime:
+        from build_windows_sdf_host import link_rinx_entry
+        native = work / 'native'
+        native.mkdir()
+        host = native / 'rinx-tracking-probe'
+        link_rinx_entry(ROOT / '.dev/vendor', ROOT / 'tests/scenarios/rinx_tracking_probe.rs', host,
+                        lock['toolchain']['rinx_rust_channel'], 'cfaw_rinx_tracking_probe')
+        host_data = work / 'host-data'
+        host_data.mkdir()
+        host_environment['RINX_DATA_DIR'] = str(host_data)
+        host_environment['ROBRIX_DATA_DIR'] = str(host_data)
+    paths = ORDER[:-1] if args.agent_only or 'feed' in suites or 'tracking' in suites else ORDER[:ORDER.index('src/agent/runtime/connectivity.splash')]
     source, _ = assemble(paths=paths)
     if 'feed' in suites:
         summary = 'Synthetic retained summary for bounded-memory refresh regression. ' * 24
@@ -385,6 +573,8 @@ def run():
                        ('fixture_holiday_empty', 'holiday-cn-unpublished.json'),
                        ('fixture_fx_new', 'fx-cny-2026-10-01.json'),
                        ('fixture_fx_old', 'fx-cny-2026-09-30.json'),
+                       ('fixture_tracking_intent', 'tracking-intent-ready.json'),
+                       ('fixture_tracking_update', 'tracking-update.json'),
                        ('fixture_analysis_no_change', 'analysis-no-change.json'),
                        ('fixture_analysis_create', 'analysis-create.json'),
                        ('fixture_analysis_suggestion', 'analysis-suggestion.json'),
@@ -406,7 +596,7 @@ start_timeout(0.05, || agent_test_validation(|| {
 
     else:
         for name in suites:
-            directory = 'scenarios' if name == 'feed' else 'unit'
+            directory = 'scenarios' if name in ('feed', 'tracking') else 'unit'
             source += (ROOT / f'tests/{directory}/{name}_runtime.splash').read_text(encoding='utf-8')
     (bundle / 'main.splash').write_text(source, encoding='utf-8')
     manifest = json.loads((ROOT / 'bundle/manifest.json').read_text())
@@ -429,11 +619,11 @@ start_timeout(0.05, || agent_test_validation(|| {
     }
     with (work / 'host.log').open('w', encoding='utf-8') as log:
         command = [str(host), '--bundle', str(bundle), '--allow-unsigned', '--stamp', '--app-data', str(work / 'data'), '--remote', str(port)]
-        if args.inspect_ui and 'feed' in suites:
+        if args.rinx_runtime or (args.inspect_ui and ('feed' in suites or 'tracking' in suites)):
             command += ['--size', args.ui_size]
         if args.rinx_render_probe:
             command += ['--upload-limit-test']
-        process = subprocess.Popen(command, cwd=host.parent if args.rinx_render_probe else host.parents[2], stdout=log, stderr=log, startupinfo=startup, env=host_environment)
+        process = subprocess.Popen(command, cwd=host.parent if args.rinx_render_probe or args.rinx_runtime else host.parents[2], stdout=log, stderr=log, startupinfo=startup, env=host_environment)
         try:
             deadline = time.monotonic() + (args.timeout_seconds or (45 if 'feed' in suites else 20))
             while time.monotonic() < deadline and process.poll() is None:
@@ -451,12 +641,17 @@ start_timeout(0.05, || agent_test_validation(|| {
             except ValueError as error:
                 raise SystemExit(f'{error}; inspect {work / "host.log"}') from error
             (work / 'combined-report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+            if report['failed']:
+                print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
+                raise SystemExit(f'Runtime assertions failed; inspect {work / "combined-report.json"}')
             if args.rinx_render_probe:
                 inspect_rinx_navigation(work, port, args.navigation_rounds)
                 if args.inspect_ui:
                     inspect_feed_ui(work, port, args.ui_size)
             elif args.inspect_ui and 'feed' in suites:
                 inspect_feed_ui(work, port, args.ui_size)
+            elif args.inspect_ui and 'tracking' in suites:
+                inspect_tracking_ui(work, port, args.ui_size, args.rinx_runtime)
             if args.inspect_ui and args.agent_only:
                 time.sleep(1)
                 with urlopen(f'http://127.0.0.1:{port}/snap', timeout=3) as response:
@@ -503,6 +698,17 @@ start_timeout(0.05, || agent_test_validation(|| {
                 if decisions['items'][0]['state'] != 'pending':
                     raise SystemExit('Stale evidence confirmation changed the user decision')
                 print(f'Native UI checked: {work}')
+            if args.restart:
+                data_root = work / 'data/dev.cfaw.runtime-tests'
+                def persisted(name):
+                    path = data_root / name
+                    return json.loads(path.read_text(encoding='utf-8')) if path.exists() else {'items': []}
+                expected = {'topics': persisted('topics_v2.json'),
+                            'bookmarks': persisted('bookmarks_v1.json')['items'],
+                            'schedules': persisted('schedules_v1.json')['items'],
+                            'suggestions': persisted('suggestions_v1.json')['items'],
+                            'reminder_count': 0 if args.inspect_ui else 1}
+                (data_root / 'restart_expected.json').write_text(json.dumps(expected, ensure_ascii=False), encoding='utf-8')
             print(json.dumps(report, ensure_ascii=False, indent=2))
             print(f'Report: {work / "combined-report.json"}')
             if report['failed']:
@@ -518,6 +724,30 @@ start_timeout(0.05, || agent_test_validation(|| {
             except subprocess.TimeoutExpired:
                 process.terminate()
                 process.wait(timeout=3)
+
+    if args.restart:
+        restart_path = report_path.parent / 'tracking-restart-report.json'
+        with (work / 'restart-host.log').open('w', encoding='utf-8') as log:
+            process = subprocess.Popen(command, cwd=host.parent if args.rinx_runtime else host.parents[2], stdout=log, stderr=log, startupinfo=startup, env=host_environment)
+            try:
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline and process.poll() is None and not restart_path.exists():
+                    time.sleep(.1)
+                restarted = collect_reports({'restart': restart_path})
+                if restarted['failed'] or '[E]' in (work / 'restart-host.log').read_text(encoding='utf-8', errors='replace'):
+                    raise SystemExit('Fresh-process tracking restore failed; inspect ' + str(work))
+                print('Fresh native process restart: ' + json.dumps(restarted, ensure_ascii=False), flush=True)
+            finally:
+                try:
+                    with urlopen(f'http://127.0.0.1:{port}/quit', timeout=2):
+                        pass
+                except OSError:
+                    pass
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.terminate()
+                    process.wait(timeout=3)
 
 
 if __name__ == '__main__':

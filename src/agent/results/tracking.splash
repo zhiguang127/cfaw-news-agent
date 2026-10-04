@@ -1,0 +1,123 @@
+fn tracking_snapshot_valid(snapshot){
+    if !record_object(snapshot) || snapshot["schema_version"] != 1 { return false }
+    if !record_array(snapshot["topics"]) || !record_array(snapshot["schedules"]) || !record_array(snapshot["legacy_interests"]) || !record_array(snapshot["evidence"]) { return false }
+    if snapshot["topics"].len() > tracking_config.max_targets || snapshot["schedules"].len() > tracking_config.max_schedules || snapshot["legacy_interests"].len() > news_config.max_interests || snapshot["evidence"].len() > tracking_config.max_candidates { return false }
+    for topic in snapshot["topics"] { if !topic_valid(topic) { return false } }
+    for schedule in snapshot["schedules"] { if !schedule_valid(schedule) { return false } }
+    for interest in snapshot["legacy_interests"] { if !interest_record_valid(interest) { return false } }
+    for item in snapshot["evidence"] {
+        if !record_object(item) || !tracking_text(item["news_id"], 4000) || !tracking_text(item["title"], 1500) || !tracking_text(item["summary"], tracking_config.max_summary_chars) || !record_url(item["source_url"]) || !record_string(item["content_key"]) { return false }
+        if item["published_at"] != nil && !record_number(item["published_at"]) { return false }
+        if !record_number(item["retrieved_at"]) || !record_string(item["evidence_kind"]) || !record_string(item["timestamp_kind"]) || !record_array(item["references"]) { return false }
+        if item["summary_truncated"] != true && item["summary_truncated"] != false { return false }
+    }
+    if !record_string(snapshot["context_key"]) || !record_string(snapshot["prompt_revision"]) || !record_array(snapshot["decisions"]) { return false }
+    record_number(snapshot["omitted_targets"]) && record_number(snapshot["omitted_candidates"]) && record_number(snapshot["omitted_decisions"])
+}
+fn tracking_invalid(category, message){ {valid: false error: category message: message result: nil} }
+fn tracking_find(values, field, id){ for value in values { if value[field] == id { return value } } nil }
+fn tracking_refs(ids, values, field, allow_empty){
+    if !tracking_strings(ids, 8, 4000) { return false }
+    if !allow_empty && ids.len() == 0 { return false }
+    let seen = {}
+    for id in ids { if seen[id] == true || tracking_find(values, field, id) == nil { return false } seen[id] = true }
+    true
+}
+fn intent_category_known(value){
+    for source in news_sources { if source.category == value { return true } }
+    false
+}
+fn intent_rules_known(rules){
+    for rule in rules { if rule.kind == "category" && !intent_category_known(rule.value) { return false } }
+    true
+}
+fn intent_validate(value){
+    if !record_object(value) || value["schema_version"] != 1 { return tracking_invalid("invalid_schema", "意图结果版本或结构无效") }
+    if value["status"] != "ready" && value["status"] != "needs_clarification" { return tracking_invalid("invalid_schema", "意图状态无效") }
+    if !tracking_text(value["question"], 300) { return tracking_invalid("invalid_schema", "追问无效") }
+    if value["status"] == "ready" {
+        if !topic_understanding_valid(value["understanding"]) || value["question"] != "" { return tracking_invalid("invalid_schema", "理解结果不完整") }
+        if !intent_rules_known(value.understanding.recall_rules) { return tracking_invalid("invalid_schema", "理解结果包含未知新闻分类，请重试整理") }
+    } else if value["question"].trim() == "" || value["understanding"] != nil { return tracking_invalid("invalid_schema", "请只返回一个关键追问") }
+    {valid: true error: "" message: "" result: value}
+}
+fn schedule_intent_validate(value){
+    if !record_object(value) || value["schema_version"] != 1 { return tracking_invalid("invalid_schema", "日程理解版本或结构无效") }
+    if !tracking_text(value["question"], 300) { return tracking_invalid("invalid_schema", "日程追问无效") }
+    if value["status"] == "ready" {
+        if value.question != "" || !schedule_intent_understanding_valid(value["understanding"]) { return tracking_invalid("invalid_schema", "日程时间或内容无效，请明确日期、起止时间和时区后重试") }
+    } else if value["status"] == "needs_clarification" {
+        if value.question.trim() == "" || value["understanding"] != nil { return tracking_invalid("invalid_schema", "请补充一个关键日程信息") }
+    } else { return tracking_invalid("invalid_schema", "日程理解状态无效") }
+    {valid: true error: "" message: "" result: value}
+}
+fn tracking_validate(value, snapshot){
+    if !tracking_snapshot_valid(snapshot) { return tracking_invalid("invalid_schema", "追踪快照损坏或版本未知") }
+    if !record_object(value) || value["schema_version"] != 1 { return tracking_invalid("invalid_schema", "追踪结果版本或结构无效") }
+    if value["outcome"] != "update" && value["outcome"] != "no_change" && value["outcome"] != "insufficient_evidence" { return tracking_invalid("invalid_schema", "追踪状态无效") }
+    if !tracking_text(value["explanation"], 1200) || value["explanation"].trim() == "" || !record_array(value["items"]) { return tracking_invalid("invalid_schema", "追踪解释或条目缺失") }
+    if value["items"].len() != snapshot.evidence.len() || value["items"].len() > tracking_config.max_candidates { return tracking_invalid("invalid_reference", "必须逐条返回候选结果") }
+    let seen = {}
+    for item in value["items"] {
+        if !record_object(item) || !record_string(item["news_id"]) { return tracking_invalid("invalid_schema", "新闻引用缺失") }
+        if seen[item["news_id"]] == true || tracking_find(snapshot.evidence, "news_id", item["news_id"]) == nil { return tracking_invalid("invalid_reference", "重复或未知新闻引用") }
+        seen[item["news_id"]] = true
+        if item["relevance"] != "related" && item["relevance"] != "unrelated" && item["relevance"] != "uncertain" { return tracking_invalid("invalid_schema", "逐条相关性无效") }
+        if !tracking_refs(item["topic_ids"], snapshot.topics, "topic_id", true) || !tracking_refs(item["legacy_interest_ids"], snapshot.legacy_interests, "interest_id", true) { return tracking_invalid("invalid_reference", "未知关注引用") }
+        if !tracking_refs(item["evidence_ids"], snapshot.evidence, "news_id", false) || !record_contains(item["evidence_ids"], item["news_id"]) { return tracking_invalid("invalid_reference", "证据引用不完整") }
+        if !tracking_text(item["why_related"], 400) || item["why_related"].trim() == "" || !tracking_strings(item["uncertainties"], 6, 300) { return tracking_invalid("invalid_schema", "相关理由或不确定性无效") }
+        if item["relevance"] == "related" && item["topic_ids"].len() + item["legacy_interest_ids"].len() == 0 { return tracking_invalid("invalid_reference", "相关报道必须关联实际关注") }
+        if !record_array(item["schedule_impacts"]) || item["schedule_impacts"].len() > tracking_config.max_schedules { return tracking_invalid("invalid_schema", "日程影响结构无效") }
+        if value["outcome"] == "insufficient_evidence" && item["schedule_impacts"].len() > 0 { return tracking_invalid("invalid_schema", "证据不足不能产生已支持的日程影响") }
+        let impact_ids = {}
+        for impact in item["schedule_impacts"] {
+            if !record_object(impact) || !tracking_text(impact["goal_key"], 120) || impact["goal_key"].trim() == "" { return tracking_invalid("invalid_schema", "日程影响目标缺失") }
+            let schedule = tracking_find(snapshot.schedules, "schedule_id", impact["schedule_id"])
+            if schedule == nil { return tracking_invalid("invalid_reference", "未知日程引用") }
+            if !schedule_interval(impact["event_start"], impact["event_end"]) || !tracking_text(impact["overlap_reason"], 400) || impact["overlap_reason"].trim() == "" { return tracking_invalid("invalid_dates", "日程影响缺少可核对的事件时段依据") }
+            if schedule_instant(impact["event_start"]) >= schedule_instant(schedule.end) || schedule_instant(impact["event_end"]) <= schedule_instant(schedule.start) { return tracking_invalid("invalid_dates", "事件时段与目标日程不重合") }
+            if schedule.version != impact["schedule_version"] || !schedule_active(schedule) { return tracking_invalid("stale_context", "日程版本已失效") }
+            if !tracking_text(impact["impact_summary"], 400) || impact["impact_summary"].trim() == "" || !tracking_strings(impact["uncertainties"], 6, 300) || !tracking_text(impact["material_change"], 400) { return tracking_invalid("invalid_schema", "日程影响理由不完整") }
+            if !tracking_refs(impact["evidence_ids"], snapshot.evidence, "news_id", false) || !record_contains(impact["evidence_ids"], item["news_id"]) { return tracking_invalid("invalid_reference", "日程影响缺少条目依据") }
+            let key = impact["schedule_id"] + ":" + impact["goal_key"]
+            if impact_ids[key] == true { return tracking_invalid("invalid_reference", "重复日程影响") } impact_ids[key] = true
+        }
+        if item["proposed_action"] != nil { return tracking_invalid("invalid_schema", "本轮不接受日程写入动作") }
+    }
+    {valid: true error: "" message: "" result: value}
+}
+fn tracking_json_body(text){
+    let clean = text.trim()
+    let lines = clean.split("\n")
+    if lines.len() >= 3 && (lines[0].trim() == "```json" || lines[0].trim() == "```") && lines[lines.len() - 1].trim() == "```" {
+        let body = ""
+        for i line in lines { if i > 0 && i < lines.len() - 1 { body = body + line + "\n" } }
+        return body.trim()
+    }
+    clean
+}
+fn tracking_parse(text, kind, snapshot){
+    if !record_string(text) || text.len() > 16000 { return tracking_invalid("invalid_json", "模型回复为空或超限") }
+    let clean = tracking_json_body(text)
+    if !regex("^[{]").test(clean) || !regex("[}]$").test(clean) { return tracking_invalid("invalid_json", "模型回复应为单个 JSON 对象") }
+    let value = nil
+    try { value = clean.parse_json() } { value = nil }
+    if !record_object(value) { return tracking_invalid("invalid_json", "模型回复无法解析为 JSON 对象") }
+    if kind == "parse_schedule_intent" {
+        let checked = schedule_intent_validate(value)
+        if checked.valid && value.status == "needs_clarification" {
+            if snapshot["previous_question"] != "" || value.question.match_all(regex("[?？]", "g")).len() > 1 { return tracking_invalid("invalid_schema", "请一次补充日程日期、起止时间及地点后重试") }
+        }
+        return checked
+    }
+    if kind == "parse_intent" {
+        let checked = intent_validate(value)
+        if checked.valid {
+            if value["status"] == "needs_clarification" {
+                if snapshot["previous_question"] != "" || value["question"].match_all(regex("[?？]", "g")).len() > 1 { return tracking_invalid("invalid_schema", "最多追问一个关键问题；请补充范围后重试") }
+            }
+        }
+        return checked
+    }
+    tracking_validate(value, snapshot)
+}

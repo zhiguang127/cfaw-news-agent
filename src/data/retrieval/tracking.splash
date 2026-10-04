@@ -1,0 +1,89 @@
+// Lexical recall, not semantic indexing. Stable feed order, unique article IDs.
+fn topic_rule_matches(row, topic){
+    if topic.status != "active" || !topic_is_user_record(topic) { return [] }
+    let rules = []
+    for i rule in topic.recall_rules { rules.push({interest_id: topic.topic_id + ":" + i kind: rule.kind value: rule.value enabled: true}) }
+    interest_matches(row, rules)
+}
+fn tracking_rule_hint(row){
+    for topic in topic_records.topics {
+        if topic_rule_matches(row, topic).len() > 0 { return "规则匹配 · " + topic.title }
+    }
+    let reasons = interest_matches(row, user_interests)
+    if reasons.len() > 0 { return "规则匹配 · " + reasons[0] }
+    ""
+}
+fn tracking_target_checked(kind, id, version){
+    let checked_at = 0
+    for run in tracking_cache.runs {
+        let values = run.snapshot.topics let field = "topic_id"
+        if kind == "schedule" { values = run.snapshot.schedules field = "schedule_id" }
+        if kind == "legacy" { values = run.snapshot.legacy_interests field = "interest_id" }
+        for item in values {
+            if item[field] == id {
+                if kind == "legacy" || item["version"] == version { checked_at = run.checked_at }
+            }
+        }
+    }
+    checked_at
+}
+fn tracking_targets(){
+    let units = []
+    for item in user_schedules {
+        if schedule_is_user_record(item) && schedule_active(item) && schedule_instant(item.end) >= time_now() {
+            units.push({kind: "schedule" item: item checked_at: tracking_target_checked("schedule", item.schedule_id, item.version)})
+        }
+    }
+    for item in topic_records.topics {
+        if topic_is_user_record(item) && item.status == "active" { units.push({kind: "topic" item: item checked_at: tracking_target_checked("topic", item.topic_id, item.version)}) }
+    }
+    let legacy = [] for item in user_interests { if item.enabled { legacy.push(item) } }
+    if legacy.len() > 0 { units.push({kind: "legacy" item: legacy checked_at: tracking_target_checked("legacy", legacy[0].interest_id, 1)}) }
+    let total = units.len() let topics = [] let schedules = [] let interests = []
+    // Least-recently checked units rotate bounded coverage across later triggers.
+    for step in min(tracking_config.max_targets, total) {
+        let index = 0
+        for i item in units { if item.checked_at < units[index].checked_at { index = i } }
+        let chosen = units.remove(index)
+        if chosen.kind == "topic" { topics.push(chosen.item) }
+        if chosen.kind == "schedule" { schedules.push(chosen.item) }
+        if chosen.kind == "legacy" { interests = chosen.item }
+    }
+    {topics: topics schedules: schedules legacy_interests: interests omitted_targets: max(0, total - tracking_config.max_targets)}
+}
+fn tracking_context_key(){
+    let topics = [] let schedules = []
+    for item in topic_records.topics { topics.push({topic_id: item.topic_id version: item.version status: item.status}) }
+    for item in user_schedules { schedules.push({schedule_id: item.schedule_id version: item.version status: item["status"]}) }
+    {topics: topics legacy: user_interests schedules: schedules revision: tracking_prompt_revision config: tracking_config}.to_json()
+}
+fn tracking_snapshot(rows, targets){
+    let evidence = []
+    for row in rows {
+        let summary = row.summary
+        let truncated = summary.len() > tracking_config.max_summary_chars
+        if truncated { summary = bm25_prefix(summary, tracking_config.max_summary_chars) }
+        evidence.push({news_id: row.news_id title: row.title summary: summary source_url: row.source_url
+            published_at: row.published_at retrieved_at: row.retrieved_at evidence_kind: row.evidence_kind
+            timestamp_kind: row.timestamp_kind summary_truncated: truncated references: row.references
+            content_key: tracking_evidence_key(row)})
+    }
+    let previous = nil
+    if tracking_cache.runs.len() > 0 { previous = tracking_cache.runs[tracking_cache.runs.len() - 1].result }
+    let decisions = []
+    for item in topic_records.decisions {
+        let relevant = false
+        for schedule in targets.schedules { if schedule.schedule_id == item.schedule_id { relevant = true } }
+        if relevant { decisions.push(item) }
+    }
+    let omitted_decisions = max(0, decisions.len() - 12)
+    while decisions.len() > 12 { decisions.remove(0) }
+    {schema_version: 1 topics: targets.topics schedules: targets.schedules legacy_interests: targets.legacy_interests
+        evidence: evidence previous_result: previous decisions: decisions omitted_targets: targets.omitted_targets
+        omitted_candidates: 0 omitted_decisions: omitted_decisions context_key: tracking_context_key() prompt_revision: tracking_prompt_revision}
+}
+fn tracking_input_key(snapshot){
+    let evidence = [] for item in snapshot.evidence { evidence.push({news_id: item.news_id content_key: item.content_key}) }
+    {context: snapshot.context_key evidence: evidence decisions: snapshot.decisions
+        topics: snapshot.topics schedules: snapshot.schedules omitted_targets: snapshot.omitted_targets omitted_candidates: snapshot.omitted_candidates revision: tracking_prompt_revision}.to_json()
+}

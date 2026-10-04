@@ -44,3 +44,10 @@ Windows 宿主临时回收保护：应用合并同一事件中的列表渲染请
 首页展示准备由 `app/feed_presentation.splash` 负责，沿用 64 条/8 ms 切片；每片最多检查 `feed_hint_batch_items`（当前 4）份已有分析。新渲染请求增加 generation，旧批次放弃提交，完整批次一次性提交筛选行与提示。首页对筛选结果做稳定分组：当前关注匹配或有有效待处理 Agent 建议的报道优先，其余报道保持原顺序。数据层的时间排序不被改写。Agent 提示只复用当前输入指纹、提示词版本和证据时效都匹配的结果，不产生模型调用。
 
 `feed_restore_cache(enabled_ids, index, generation, complete)` 只恢复启用源；`feed_refresh_needed_ids(enabled_ids, checked_at)` 返回缺失、未来获取时间或达到 `startup_refresh_seconds`（300 秒）的来源。有效空结果也受该时限保护；手动刷新绕过时限。`feed_data_revision` 只标记已接受缓存/网络数据变化，不代表新闻内容有实质变化。刷新的最终完成在各来源的 on_update 都交付后发出，失败不触发无必要的全量排序。关键词匹配器按规则 ID 复用，规则变化时清理；它不存储用户记录。
+
+
+## 正文阅读
+
+`article_load(row, complete)` 是只读的网页阅读边界。仅接受 `article_hosts` 中的 HTTPS 原文地址；HTTP 请求沿用 15 秒、2 MB 和 3 次许可重定向限制。`article_state` 的单一 owner 在数据层，状态为 idle/loading/ready/unavailable/failed；新的加载或离开详情增加 generation，迟到与重复完成不发布。`article_extract` 使用宿主 HTML 解析器，只读取 article/main 或明确文章容器的 p 段落，最多 80 段、24 KB，不把整页导航/同意页面当文章。状态回调由 app 层触发页面渲染。
+
+阅读文本仅存在当前阅读状态，不替换 summary/content_version、不进入 Agent snapshot 或收藏快照。未知发布日期保持未知。正文无法读取时明确回到来源摘要；应用不是完整网页浏览器，阅读模式可能省略非段落内容。当前固定 Linux/Windows Makepad 的 open_url 未实现，因此不把无效的浏览器按钮标为可用功能，保留可复制原文地址。

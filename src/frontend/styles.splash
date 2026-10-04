@@ -1,8 +1,8 @@
 let ink = #x202126
 let secondary = #x666873
-let accent = #x515db4
+let accent = #x6655d8
 let line = #xeaeaf0
-let soft = #xf6f6f9
+let soft = #xf2f1fa
 let white = #xffffff
 let Text = Label{width: Fill padding: 0 draw_text.color: ink draw_text.text_style.font_size: 14 draw_text.text_style.line_spacing: 1.15}
 let Small = Text{draw_text.color: secondary draw_text.text_style.font_size: 11}

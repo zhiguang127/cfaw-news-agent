@@ -1,8 +1,19 @@
 fn results_pending_page(offset){ results_pending_offset = offset ui.results_content.render() }
 let AnalysisResultsPage = View{visible: false width: Fill height: Fill flow: Down
     results_content := ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 12 on_render: || {
-        Section{text: "新闻如何影响你的安排"}
-        Small{text: "查看依据后决定是否采纳；日程变更需要再次确认。"}
+        Section{text: "待关注日程影响"}
+        Small{text: tracking_message max_lines: 5}
+        if tracking_pending_run != nil { SecondaryButton{text: "重试保存结果" on_click: || tracking_retry_save()} }
+        let reminders = tracking_active_reminders()
+        if reminders.len() == 0 { Small{text: "暂无当前有效的日程影响提醒"} }
+        for reminder in reminders {
+            let schedule = schedule_find(reminder.schedule_id)
+            Text{text: "可能影响日程「" + schedule.title + "」：" + reminder.impact_summary}
+            SecondaryButton{text: "查看提醒依据" on_click: || open_story(tracking_current_row(reminder.news_id))}
+        }
+        SecondaryButton{text: "检查关注与日程" on_click: || tracking_start(nil)}
+        Divider{}
+        Section{text: "旧版建议记录"}
         if analysis_state == "failed" || analysis_needs_reopen {
             Small{text: analysis_error_hint() draw_text.color: accent}
             QuietButton{text: "查看具体原因" on_click: || {results_show_error_detail = !results_show_error_detail ui.results_content.render()}}

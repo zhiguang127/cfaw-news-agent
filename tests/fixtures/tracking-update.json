@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "outcome": "update",
+  "explanation": "固定测试结果，非真实模型结论：开源部署资料值得阅读；杭州交通限制覆盖已有行程日期，需要核对班次。仅标题和摘要，未读取全文。",
+  "items": [
+    {
+      "news_id": "https://example.invalid/tracking/finance",
+      "relevance": "unrelated",
+      "topic_ids": [],
+      "legacy_interest_ids": [],
+      "why_related": "融资报道不符合少看融资的偏好",
+      "evidence_ids": [
+        "https://example.invalid/tracking/finance"
+      ],
+      "uncertainties": [],
+      "schedule_impacts": []
+    },
+    {
+      "news_id": "https://example.invalid/tracking/open",
+      "relevance": "related",
+      "topic_ids": [
+        "topic-draft-fixture"
+      ],
+      "legacy_interest_ids": [],
+      "why_related": "开源离线部署与框架选型目的相关",
+      "evidence_ids": [
+        "https://example.invalid/tracking/open"
+      ],
+      "uncertainties": [
+        "摘要未给完整内存测量条件"
+      ],
+      "schedule_impacts": []
+    },
+    {
+      "news_id": "https://example.invalid/tracking/travel",
+      "relevance": "uncertain",
+      "topic_ids": [],
+      "legacy_interest_ids": [],
+      "why_related": "与技术关注无关，但有行程影响依据",
+      "evidence_ids": [
+        "https://example.invalid/tracking/travel"
+      ],
+      "uncertainties": [],
+      "schedule_impacts": [
+        {
+          "schedule_id": "fixture-trip",
+          "schedule_version": 1,
+          "goal_key": "travel-service",
+          "impact_summary": "2026-10-09杭州部分班次受限，需核对所乘班次",
+          "evidence_ids": [
+            "https://example.invalid/tracking/travel"
+          ],
+          "uncertainties": [
+            "未核对用户实际车次"
+          ],
+          "material_change": "",
+          "event_start": "2026-10-09T00:00:00+08:00",
+          "event_end": "2026-10-10T00:00:00+08:00",
+          "overlap_reason": "公告明确2026-10-09全天限制，与杭州出差当天重合"
+        }
+      ]
+    }
+  ]
+}
