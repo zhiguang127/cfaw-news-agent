@@ -1610,7 +1610,7 @@ fn news_request_allowed(url){
     if !record_string(url) { return false }
     let parts = url.split("/")
     if parts.len() < 3 || parts[0] != "https:" || parts[1] != "" { return false }
-    record_contains(news_hosts, parts[2]) || record_contains(weather_hosts, parts[2]) || record_contains(holiday_hosts, parts[2]) || record_contains(fx_hosts, parts[2])
+    record_contains(news_hosts, parts[2]) || record_contains(weather_hosts, parts[2]) || record_contains(holiday_hosts, parts[2]) || record_contains(fx_hosts, parts[2]) || record_contains(article_hosts, parts[2])
 }
 fn news_redirect_url(current, location){
     if !record_string(location) { return nil }
@@ -1639,7 +1639,7 @@ fn news_http_step(url, redirects, context){
         net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET
             max_response_body_bytes: news_config.max_response_bytes
             // The pinned Windows backend owns User-Agent; overriding it is refused.
-            headers: {"Accept": ["application/rss+xml, application/atom+xml, application/json, text/xml, */*"]}}) do net.HttpEvents{
+            headers: {"Accept": ["application/rss+xml, application/atom+xml, application/json, text/html, text/xml, */*"]}}) do net.HttpEvents{
             on_response: |response| {
                 if context.done { return }
                 let status = response.status_code
@@ -1663,6 +1663,62 @@ fn news_http_step(url, redirects, context){
     }
 }
 // END src/data/ingestion/http.splash
+
+// BEGIN src/data/ingestion/articles.splash
+// Read-only article reader. It never supplies extra evidence to the Agent:
+// analysis still cites the bounded feed snapshot it actually received.
+let article_hosts = ["www.airchinagroup.com", "www.theverge.com", "arstechnica.com", "venturebeat.com", "news.mit.edu", "arxiv.org", "www.bbc.com", "www.bbc.co.uk", "www.theguardian.com", "www.cnbc.com", "techcrunch.com", "www.techmeme.com", "news.ycombinator.com"]
+let article_config = {max_paragraphs: 80 max_text_bytes: 24000}
+let article_state = {generation: 0 state: "idle" paragraphs: [] error: "" truncated: false}
+let article_http_request = |url, redirects, callback| news_http_request(url, redirects, callback)
+fn article_url_allowed(url){
+    if !record_string(url) { return false }
+    let parts = url.split("/")
+    parts.len() >= 3 && parts[0] == "https:" && parts[1] == "" && record_contains(article_hosts, parts[2])
+}
+fn article_extract(body){
+    let doc = body.parse_html()
+    // Restrict extraction to article/main containers. Never present navigation,
+    // consent pages or the entire HTML document as a news article.
+    let values = []
+    for selector in ["article p.text" "main p.text" "div.article-body p.text" "div.article-content p.text" "div.entry-content p.text"] {
+        let found = doc.query(selector)
+        if record_string(found) { found = [found] }
+        if record_array(found) && found.len() > 0 { values = found break }
+    }
+    let paragraphs = [] let count = 0 let truncated = false
+    for value in values {
+        if !record_string(value) || value.trim() == "" { continue }
+        let text = value.trim()
+        if paragraphs.len() >= article_config.max_paragraphs || count + text.len() > article_config.max_text_bytes { truncated = true break }
+        paragraphs.push(text) count = count + text.len()
+    }
+    {paragraphs: paragraphs truncated: truncated}
+}
+fn article_cancel(){ article_state.generation = article_state.generation + 1 }
+fn article_load(row, complete){
+    article_cancel()
+    let generation = article_state.generation
+    article_state.state = "loading" article_state.paragraphs = [] article_state.error = "" article_state.truncated = false
+    if !article_url_allowed(row.source_url) {
+        article_state.state = "unavailable"
+        article_state.error = "此来源暂不支持正文阅读，以下保留来源摘要。可复制原文地址查看。"
+        complete() return
+    }
+    article_http_request(row.source_url, 0, fn(reply){
+        if generation != article_state.generation || article_state.state != "loading" { return }
+        if !reply.success { article_state.state = "failed" article_state.error = "正文读取失败：" + reply.error complete() return }
+        let result = nil
+        try { result = article_extract(reply.body) } { result = nil }
+        if result == nil || result.paragraphs.len() == 0 {
+            article_state.state = "unavailable" article_state.error = "来源网页未提供可读取的正文，以下保留来源摘要。"
+        } else {
+            article_state.state = "ready" article_state.paragraphs = result.paragraphs article_state.truncated = result.truncated
+        }
+        complete()
+    })
+}
+// END src/data/ingestion/articles.splash
 
 // BEGIN src/data/ingestion/feeds.splash
 // One owner for cache/status and refresh generation. No widget access.
@@ -3662,6 +3718,7 @@ let keyword_draft = ""
 let page_filters = {feed: {category: "all" query: ""} tracking: {category: "all" query: ""} saved: {category: "all" query: ""}}
 let reading = nil
 let detail_kind = ""
+let story_show_analysis = false
 let busy = false
 let menu_open = false
 let last_swipe_refresh_at = 0
@@ -4150,6 +4207,8 @@ fn open_analysis_record(id){
     if row == nil { row = item["news_snapshot"] }
     if row == nil { notice("旧分析没有新闻快照；请刷新来源重新查找。") return }
     open_story(row)
+    story_show_analysis = true
+    ui.story_content.render()
 }
 fn open_suggestion_record(id){
     let item = history_find_suggestion(id)
@@ -4158,6 +4217,7 @@ fn open_suggestion_record(id){
     if row == nil { row = item["news_snapshot"] }
     if row == nil { open_analysis_record(item.analysis_id) return }
     open_story(row)
+    story_show_analysis = true
     suggestion_focus_id = id
     ui.story_content.render()
 }
@@ -4196,6 +4256,7 @@ fn render_detail(){
 }
 fn show_detail(kind, title){
     close_menu()
+    if kind != "story" { article_cancel() }
     detail_kind = kind
     ui.detail_title.set_text(title)
     ui.main.set_visible(false)
@@ -4212,8 +4273,10 @@ fn open_story(row){
     schedule_confirmation_id = nil
     if !analysis_busy { analysis_result = nil analysis_state = "idle" }
     reading = row
+    story_show_analysis = false
     let error = records_mark_read(row.news_id)
     notice(error)
+    article_load(row, || { if detail_kind == "story" { ui.story_content.render() } })
     show_detail("story", "新闻详情")
 }
 fn update_suggestion_state(id, state){
@@ -4227,6 +4290,7 @@ fn update_suggestion_state(id, state){
 fn close_detail(){
     if detail_kind == "intent" && intent_open { intent_cancel() return }
     close_menu()
+    article_cancel()
     detail_kind = ""
     reading = nil
     render_analysis_controls()
@@ -4845,7 +4909,7 @@ fn row_agent_hint(row){ feed_agent_hints[row.news_id] }
 fn open_feed_hint(row){
     let hint = row_agent_hint(row)
     if hint != nil && hint.suggestion_id != nil { open_suggestion_record(hint.suggestion_id) }
-    else { open_story(row) }
+    else { open_story(row) story_show_analysis = true ui.story_content.render() }
 }
 // END src/app/feed_presentation.splash
 
@@ -5434,7 +5498,40 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
             Heading{text: reading.title}
             if reading["demo_data"] == true { Small{text: "演示缓存 · 非实时新闻" draw_text.color: accent} }
             if reading.evidence_kind == "hn_submission" { Small{text: "HN 提交记录；提交时间不等于原文发布时间"} }
-            else { Small{text: "真实 RSS / Atom 摘要，非文章全文"} }
+            else if article_state.state == "ready" { Small{text: "来源网页正文 · 阅读模式" draw_text.color: accent} }
+            else { Small{text: "来源提供的新闻摘要"} }
+            Divider{}
+            if !story_show_analysis {
+            if article_state.state == "loading" { Small{text: "正在读取来源网页正文…" draw_text.color: accent} }
+            if article_state.error != "" { Small{text: article_state.error} }
+            if article_state.state == "ready" {
+                for paragraph in article_state.paragraphs { Text{text: paragraph draw_text.text_style.font_size: 16 draw_text.text_style.line_spacing: 1.55} }
+                if article_state.truncated { Small{text: "正文过长，阅读模式仅展示部分段落。"} }
+                Small{text: "阅读模式可能省略原网页的图片、表格和其他内容。Agent 判断仍仅依据标题与摘要。"}
+            } else {
+            if reading.summary == "" { Text{text: "来源未提供摘要，请通过条目链接查看。" draw_text.color: secondary} }
+            else { Text{text: reading.summary draw_text.text_style.font_size: 16 draw_text.text_style.line_spacing: 1.55} }
+            }
+            Small{text: "新闻列表抓取于 " + age_label(reading.retrieved_at)}
+            Section{text: "原文地址"}
+            Search{text: reading.source_url empty_text: "可复制原文地址"}
+            if article_state.state == "failed" { LinkButton{text: "重试读取正文" on_click: || article_load(reading, || ui.story_content.render())} }
+            if news_source(reading.source_id) != nil {
+                Small{text: "抓取来源：" + news_source(reading.source_id).label}
+                if news_source(reading.source_id).kind == "google" { Small{text: "通过 Google News 聚合；条目可能保留聚合跳转链接。"} }
+            }
+            if reading.references.len() > 1 {
+                Small{text: "相同链接已合并；重复收录不代表独立证据。"}
+                for ref in reading.references { Small{text: ref.source + " · " + ref.source_id} }
+            }
+            }
+            Divider{}
+            View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
+                Section{width: Fill text: "✦ 这条新闻会影响我吗？" draw_text.color: accent}
+                if story_show_analysis { LinkButton{text: "阅读新闻" on_click: || {story_show_analysis = false ui.story_content.render()}} }
+                else { LinkButton{text: "展开分析" on_click: || {story_show_analysis = true ui.story_content.render()}} }
+            }
+            if story_show_analysis {
             Divider{}
             Section{text: "追踪关系与日程提醒"}
             let tracked = tracking_latest_item(reading)
@@ -5446,8 +5543,6 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
                 Text{text: latest.explanation}
                 if latest["session_unsaved"] == true { Small{text: "本次结果尚未完整保存，请到建议页重试保存。" draw_text.color: accent} }
             }
-                let rule = tracking_rule_hint(reading)
-                if rule != "" { Small{text: rule} }
             } else {
                 Text{text: tracked.item.why_related}
                 let relevance_label = "关系尚不确定"
@@ -5482,26 +5577,6 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
                     if evidence.published_at == nil { Small{text: "发布日期未知"} }
                     if evidence.summary_truncated { Small{text: "摘要已缩减；未读取全文"} }
                 }
-            }
-            Divider{}
-            if reading.summary == "" { Text{text: "来源未提供摘要，请通过条目链接查看。" draw_text.color: secondary} }
-            else { Text{text: reading.summary} }
-            Small{text: "抓取于 " + age_label(reading.retrieved_at)}
-            Section{text: "条目链接（可复制）"}
-            Search{text: reading.source_url empty_text: "条目 URL"}
-            if news_source(reading.source_id) != nil {
-                Small{text: "抓取来源：" + news_source(reading.source_id).label}
-                if news_source(reading.source_id).kind == "google" { Small{text: "通过 Google News 聚合；条目可能保留聚合跳转链接。"} }
-            }
-            if reading.references.len() > 1 {
-                Small{text: "相同链接已合并；重复收录不代表独立证据。"}
-                for ref in reading.references { Small{text: ref.source + " · " + ref.source_id} }
-            }
-            let reasons = interest_matches(reading, user_interests)
-            if reasons.len() > 0 {
-                Divider{}
-                Section{text: "与你有关 · 规则匹配" draw_text.color: accent}
-                for reason in reasons { Text{text: reason} }
             }
             Divider{}
             Section{text: "历史分析 / 新检查"}
@@ -5557,6 +5632,7 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
             View{width: Fill height: Fit flow: Right spacing: 10
                 if analysis_busy { SecondaryButton{text: "取消分析" on_click: || analysis_cancel()} }
                 else { SecondaryButton{text: "分析影响" on_click: || analysis_start(reading)} }
+            }
             }
             View{width: Fill height: Fit flow: Right spacing: 10
                 if records_has_interest("source", reading.source) { SecondaryButton{text: "已跟踪来源" on_click: || toggle_follow(reading)} }

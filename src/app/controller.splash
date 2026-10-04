@@ -8,6 +8,7 @@ let keyword_draft = ""
 let page_filters = {feed: {category: "all" query: ""} tracking: {category: "all" query: ""} saved: {category: "all" query: ""}}
 let reading = nil
 let detail_kind = ""
+let story_show_analysis = false
 let busy = false
 let menu_open = false
 let last_swipe_refresh_at = 0
@@ -496,6 +497,8 @@ fn open_analysis_record(id){
     if row == nil { row = item["news_snapshot"] }
     if row == nil { notice("旧分析没有新闻快照；请刷新来源重新查找。") return }
     open_story(row)
+    story_show_analysis = true
+    ui.story_content.render()
 }
 fn open_suggestion_record(id){
     let item = history_find_suggestion(id)
@@ -504,6 +507,7 @@ fn open_suggestion_record(id){
     if row == nil { row = item["news_snapshot"] }
     if row == nil { open_analysis_record(item.analysis_id) return }
     open_story(row)
+    story_show_analysis = true
     suggestion_focus_id = id
     ui.story_content.render()
 }
@@ -542,6 +546,7 @@ fn render_detail(){
 }
 fn show_detail(kind, title){
     close_menu()
+    if kind != "story" { article_cancel() }
     detail_kind = kind
     ui.detail_title.set_text(title)
     ui.main.set_visible(false)
@@ -558,8 +563,10 @@ fn open_story(row){
     schedule_confirmation_id = nil
     if !analysis_busy { analysis_result = nil analysis_state = "idle" }
     reading = row
+    story_show_analysis = false
     let error = records_mark_read(row.news_id)
     notice(error)
+    article_load(row, || { if detail_kind == "story" { ui.story_content.render() } })
     show_detail("story", "新闻详情")
 }
 fn update_suggestion_state(id, state){
@@ -573,6 +580,7 @@ fn update_suggestion_state(id, state){
 fn close_detail(){
     if detail_kind == "intent" && intent_open { intent_cancel() return }
     close_menu()
+    article_cancel()
     detail_kind = ""
     reading = nil
     render_analysis_controls()

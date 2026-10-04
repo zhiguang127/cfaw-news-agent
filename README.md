@@ -72,3 +72,7 @@ python scripts/package.py
 执行 `python3 scripts/test_runtime.py --live-minimax` 自动填写本项目 bundle 地址、模型和凭据，Review 后运行并校验意图回复；已有用户草稿保留。
 密钥从 `MINIMAX_API_KEY`、`--minimax-key-file` 指定的私有文件或已保存的 Rinx 配置读取，不进入源码或报告。
 M3 已实测可用；Flash Preview 实测返回 unknown model，可通过 `--minimax-model` 显式选择。
+
+## 新闻阅读模式
+
+点击 RSS 新闻先展示新闻阅读页，受支持来源从网页文章容器提取段落；Agent 分析折叠，关联提示直接打开分析。正文失败或不支持时保留 RSS 摘要和可复制原文地址。阅读文本不自动进入模型证据。

@@ -26,6 +26,7 @@ ORDER = [
     'src/data/retrieval/tracking.splash',
     'src/data/retrieval/bm25.splash',
     'src/data/ingestion/http.splash',
+    'src/data/ingestion/articles.splash',
     'src/data/ingestion/feeds.splash',
     'src/data/ingestion/weather.splash',
     'src/data/ingestion/holidays.splash',
@@ -136,7 +137,7 @@ def requested_hosts(root=ROOT):
     cities = city_catalog(root)
     cities_script(cities)  # Validate the configured endpoint before admitting it.
     hosts.add(urlsplit(cities['endpoint']).hostname)
-    for module, name in (('holidays', 'holiday_hosts'), ('fx', 'fx_hosts')):
+    for module, name in (('holidays', 'holiday_hosts'), ('fx', 'fx_hosts'), ('articles', 'article_hosts')):
         source = (root / f'src/data/ingestion/{module}.splash').read_text(encoding='utf-8')
         declaration = re.search(r'\blet\s+' + name + r'\s*=\s*(\[[^\]]*\])', source)
         if not declaration:

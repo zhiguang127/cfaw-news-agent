@@ -114,5 +114,5 @@ fn row_agent_hint(row){ feed_agent_hints[row.news_id] }
 fn open_feed_hint(row){
     let hint = row_agent_hint(row)
     if hint != nil && hint.suggestion_id != nil { open_suggestion_record(hint.suggestion_id) }
-    else { open_story(row) }
+    else { open_story(row) story_show_analysis = true ui.story_content.render() }
 }

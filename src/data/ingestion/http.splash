@@ -7,7 +7,7 @@ fn news_request_allowed(url){
     if !record_string(url) { return false }
     let parts = url.split("/")
     if parts.len() < 3 || parts[0] != "https:" || parts[1] != "" { return false }
-    record_contains(news_hosts, parts[2]) || record_contains(weather_hosts, parts[2]) || record_contains(holiday_hosts, parts[2]) || record_contains(fx_hosts, parts[2])
+    record_contains(news_hosts, parts[2]) || record_contains(weather_hosts, parts[2]) || record_contains(holiday_hosts, parts[2]) || record_contains(fx_hosts, parts[2]) || record_contains(article_hosts, parts[2])
 }
 fn news_redirect_url(current, location){
     if !record_string(location) { return nil }
@@ -36,7 +36,7 @@ fn news_http_step(url, redirects, context){
         net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET
             max_response_body_bytes: news_config.max_response_bytes
             // The pinned Windows backend owns User-Agent; overriding it is refused.
-            headers: {"Accept": ["application/rss+xml, application/atom+xml, application/json, text/xml, */*"]}}) do net.HttpEvents{
+            headers: {"Accept": ["application/rss+xml, application/atom+xml, application/json, text/html, text/xml, */*"]}}) do net.HttpEvents{
             on_response: |response| {
                 if context.done { return }
                 let status = response.status_code
