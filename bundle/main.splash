@@ -5,7 +5,7 @@
 // Request limits apply to one refresh; storage limits apply to domain records.
 let news_config = {request_timeout_seconds: 15 max_parallel_requests: 3
     max_response_bytes: 2000000 max_redirects: 3 items_per_source: 20
-    max_feed_items: 240 work_batch_items: 64 work_slice_seconds: 0.008
+    max_feed_items: 240 work_batch_items: 64 work_slice_seconds: 0.008 feed_hint_batch_items: 4
     max_bookmarks: 500 max_interests: 50 max_seen_ids: 2000
     startup_refresh_seconds: 300 cache_stale_seconds: 7200
     refresh_gesture_cooldown_seconds: 2 overlay_tap_guard_seconds: 0.2}
@@ -2715,6 +2715,40 @@ fn history_revalidate_evidence(item){
 }
 // END src/agent/history.splash
 
+// BEGIN src/agent/results/feed_hint.splash
+// Feed hints reuse validated results; stale context and handled proposals stay in history.
+fn analysis_feed_hint(row, latest, suggestions_by_id){
+    if latest == nil || latest["session_unsaved"] == true { return nil }
+    if latest.prompt_revision != analysis_prompt_revision || latest["input_key"] != analysis_input_key(row) { return nil }
+    if row.retrieved_at <= 0 || time_now() - row.retrieved_at > news_config.cache_stale_seconds { return nil }
+    if latest.outcome == "suggestions" {
+        let chosen = nil
+        let schedule_title = ""
+        for id in latest.suggestion_ids {
+            let item = suggestions_by_id[id]
+            if item == nil || item.state != "pending" || item.news_id != row.news_id { continue }
+            if !history_same_versions(item.evidence_versions, latest.evidence_versions) { continue }
+            if item.schedule_id != nil {
+                let schedule = schedule_find(item.schedule_id)
+                if schedule == nil || !schedule_active(schedule) || schedule.version != item.schedule_version { continue }
+                chosen = item schedule_title = schedule.title break
+            }
+            if chosen == nil && item.interest_ids.len() > 0 { chosen = item }
+        }
+        if chosen == nil { return nil }
+        let text = "Agent · "
+        if schedule_title != "" { text = text + "日程「" + schedule_title + "」：" }
+        {text: text + chosen.change_summary suggestion_id: chosen.suggestion_id priority: true}
+    } else {
+        let label = ""
+        if latest.outcome == "no_change" { label = "暂无需调整：" }
+        if latest.outcome == "insufficient_evidence" { label = "证据不足：" }
+        if label == "" { return nil }
+        {text: "Agent · " + label + latest.explanation suggestion_id: nil priority: false}
+    }
+}
+// END src/agent/results/feed_hint.splash
+
 // BEGIN src/agent/results/validator.splash
 // Deterministic validation for raw model text. This module has no host or UI
 // side effects and never accepts model-generated correlation metadata.
@@ -3052,6 +3086,7 @@ fn analysis_finish(state, message, category){
         start_timeout(0.01, || analysis_batch_next_if(generation))
     }
     render_analysis_controls()
+    render_feed()
 }
 
 fn analysis_stop(state, message, category){
@@ -3148,6 +3183,7 @@ let page = "feed"
 let category = "all"
 let query = ""
 let keyword_draft = ""
+let page_filters = {feed: {category: "all" query: ""} tracking: {category: "all" query: ""} saved: {category: "all" query: ""}}
 let reading = nil
 let detail_kind = ""
 let busy = false
@@ -3164,7 +3200,9 @@ let app_feed_build_task = nil
 let app_feed_build_counter = 0
 let refresh_successes_seen = 0
 let display_rows = []
+let main_render_pending = false
 let feed_render_pending = false
+let feed_render_generation = 0
 let feed_reset_scroll_pending = false
 let schedule_edit_id = nil
 let schedule_edit_version = nil
@@ -3233,6 +3271,8 @@ fn row_cache_note(row){
     ""
 }
 fn row_match_hint(row){
+    let cached = feed_match_hints[row.news_id]
+    if cached != nil { return cached }
     let reasons = interest_matches(row, user_interests)
     if reasons.len() > 0 { return reasons[0] }
     ""
@@ -3280,6 +3320,7 @@ fn sync_status(){
     render_analysis_controls()
 }
 fn render_feed(){
+    feed_render_generation = feed_render_generation + 1
     if feed_render_pending { return }
     feed_render_pending = true
     start_timeout(0.01, || {
@@ -3287,12 +3328,24 @@ fn render_feed(){
         // next collection. Collect between events, before building a new list.
         // Remove when host GC accounts for heap pressure; keep the 32 MiB cap.
         mod.gc.run()
-        feed_render_pending = false
         render_feed_now()
     })
 }
 fn render_feed_now(){
-    display_rows = visible_rows()
+    // A source completion or an earlier navigation may arrive while the
+    // calendar is visible. Its hidden list can wait until browsing resumes.
+    if page == "schedule" { feed_render_pending = false sync_status() ui.tile_list.render() return }
+    let generation = feed_render_generation
+    let rows = visible_rows()
+    prepare_feed_presentation(rows, generation, fn(prepared){
+        if prepared == nil { feed_render_pending = false render_feed() return }
+        display_rows = prepared.rows feed_match_hints = prepared.matches feed_agent_hints = prepared.hints
+        feed_render_pending = false
+        render_prepared_feed()
+    })
+}
+fn render_prepared_feed(){
+    if page == "feed" { display_rows = prioritize_feed_rows(display_rows) }
     if feed_reset_scroll_pending {
         feed_reset_scroll_pending = false
         ui.list_container.render()
@@ -3311,8 +3364,24 @@ fn render_feed_now(){
     ui.tile_list.render()
 }
 fn render_main(){
-    ui.categories.render()
-    ui.navigation.render()
+    if main_render_pending { return }
+    main_render_pending = true
+    start_timeout(0.01, || {
+        // Apply the latest page once, after the input callback has finished.
+        // Navigation and calendar rebuilds need the same heap protection as
+        // the feed; collecting only before a list rebuild misses these paths.
+        mod.gc.run()
+        main_render_pending = false
+        render_main_now()
+    })
+}
+fn render_main_now(){
+    // Set toolbar geometry before the asynchronous list preparation completes.
+    render_analysis_controls()
+    if page == "feed" { ui.categories.render() }
+    // Keep navigation hit targets alive while deferred page renders settle.
+    ui.feed_tab_active.set_visible(page != "schedule")
+    ui.schedule_tab_active.set_visible(page == "schedule")
     ui.feed_filters.set_visible(page == "feed")
     ui.tracking_header.set_visible(page == "tracking")
     ui.bookmarks_header.set_visible(page == "saved")
@@ -3320,26 +3389,29 @@ fn render_main(){
     ui.status.set_visible(page != "schedule")
     ui.feed_list.set_visible(page != "schedule")
     ui.schedule_page.set_visible(page == "schedule")
-    render_feed()
+    if page == "schedule" {
+        ui.schedule_list.render()
+        ui.schedule_editor.render()
+    } else { render_feed() }
 }
 fn select_page(id){
     close_menu()
     notice("")
+    if page != "schedule" { page_filters[page] = {category: category query: query} }
     page = id
-    category = "all"
-    query = ""
+    let filters = page_filters[id]
+    category = "all" query = ""
+    if filters != nil { category = filters.category query = filters.query }
     reading = nil
     detail_kind = ""
-    ui.search.set_text("")
+    ui.search.set_text(query)
+    ui.navigation.set_visible(true)
     ui.detail_pane.set_visible(false)
     ui.main.set_visible(true)
+    if id == "schedule" && schedule_date_draft == "" { schedule_reset_draft() }
     render_main()
-    if id == "schedule" {
-        if schedule_date_draft == "" { schedule_begin_new() }
-        ui.schedule_list.render() ui.schedule_editor.render()
-    }
 }
-fn schedule_begin_new(){
+fn schedule_reset_draft(){
     schedule_saved_view = false schedule_original = nil schedule_allow_draft = false
     schedule_edit_id = nil schedule_edit_version = nil
     schedule_title_draft = "" schedule_content_draft = "" schedule_location_draft = ""
@@ -3349,6 +3421,9 @@ fn schedule_begin_new(){
     schedule_start_hour_draft = "" schedule_start_minute_draft = ""
     schedule_end_hour_draft = "" schedule_end_minute_draft = ""
     schedule_next_day = false schedule_custom_date = false schedule_edit_error = ""
+}
+fn schedule_begin_new(){
+    schedule_reset_draft()
     ui.schedule_editor.render()
 }
 fn schedule_pick_zone(zone){
@@ -3561,6 +3636,8 @@ fn render_analysis_controls(){
     ui.menu_badge.set_visible(count > 0)
     ui.suggestions_button.set_text("分析与建议")
     if count > 0 { ui.suggestions_button.set_text("分析与建议 · " + count + " 待处理") }
+    ui.pending_suggestions.set_visible(count > 0 && page == "feed" && detail_kind == "")
+    ui.pending_suggestions.set_text("" + count + " 项建议待查看 ›")
     ui.manage_tracking_button.set_visible(analysis_has_focus())
     if page == "tracking" { ui.tracking_analysis_actions.render() }
 }
@@ -3716,6 +3793,8 @@ fn show_detail(kind, title){
     detail_kind = kind
     ui.detail_title.set_text(title)
     ui.main.set_visible(false)
+    ui.navigation.set_visible(false)
+    ui.search_box.set_visible(false)
     ui.detail_pane.set_visible(true)
     render_detail()
 }
@@ -3743,10 +3822,13 @@ fn close_detail(){
     close_menu()
     detail_kind = ""
     reading = nil
+    render_analysis_controls()
     ui.detail_pane.set_visible(false)
     ui.main.set_visible(true)
+    ui.navigation.set_visible(true)
+    ui.search_box.set_visible(page != "schedule")
     // Preserve the existing ScrollYView and its position on return.
-    sync_status()
+    render_feed()
 }
 fn show_settings(){ notice("") settings_show_diagnostics = false ui.diagnostics_controls.render() show_detail("settings", "设置") }
 fn close_menu(){ menu_open = false ui.menu_panel.set_visible(false) }
@@ -3774,6 +3856,71 @@ fn toggle_source(id){
     rebuild_feed(|| render_feed())
 }
 // END src/app/controller.splash
+
+// BEGIN src/app/feed_presentation.splash
+// Prepare relevance before drawing. The feed stays a single stable news list.
+let feed_match_hints = {}
+let feed_agent_hints = {}
+
+fn prepare_feed_presentation(rows, generation, complete){
+    let latest_by_news = {}
+    let suggestions_by_id = {}
+    for item in analysis_history { latest_by_news[item.news_id] = item }
+    for item in suggestion_history { suggestions_by_id[item.suggestion_id] = item }
+    let work = {rows: rows all_rows: app_feed_rows generation: generation complete: complete page: page
+        latest_by_news: latest_by_news suggestions_by_id: suggestions_by_id matches: {} hints: {} phase: "matches" index: 0}
+    start_timeout(0.01, || prepare_feed_presentation_step(work))
+}
+fn prepare_feed_presentation_step(work){
+    if work.generation != feed_render_generation { work.complete(nil) return }
+    mod.gc.run()
+    let processed = 0 let analyzed = 0 let started_at = time_now()
+    while processed < news_config.work_batch_items && analyzed < news_config.feed_hint_batch_items && time_now() - started_at < news_config.work_slice_seconds {
+        if work.phase == "matches" {
+            if work.index >= work.all_rows.len() { work.phase = "hints" work.index = 0 continue }
+            let row = work.all_rows[work.index]
+            let reasons = interest_matches(row, user_interests)
+            let hint = ""
+            if reasons.len() > 0 { hint = reasons[0] }
+            work.matches[row.news_id] = hint
+        } else {
+            if work.index >= work.rows.len() { work.complete(work) return }
+            let row = work.rows[work.index]
+            // A saved snapshot can differ from today's item with the same URL.
+            if work.page == "saved" {
+                let reasons = interest_matches(row, user_interests)
+                let hint = ""
+                if reasons.len() > 0 { hint = reasons[0] }
+                work.matches[row.news_id] = hint
+            }
+            let latest = work.latest_by_news[row.news_id]
+            if latest != nil {
+                let hint = analysis_feed_hint(row, latest, work.suggestions_by_id)
+                analyzed = analyzed + 1
+                if hint != nil && (work.matches[row.news_id] != "" || hint.priority) { work.hints[row.news_id] = hint }
+            }
+        }
+        work.index = work.index + 1 processed = processed + 1
+    }
+    start_timeout(0.01, || prepare_feed_presentation_step(work))
+}
+fn prioritize_feed_rows(rows){
+    let related = [] let other = []
+    for row in rows {
+        let agent_hint = feed_agent_hints[row.news_id]
+        if row_match_hint(row) != "" || (agent_hint != nil && agent_hint.priority) { related.push(row) }
+        else { other.push(row) }
+    }
+    for row in other { related.push(row) }
+    related
+}
+fn row_agent_hint(row){ feed_agent_hints[row.news_id] }
+fn open_feed_hint(row){
+    let hint = row_agent_hint(row)
+    if hint != nil && hint.suggestion_id != nil { open_suggestion_record(hint.suggestion_id) }
+    else { open_story(row) }
+}
+// END src/app/feed_presentation.splash
 
 // BEGIN src/app/weather.splash
 // City-based forecasts, independent of the feed's refresh and navigation state.
@@ -3966,6 +4113,7 @@ let Search = TextInput{width: Fill height: 32 empty_text: "搜索新闻"
 let NewsList = ScrollYView{width: Fill height: Fill flow: Down on_render: || {
     for i row in display_rows {
         let hint = row_match_hint(row)
+        let agent_hint = row_agent_hint(row)
         let cache_note = row_cache_note(row)
         GestureView{width: Fill height: Fit flow: Down on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
             View{width: Fill height: Fit flow: Right spacing: 10 padding: Inset{left: 18 right: 18 top: 12 bottom: 8}
@@ -3977,16 +4125,20 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down on_render: || {
                     GestureView{width: Fill height: Fit on_tap: |x, y| open_story(row) on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
                         Text{text: row.title max_lines: 3 draw_text.text_style.font_size: 14}
                     }
-                    if hint != "" {
+                    if agent_hint != nil {
+                        GestureView{width: Fill height: Fit on_tap: |x, y| open_feed_hint(row)
+                            Small{text: agent_hint.text + " ›" max_lines: 1 draw_text.color: accent}
+                        }
+                    } else if hint != "" {
                         Small{text: hint max_lines: 1 draw_text.color: accent}
                     }
-                    if records_is_unread(row.news_id) && hint != "" { Small{text: "新消息 · 首次检查后的新增" draw_text.color: accent} }
                     if cache_note != "" { Small{text: cache_note} }
                     View{width: Fill height: 28 flow: Right spacing: 10
                         if records_has_interest("source", row.source) { LinkButton{text: "已跟踪" on_click: || toggle_follow(row)} }
                         else { QuietButton{text: "关注来源" on_click: || toggle_follow(row)} }
                         if records_is_bookmarked(row.news_id) { LinkButton{text: "已收藏" on_click: || toggle_save(row)} }
                         else { QuietButton{text: "收藏" on_click: || toggle_save(row)} }
+                        QuietButton{text: "查看" on_click: || open_story(row)}
                     }
                 }
             }
@@ -4059,7 +4211,7 @@ let WeatherHeaderWidget = View{width: 132 height: 50
     weather_header_content := View{width: Fill height: Fill on_render: || {
         let city = weather_primary_city()
         let today = weather_today()
-        GestureView{width: Fill height: Fill on_tap: |x, y| show_weather()
+        weather_header_hit := GestureView{width: Fill height: Fill on_tap: |x, y| show_weather()
             ForecastSky{width: Fill height: Fill padding: 8 draw_bg.border_radius: 12.0
                 View{width: Fill height: Fill flow: Right spacing: 6 align: Align{y: 0.5}
                     ForecastGlyph{width: 30 height: 30 draw_bg.condition: weather_glyph_condition(today)}
@@ -4103,6 +4255,8 @@ let MenuPanel = View{visible: false width: Fill height: Fit flow: Down padding: 
     show_bg: true draw_bg.color: soft
     MenuItem{text: "新闻来源" on_click: || show_settings()}
     MenuItem{text: "管理关注" on_click: || manage_tracking()}
+    MenuItem{text: "关注动态" on_click: || select_page("tracking")}
+    MenuItem{text: "我的收藏" on_click: || select_page("saved")}
     suggestions_button := MenuItem{text: "分析与建议" on_click: || show_analysis_results()}
     MenuItem{text: "天气预报" on_click: || show_weather()}
     menu_cancel_update := MenuItem{visible: false text: "停止新闻更新" on_click: || { close_menu() if busy { refresh() } }}
@@ -4139,7 +4293,7 @@ let TrackingHeader = View{visible: false width: Fill height: Fit flow: Down padd
 let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
     ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 12
         Heading{text: "关注你想持续了解的变化"}
-        Small{text: "添加主题、关键词或来源，相关新闻会出现在跟踪页。"}
+        Small{text: "添加主题、关键词或来源，相关新闻会在首页优先展示。"}
         Section{text: "添加关键词"}
         keyword_input := Search{empty_text: "例如：端侧 AI、NVIDIA（每次添加一个）" on_change: |text| {keyword_draft = text}}
         Primary{text: "添加关注" on_click: || add_keyword()}
@@ -4563,12 +4717,20 @@ HostedView{width: Fill height: Fill
         Divider{}
         menu_panel := MenuPanel{}
         main := View{width: Fill height: Fill flow: Down
+            navigation := View{width: Fill height: 46 flow: Right padding: Inset{left: 18 right: 18 top: 3 bottom: 3} spacing: 8
+                View{width: Fill height: 40 flow: Overlay
+                    feed_tab_active := RoundedView{width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 10.0}
+                    feed_tab := Nav{height: 40 text: "首页" draw_text +: {color: ink color_focus: ink} on_click: || select_page("feed")}
+                }
+                View{width: Fill height: 40 flow: Overlay
+                    schedule_tab_active := RoundedView{visible: false width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 10.0}
+                    schedule_tab := Nav{height: 40 text: "日程" draw_text +: {color: ink color_focus: ink} on_click: || select_page("schedule")}
+                }
+            }
+            pending_suggestions := HintButton{visible: false height: 28 margin: Inset{left: 18 right: 18} text: "" on_click: || show_analysis_results()}
             feed_filters := FeedFilters{}
             tracking_header := TrackingHeader{}
             bookmarks_header := BookmarksHeader{}
-            search_box := View{width: Fill height: Fit padding: Inset{left: 18 right: 18 top: 4 bottom: 8}
-                search := Search{on_change: |text| set_query(text)}
-            }
             status := Small{text: "正在准备新闻来源…" padding: Inset{left: 18 right: 18 bottom: 6}}
             feed_list := View{width: Fill height: Fill flow: Overlay
                 empty_panel := GestureView{visible: false width: Fill height: Fill flow: Down padding: 28 spacing: 12 on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
@@ -4603,13 +4765,9 @@ HostedView{width: Fill height: Fill
             feedback := Small{text: "" max_lines: 2}
             QuietButton{text: "关闭" on_click: || notice("")}
         }
-        Divider{}
-        navigation := View{width: Fill height: 58 flow: Right padding: Inset{left: 12 right: 12 top: 7 bottom: 9} spacing: 4 on_render: || {
-            for item in [{id: "feed" label: "动态"} {id: "tracking" label: "跟踪"} {id: "schedule" label: "日程"} {id: "saved" label: "收藏"}] {
-                if page == item.id { NavActive{text: item.label on_click: || select_page(item.id)} }
-                else { Nav{text: item.label on_click: || select_page(item.id)} }
-            }
-        }}
+        search_box := View{width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 10 bottom: 12}
+            search := Search{height: 36 on_change: |text| set_query(text)}
+        }
     }
     tile: View{width: Fill height: Fill flow: Down padding: 14 spacing: 8 show_bg: true draw_bg.color: white
         Section{text: "cfaw news" draw_text.color: accent}

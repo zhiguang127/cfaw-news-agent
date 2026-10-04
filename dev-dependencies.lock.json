@@ -55,13 +55,13 @@
     "rustc_tested": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
   },
   "binary_sha256": {
-    "rinx": "c61bcffa5b53031f3c5dcb0f9ff1334b195c94b5b8eb9c32a98f1259bdcf227a",
+    "rinx": "d1fd9c45b77016604232a573b196a5ec6858e03deaeae341f49f7674ab22bf94",
     "octos": "f82d1b5defc10527ca67d49cd4dbbb1f40ee9dcd9ff731627f9dd5d4c2caad0b",
     "hub": "57fe2033f8960dfef3f16fac2f3673896565560b17726268c7e584d0dde5b7ad",
     "card_host": "a54cf2cd1dd9c5bf3db8e60324995dc6409b33fb3dc5efd630ffdba54f8eb61e",
-    "rinx_sdf": "c67eb957e5ef4cfde24f5aa2bee29a5b41182ee3ce9e5267ad4f19354ac8bc42"
+    "rinx_sdf": "cdc3ae45a8fe47f4066d1787360420c46ac2d6934f81c64477f21eab0b01d474"
   },
-  "target_worktree_note": "Latest official Rinx main at the recorded commit; clean source. Windows host, matching Octos, hub/card-host and project SDF entry built successfully. The SDF entry uses this compiled App. New Rinx UI restart/inference acceptance was not run at the user request; older white-screen evidence retains its original pins.",
+  "target_worktree_note": "Rinx source stays clean at the recorded commit. Its private pinned Makepad Cargo checkout has the recorded local Windows D3D11 patch. Patched Windows host, matching Octos and SDF entry built; isolated render/fixture probes do not establish actual account, import or model acceptance. Older white-screen evidence retains its original pins.",
   "application_source": {
     "repository": "https://github.com/OctoSense-org/OctoSense.git",
     "commit": "d1596d739e187c689ada4b59093ca8086c23bbbe",
@@ -111,5 +111,16 @@
     "octoscript_makepad_runtime_requirement": "5991dfae9344589e732b2605b530f788e8bbcd11",
     "note": "The current Octoscript main only repins Makepad since the required L0 revision; the reference graph resolves it to the latest sibling checkout. application_source records historical attribution, not a live executable dependency."
   },
-  "built_on": "2026-10-04"
+  "built_on": "2026-10-04",
+  "local_windows_render_patch": {
+    "path": "scripts/patches/makepad-d3d11-buffer-accounting.patch",
+    "applies_to": "Rinx private Cargo cache / platform/src/os/windows/d3d11.rs",
+    "makepad_revision": "1f3b1dedfbb81424eb8dbf69e5e2c634fa73dc54",
+    "patch_sha256": "54a6d523c622fb56449ac3a7ab14650d29947efa20088551594977921f84439c",
+    "source_sha256_normalized": "b99c6f07a3db1a087317f2250287a24aa999f6b24fd23199a9d1dfd5070a0400",
+    "rinx_library_sha256": "bfcfcb87248a0322cd64b316e19c76885762d2310203de3fef07ff8bb61c9c1e",
+    "platform_library_sha256": "163165143735ff6f7dbdf5a32f506449e69ed9f923176e5433acaae40091c98d",
+    "runtime_marker": "CFAW D3D11 buffer accounting v3",
+    "reason": "Refresh real GPU completion, reuse immediate buffer accounting leases, bound retirement scans and preserve visible uploads."
+  }
 }

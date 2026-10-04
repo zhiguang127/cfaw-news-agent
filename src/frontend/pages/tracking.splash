@@ -16,7 +16,7 @@ let TrackingHeader = View{visible: false width: Fill height: Fit flow: Down padd
 let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
     ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 12
         Heading{text: "关注你想持续了解的变化"}
-        Small{text: "添加主题、关键词或来源，相关新闻会出现在跟踪页。"}
+        Small{text: "添加主题、关键词或来源，相关新闻会在首页优先展示。"}
         Section{text: "添加关键词"}
         keyword_input := Search{empty_text: "例如：端侧 AI、NVIDIA（每次添加一个）" on_change: |text| {keyword_draft = text}}
         Primary{text: "添加关注" on_click: || add_keyword()}

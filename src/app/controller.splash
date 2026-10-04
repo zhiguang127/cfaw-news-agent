@@ -5,6 +5,7 @@ let page = "feed"
 let category = "all"
 let query = ""
 let keyword_draft = ""
+let page_filters = {feed: {category: "all" query: ""} tracking: {category: "all" query: ""} saved: {category: "all" query: ""}}
 let reading = nil
 let detail_kind = ""
 let busy = false
@@ -21,7 +22,9 @@ let app_feed_build_task = nil
 let app_feed_build_counter = 0
 let refresh_successes_seen = 0
 let display_rows = []
+let main_render_pending = false
 let feed_render_pending = false
+let feed_render_generation = 0
 let feed_reset_scroll_pending = false
 let schedule_edit_id = nil
 let schedule_edit_version = nil
@@ -90,6 +93,8 @@ fn row_cache_note(row){
     ""
 }
 fn row_match_hint(row){
+    let cached = feed_match_hints[row.news_id]
+    if cached != nil { return cached }
     let reasons = interest_matches(row, user_interests)
     if reasons.len() > 0 { return reasons[0] }
     ""
@@ -137,6 +142,7 @@ fn sync_status(){
     render_analysis_controls()
 }
 fn render_feed(){
+    feed_render_generation = feed_render_generation + 1
     if feed_render_pending { return }
     feed_render_pending = true
     start_timeout(0.01, || {
@@ -144,12 +150,24 @@ fn render_feed(){
         // next collection. Collect between events, before building a new list.
         // Remove when host GC accounts for heap pressure; keep the 32 MiB cap.
         mod.gc.run()
-        feed_render_pending = false
         render_feed_now()
     })
 }
 fn render_feed_now(){
-    display_rows = visible_rows()
+    // A source completion or an earlier navigation may arrive while the
+    // calendar is visible. Its hidden list can wait until browsing resumes.
+    if page == "schedule" { feed_render_pending = false sync_status() ui.tile_list.render() return }
+    let generation = feed_render_generation
+    let rows = visible_rows()
+    prepare_feed_presentation(rows, generation, fn(prepared){
+        if prepared == nil { feed_render_pending = false render_feed() return }
+        display_rows = prepared.rows feed_match_hints = prepared.matches feed_agent_hints = prepared.hints
+        feed_render_pending = false
+        render_prepared_feed()
+    })
+}
+fn render_prepared_feed(){
+    if page == "feed" { display_rows = prioritize_feed_rows(display_rows) }
     if feed_reset_scroll_pending {
         feed_reset_scroll_pending = false
         ui.list_container.render()
@@ -168,8 +186,24 @@ fn render_feed_now(){
     ui.tile_list.render()
 }
 fn render_main(){
-    ui.categories.render()
-    ui.navigation.render()
+    if main_render_pending { return }
+    main_render_pending = true
+    start_timeout(0.01, || {
+        // Apply the latest page once, after the input callback has finished.
+        // Navigation and calendar rebuilds need the same heap protection as
+        // the feed; collecting only before a list rebuild misses these paths.
+        mod.gc.run()
+        main_render_pending = false
+        render_main_now()
+    })
+}
+fn render_main_now(){
+    // Set toolbar geometry before the asynchronous list preparation completes.
+    render_analysis_controls()
+    if page == "feed" { ui.categories.render() }
+    // Keep navigation hit targets alive while deferred page renders settle.
+    ui.feed_tab_active.set_visible(page != "schedule")
+    ui.schedule_tab_active.set_visible(page == "schedule")
     ui.feed_filters.set_visible(page == "feed")
     ui.tracking_header.set_visible(page == "tracking")
     ui.bookmarks_header.set_visible(page == "saved")
@@ -177,26 +211,29 @@ fn render_main(){
     ui.status.set_visible(page != "schedule")
     ui.feed_list.set_visible(page != "schedule")
     ui.schedule_page.set_visible(page == "schedule")
-    render_feed()
+    if page == "schedule" {
+        ui.schedule_list.render()
+        ui.schedule_editor.render()
+    } else { render_feed() }
 }
 fn select_page(id){
     close_menu()
     notice("")
+    if page != "schedule" { page_filters[page] = {category: category query: query} }
     page = id
-    category = "all"
-    query = ""
+    let filters = page_filters[id]
+    category = "all" query = ""
+    if filters != nil { category = filters.category query = filters.query }
     reading = nil
     detail_kind = ""
-    ui.search.set_text("")
+    ui.search.set_text(query)
+    ui.navigation.set_visible(true)
     ui.detail_pane.set_visible(false)
     ui.main.set_visible(true)
+    if id == "schedule" && schedule_date_draft == "" { schedule_reset_draft() }
     render_main()
-    if id == "schedule" {
-        if schedule_date_draft == "" { schedule_begin_new() }
-        ui.schedule_list.render() ui.schedule_editor.render()
-    }
 }
-fn schedule_begin_new(){
+fn schedule_reset_draft(){
     schedule_saved_view = false schedule_original = nil schedule_allow_draft = false
     schedule_edit_id = nil schedule_edit_version = nil
     schedule_title_draft = "" schedule_content_draft = "" schedule_location_draft = ""
@@ -206,6 +243,9 @@ fn schedule_begin_new(){
     schedule_start_hour_draft = "" schedule_start_minute_draft = ""
     schedule_end_hour_draft = "" schedule_end_minute_draft = ""
     schedule_next_day = false schedule_custom_date = false schedule_edit_error = ""
+}
+fn schedule_begin_new(){
+    schedule_reset_draft()
     ui.schedule_editor.render()
 }
 fn schedule_pick_zone(zone){
@@ -418,6 +458,8 @@ fn render_analysis_controls(){
     ui.menu_badge.set_visible(count > 0)
     ui.suggestions_button.set_text("分析与建议")
     if count > 0 { ui.suggestions_button.set_text("分析与建议 · " + count + " 待处理") }
+    ui.pending_suggestions.set_visible(count > 0 && page == "feed" && detail_kind == "")
+    ui.pending_suggestions.set_text("" + count + " 项建议待查看 ›")
     ui.manage_tracking_button.set_visible(analysis_has_focus())
     if page == "tracking" { ui.tracking_analysis_actions.render() }
 }
@@ -573,6 +615,8 @@ fn show_detail(kind, title){
     detail_kind = kind
     ui.detail_title.set_text(title)
     ui.main.set_visible(false)
+    ui.navigation.set_visible(false)
+    ui.search_box.set_visible(false)
     ui.detail_pane.set_visible(true)
     render_detail()
 }
@@ -600,10 +644,13 @@ fn close_detail(){
     close_menu()
     detail_kind = ""
     reading = nil
+    render_analysis_controls()
     ui.detail_pane.set_visible(false)
     ui.main.set_visible(true)
+    ui.navigation.set_visible(true)
+    ui.search_box.set_visible(page != "schedule")
     // Preserve the existing ScrollYView and its position on return.
-    sync_status()
+    render_feed()
 }
 fn show_settings(){ notice("") settings_show_diagnostics = false ui.diagnostics_controls.render() show_detail("settings", "设置") }
 fn close_menu(){ menu_open = false ui.menu_panel.set_visible(false) }

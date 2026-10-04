@@ -41,4 +41,6 @@ Windows 宿主临时回收保护：应用合并同一事件中的列表渲染请
 
 `feed_build_rows(enabled_ids, complete)` 分批去重与排序，每批最多处理 `work_batch_items` 条，同时以 `work_slice_seconds` 的时间预算让出执行，以适配宿主的 64 ms 回调限制。当前配置为最多 64 条/8 ms；单个操作仍需适配宿主预算。新的数据层构建或取消刷新使旧构建失效，回调只发布完整的新列表。app 合并同一来源选择、同一 refresh generation 内的更新：完成当前快照后展示，再重建累计新数据，避免每次来源完成都取消排序；来源选择或 generation 改变仍拒绝旧结果。
 
+首页展示准备由 `app/feed_presentation.splash` 负责，沿用 64 条/8 ms 切片；每片最多检查 `feed_hint_batch_items`（当前 4）份已有分析。新渲染请求增加 generation，旧批次放弃提交，完整批次一次性提交筛选行与提示。首页对筛选结果做稳定分组：当前关注匹配或有有效待处理 Agent 建议的报道优先，其余报道保持原顺序。数据层的时间排序不被改写。Agent 提示只复用当前输入指纹、提示词版本和证据时效都匹配的结果，不产生模型调用。
+
 `feed_restore_cache(enabled_ids, index, generation, complete)` 只恢复启用源；`feed_refresh_needed_ids(enabled_ids, checked_at)` 返回缺失、未来获取时间或达到 `startup_refresh_seconds`（300 秒）的来源。有效空结果也受该时限保护；手动刷新绕过时限。`feed_data_revision` 只标记已接受缓存/网络数据变化，不代表新闻内容有实质变化。刷新的最终完成在各来源的 on_update 都交付后发出，失败不触发无必要的全量排序。关键词匹配器按规则 ID 复用，规则变化时清理；它不存储用户记录。

@@ -60,7 +60,7 @@ let WeatherHeaderWidget = View{width: 132 height: 50
     weather_header_content := View{width: Fill height: Fill on_render: || {
         let city = weather_primary_city()
         let today = weather_today()
-        GestureView{width: Fill height: Fill on_tap: |x, y| show_weather()
+        weather_header_hit := GestureView{width: Fill height: Fill on_tap: |x, y| show_weather()
             ForecastSky{width: Fill height: Fill padding: 8 draw_bg.border_radius: 12.0
                 View{width: Fill height: Fill flow: Right spacing: 6 align: Align{y: 0.5}
                     ForecastGlyph{width: 30 height: 30 draw_bg.condition: weather_glyph_condition(today)}

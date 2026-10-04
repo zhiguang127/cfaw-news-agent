@@ -1,0 +1,101 @@
+--- a/platform/src/os/windows/d3d11.rs
++++ b/platform/src/os/windows/d3d11.rs
+@@ -147,15 +147,25 @@
+             // The one derived limit of the publication registry (contract §7).
+             self.publications.set_envelope(allowance / 4);
+             crate::log!("retained-upload budgets: adapter_bytes={} process_allowance={} allocation_limit={} source={}", reported, self.memory_budget(), allowance / 4, if reported != 0 { "DXGI_adapter_budget" } else { "process_allowance_fallback" });
+-        }
+-        self.draw_lists.1.allocations.collect_for_frame(
+-            self.repaint_id,
+-            self.textures
+-                .1
+-                .serials
+-                .completed
+-                .load(std::sync::atomic::Ordering::Acquire),
+-        );
++            crate::log!("CFAW D3D11 buffer accounting v3: poll completion, reuse leases, preserve visible uploads");
++        }
++        // The normal Windows repaint path does not poll the completion query.
++        // Refresh its real GPU frontier before retiring upload leases; texture
++        // mutations alone are insufficient when navigation only changes buffers.
++        // A 64-record scan cannot keep up with many small replacement buffers:
++        // bound extra scans to 1024 total visits / 200 us once per repaint.
++        if d3d11_cx.retirement_scan_frame.replace(Some(self.repaint_id)) != Some(self.repaint_id) {
++            self.poll_texture_lifetimes();
++            let completed = self.textures.1.serials.completed.load(std::sync::atomic::Ordering::Acquire);
++            self.draw_lists.1.allocations.collect_for_frame(self.repaint_id, completed);
++            let started = std::time::Instant::now();
++            for _ in 0..15 {
++                if started.elapsed().as_micros() >= 200 {
++                    break;
++                }
++                self.draw_lists.1.allocations.collect(completed);
++            }
++        }
+         let _phase = crate::thread::ui_hang::ui_phase_detail(
+             crate::thread::UiPhase::DrawList,
+             draw_list_id.index() as u32,
+@@ -298,10 +308,18 @@
+                         || draw_item.instances.as_ref().map_or(0, |v| v.len()),
+                         |p| p.data().len(),
+                     );
+-                    let replaces = draw_item.retained_instances.is_none()
+-                        || draw_item.retained_upload_range.start == 0
+-                        || draw_item.os.inst_vbuf.buffer.is_none()
+-                        || slots > draw_item.os.inst_vbuf.last_size;
++                    // Immediate uploads reuse the same COM buffer when its exact
++                    // size is unchanged (create_buffer_or_update). Keep its lease
++                    // instead of charging that allocation again on every repaint.
++                    let replaces = if draw_item.retained_instances.is_none() {
++                        draw_item.os.inst_vbuf.buffer.is_none()
++                            || draw_item.os.inst_vbuf.charge.is_none()
++                            || slots != draw_item.os.inst_vbuf.last_size
++                    } else {
++                        draw_item.retained_upload_range.start == 0
++                            || draw_item.os.inst_vbuf.buffer.is_none()
++                            || slots > draw_item.os.inst_vbuf.last_size
++                    };
+                     if replaces {
+                         let capacity = if draw_item.retained_instances.is_none() {
+                             slots * 4
+@@ -312,11 +330,11 @@
+                         } else {
+                             draw_item.os.inst_vbuf.last_size * 4
+                         };
+-                        let Some(charge) = upload_budget.allocations.reserve(capacity) else {
+-                            draw_item.instance_upload_pending = true;
+-                            self.demo_time_repaint = true;
+-                            continue;
+-                        };
++                        // Match Metal/OpenGL: a visible draw item must not become
++                        // a hole because retirement accounting is behind. The
++                        // producer owns cache pressure; real allocation errors
++                        // still go through D3d11Cx::note_error.
++                        let charge = upload_budget.allocations.reserve_visible(capacity);
+                         draw_item.os.inst_vbuf.charge = Some(charge);
+                     }
+                     draw_item.instance_upload_pending = false;
+@@ -2506,6 +2524,7 @@
+     /// Once-per-outage latch for failures the device itself says it survived, so a call site
+     /// that runs every frame cannot fill the log.
+     other_error_logged: Cell<bool>,
++    retirement_scan_frame: Cell<Option<u64>>,
+ }
+ 
+ impl D3d11Cx {
+@@ -2572,6 +2591,7 @@
+             query,
+             device_lost: Cell::new(false),
+             other_error_logged: Cell::new(false),
++            retirement_scan_frame: Cell::new(None),
+         }
+     }
+ 
+@@ -2586,6 +2606,7 @@
+                 self.context = context;
+                 self.query = query;
+                 self.other_error_logged.set(false);
++                self.retirement_scan_frame.set(None);
+                 true
+             }
+             Err(e) => {

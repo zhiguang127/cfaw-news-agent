@@ -1,0 +1,31 @@
+// Feed hints reuse validated results; stale context and handled proposals stay in history.
+fn analysis_feed_hint(row, latest, suggestions_by_id){
+    if latest == nil || latest["session_unsaved"] == true { return nil }
+    if latest.prompt_revision != analysis_prompt_revision || latest["input_key"] != analysis_input_key(row) { return nil }
+    if row.retrieved_at <= 0 || time_now() - row.retrieved_at > news_config.cache_stale_seconds { return nil }
+    if latest.outcome == "suggestions" {
+        let chosen = nil
+        let schedule_title = ""
+        for id in latest.suggestion_ids {
+            let item = suggestions_by_id[id]
+            if item == nil || item.state != "pending" || item.news_id != row.news_id { continue }
+            if !history_same_versions(item.evidence_versions, latest.evidence_versions) { continue }
+            if item.schedule_id != nil {
+                let schedule = schedule_find(item.schedule_id)
+                if schedule == nil || !schedule_active(schedule) || schedule.version != item.schedule_version { continue }
+                chosen = item schedule_title = schedule.title break
+            }
+            if chosen == nil && item.interest_ids.len() > 0 { chosen = item }
+        }
+        if chosen == nil { return nil }
+        let text = "Agent · "
+        if schedule_title != "" { text = text + "日程「" + schedule_title + "」：" }
+        {text: text + chosen.change_summary suggestion_id: chosen.suggestion_id priority: true}
+    } else {
+        let label = ""
+        if latest.outcome == "no_change" { label = "暂无需调整：" }
+        if latest.outcome == "insufficient_evidence" { label = "证据不足：" }
+        if label == "" { return nil }
+        {text: "Agent · " + label + latest.explanation suggestion_id: nil priority: false}
+    }
+}

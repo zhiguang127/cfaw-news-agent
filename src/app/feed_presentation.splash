@@ -1,0 +1,62 @@
+// Prepare relevance before drawing. The feed stays a single stable news list.
+let feed_match_hints = {}
+let feed_agent_hints = {}
+
+fn prepare_feed_presentation(rows, generation, complete){
+    let latest_by_news = {}
+    let suggestions_by_id = {}
+    for item in analysis_history { latest_by_news[item.news_id] = item }
+    for item in suggestion_history { suggestions_by_id[item.suggestion_id] = item }
+    let work = {rows: rows all_rows: app_feed_rows generation: generation complete: complete page: page
+        latest_by_news: latest_by_news suggestions_by_id: suggestions_by_id matches: {} hints: {} phase: "matches" index: 0}
+    start_timeout(0.01, || prepare_feed_presentation_step(work))
+}
+fn prepare_feed_presentation_step(work){
+    if work.generation != feed_render_generation { work.complete(nil) return }
+    mod.gc.run()
+    let processed = 0 let analyzed = 0 let started_at = time_now()
+    while processed < news_config.work_batch_items && analyzed < news_config.feed_hint_batch_items && time_now() - started_at < news_config.work_slice_seconds {
+        if work.phase == "matches" {
+            if work.index >= work.all_rows.len() { work.phase = "hints" work.index = 0 continue }
+            let row = work.all_rows[work.index]
+            let reasons = interest_matches(row, user_interests)
+            let hint = ""
+            if reasons.len() > 0 { hint = reasons[0] }
+            work.matches[row.news_id] = hint
+        } else {
+            if work.index >= work.rows.len() { work.complete(work) return }
+            let row = work.rows[work.index]
+            // A saved snapshot can differ from today's item with the same URL.
+            if work.page == "saved" {
+                let reasons = interest_matches(row, user_interests)
+                let hint = ""
+                if reasons.len() > 0 { hint = reasons[0] }
+                work.matches[row.news_id] = hint
+            }
+            let latest = work.latest_by_news[row.news_id]
+            if latest != nil {
+                let hint = analysis_feed_hint(row, latest, work.suggestions_by_id)
+                analyzed = analyzed + 1
+                if hint != nil && (work.matches[row.news_id] != "" || hint.priority) { work.hints[row.news_id] = hint }
+            }
+        }
+        work.index = work.index + 1 processed = processed + 1
+    }
+    start_timeout(0.01, || prepare_feed_presentation_step(work))
+}
+fn prioritize_feed_rows(rows){
+    let related = [] let other = []
+    for row in rows {
+        let agent_hint = feed_agent_hints[row.news_id]
+        if row_match_hint(row) != "" || (agent_hint != nil && agent_hint.priority) { related.push(row) }
+        else { other.push(row) }
+    }
+    for row in other { related.push(row) }
+    related
+}
+fn row_agent_hint(row){ feed_agent_hints[row.news_id] }
+fn open_feed_hint(row){
+    let hint = row_agent_hint(row)
+    if hint != nil && hint.suggestion_id != nil { open_suggestion_record(hint.suggestion_id) }
+    else { open_story(row) }
+}

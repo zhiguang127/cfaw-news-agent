@@ -9,12 +9,20 @@ HostedView{width: Fill height: Fill
         Divider{}
         menu_panel := MenuPanel{}
         main := View{width: Fill height: Fill flow: Down
+            navigation := View{width: Fill height: 46 flow: Right padding: Inset{left: 18 right: 18 top: 3 bottom: 3} spacing: 8
+                View{width: Fill height: 40 flow: Overlay
+                    feed_tab_active := RoundedView{width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 10.0}
+                    feed_tab := Nav{height: 40 text: "首页" draw_text +: {color: ink color_focus: ink} on_click: || select_page("feed")}
+                }
+                View{width: Fill height: 40 flow: Overlay
+                    schedule_tab_active := RoundedView{visible: false width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 10.0}
+                    schedule_tab := Nav{height: 40 text: "日程" draw_text +: {color: ink color_focus: ink} on_click: || select_page("schedule")}
+                }
+            }
+            pending_suggestions := HintButton{visible: false height: 28 margin: Inset{left: 18 right: 18} text: "" on_click: || show_analysis_results()}
             feed_filters := FeedFilters{}
             tracking_header := TrackingHeader{}
             bookmarks_header := BookmarksHeader{}
-            search_box := View{width: Fill height: Fit padding: Inset{left: 18 right: 18 top: 4 bottom: 8}
-                search := Search{on_change: |text| set_query(text)}
-            }
             status := Small{text: "正在准备新闻来源…" padding: Inset{left: 18 right: 18 bottom: 6}}
             feed_list := View{width: Fill height: Fill flow: Overlay
                 empty_panel := GestureView{visible: false width: Fill height: Fill flow: Down padding: 28 spacing: 12 on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
@@ -49,13 +57,9 @@ HostedView{width: Fill height: Fill
             feedback := Small{text: "" max_lines: 2}
             QuietButton{text: "关闭" on_click: || notice("")}
         }
-        Divider{}
-        navigation := View{width: Fill height: 58 flow: Right padding: Inset{left: 12 right: 12 top: 7 bottom: 9} spacing: 4 on_render: || {
-            for item in [{id: "feed" label: "动态"} {id: "tracking" label: "跟踪"} {id: "schedule" label: "日程"} {id: "saved" label: "收藏"}] {
-                if page == item.id { NavActive{text: item.label on_click: || select_page(item.id)} }
-                else { Nav{text: item.label on_click: || select_page(item.id)} }
-            }
-        }}
+        search_box := View{width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 10 bottom: 12}
+            search := Search{height: 36 on_change: |text| set_query(text)}
+        }
     }
     tile: View{width: Fill height: Fill flow: Down padding: 14 spacing: 8 show_bg: true draw_bg.color: white
         Section{text: "cfaw news" draw_text.color: accent}
