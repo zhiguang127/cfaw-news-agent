@@ -163,3 +163,7 @@ a new `on_render` needs the same treatment.
 To observe state from a probe, append a `start_timeout` that writes a JSON
 file with `fs.write` and read it from the app-data directory; there is no
 `print`. Make the probe report a value rather than just "no error".
+
+## Conditional widget bindings
+
+The current card-host produced `pop_stack_value on empty stack` when a named `TextInput` binding lived in a conditional on_render branch that was skipped. The full intent panel passed after making that optional input anonymous, with edits handled by on_change. Keep identifiers on stable controls, or use a stable outer view for optional UI; do not depend on a conditional binding that has not been emitted.

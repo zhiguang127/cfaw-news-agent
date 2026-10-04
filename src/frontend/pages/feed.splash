@@ -1,31 +1,3 @@
-let IntentWorkbench = View{width: Fill height: Fit flow: Down padding: Inset{left: 14 right: 14 top: 5 bottom: 8}
-    intent_workbench_content := View{width: Fill height: Fit flow: Down on_render: || {
-        let active = []
-        for topic in topic_records.topics { if topic_is_user_record(topic) && topic.status == "active" { active.push(topic) } }
-        IntentSurface{
-            View{width: Fill height: Fit flow: Right align: Align{y: 0.5}
-                Small{width: Fill text: "INTENT → INSIGHT → ACTION" draw_text.color: #xd4cef2 draw_text.text_style.font_size: 10}
-                Small{width: Fit text: "✦ 意图工作台" draw_text.color: #xffd99a}
-            }
-            Heading{text: "你的意图，就是新闻的方向" draw_text.color: white draw_text.text_style.font_size: 19}
-            Small{text: "告诉我你在做什么，让新信息连接下一步。" draw_text.color: #xe0dcf2}
-            View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
-                if topic_records.draft != nil { IntentAction{text: "继续我的意图  ↗" on_click: || intent_begin(nil)} }
-                else { IntentAction{text: "表达我的意图  ↗" on_click: || intent_begin(nil)} }
-                QuietButton{text: "我的关注" draw_text +: {color: white color_hover: white color_down: white} on_click: || manage_tracking()}
-                QuietButton{text: "变化" draw_text +: {color: #xffd99a color_hover: white color_down: white} on_click: || show_analysis_results()}
-            }
-            if active.len() > 0 {
-                Small{text: "正在关注 · " + active[0].title + "（" + active.len() + " 项意图）" max_lines: 1 draw_text.color: #xd4f2e6}
-            } else { Small{text: "01 表达意图   ·   02 确认理解   ·   03 查看变化" draw_text.color: #xd4cef2} }
-        }
-        View{width: Fill height: Fit flow: Right padding: Inset{left: 4 right: 4 top: 7} spacing: 8 align: Align{y: 0.5}
-            Small{width: Fill text: analysis_check_status() max_lines: 1}
-            if analysis_busy { LinkButton{text: "停止" on_click: || analysis_cancel()} }
-            else if analysis_has_focus() { LinkButton{text: "检查变化 ↻" on_click: || analyze_changes()} }
-        }
-    }}
-}
 let FeedFilters = View{width: Fill height: Fit flow: Down
     categories := View{width: Fill height: 32 flow: Right padding: Inset{left: 12 right: 12} spacing: 2 on_render: || {
         for item in category_filters {

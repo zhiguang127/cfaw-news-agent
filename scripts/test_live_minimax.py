@@ -23,6 +23,7 @@ MODEL = 'MiniMax-M3'
 BASE_URL = 'https://api.minimax.cn/v1'
 FAMILY = 'minimax'
 TEST_INTENT = '测试意图：关注开源 Agent 框架的离线部署能力，少看融资新闻。仅用于联调。'
+TEST_SCHEDULE = '测试日程：2026年11月3日，美国东部时间下午2点到3点，线上讨论新闻应用。仅用于联调，请整理预览，不要实际保存。'
 
 
 def read_key(key_file, data_dir):
@@ -161,7 +162,10 @@ def run_live(args):
     work = ROOT / '.test-state' / ('live-minimax-' + uuid4().hex[:12])
     work.mkdir(parents=True)
     model = args.minimax_model
+    test_kind = args.minimax_intent
+    test_input = TEST_SCHEDULE if test_kind == 'schedule' else TEST_INTENT
     report = {'model': model, 'base_url': BASE_URL, 'provider': FAMILY,
+              'intent_kind': test_kind,
               'api': 'not_run', 'host': 'not_run', 'business': 'not_run'}
     process = None
     try:
@@ -226,7 +230,7 @@ def run_live(args):
         # Do not overwrite an existing user draft during a live service test.
         owner = data_dir / 'miniapps'
         drafts = list(owner.glob('*/dev.cfaw.news/topics_v2.json'))
-        if any((json.loads(path.read_text(encoding='utf-8')).get('draft') or {}).get('original_input', '').strip() not in ('', TEST_INTENT) or (json.loads(path.read_text(encoding='utf-8')).get('draft') or {}).get('supplement', '').strip() for path in drafts):
+        if any((json.loads(path.read_text(encoding='utf-8')).get('draft') or {}).get('original_input', '').strip() not in ('', TEST_INTENT, TEST_SCHEDULE) or (json.loads(path.read_text(encoding='utf-8')).get('draft') or {}).get('supplement', '').strip() for path in drafts):
             report['business'] = 'skipped: existing user draft preserved'
             print('Existing user draft preserved; intent test skipped.', flush=True)
             return
@@ -238,9 +242,11 @@ def run_live(args):
         else:
             ui.control('menu_button')
             ui.button('表达关注 / 继续草稿')
-        ui.fill('intent_input', TEST_INTENT)
+        ui.wait(lambda w: w.get('i') == 'intent_input' and w.get('ty') == 'TextInput')
+        ui.button('安排日程' if test_kind == 'schedule' else '关注新闻')
+        ui.fill('intent_input', test_input)
         report['stage'] = 'submit_test_intent'
-        ui.button('提交 / 重新理解', scroll=True)
+        ui.button('整理我的想法 ↗', scroll=True)
         report['stage'] = 'await_understanding'
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
@@ -257,7 +263,7 @@ def run_live(args):
             (work / 'intent-understanding.png').write_bytes(ui.call('/g', raw=1))
         except (OSError, HTTPError):
             report['capture'] = 'native screenshot unavailable; UI controls verified'
-        report['business'] = 'real MiniMax intent reply accepted by app validator; user confirmation pending'
+        report['business'] = 'real MiniMax ' + test_kind + ' reply accepted by app validator; user confirmation pending'
         report['stage'] = 'discard_test_draft'
         ui.button('丢弃草稿', scroll=True)
         ui.wait(lambda w: w.get('i') == 'search' and w.get('ty') == 'TextInput')
@@ -281,6 +287,7 @@ def run_live(args):
 def add_arguments(parser):
     parser.add_argument('--live-minimax', action='store_true', help='Real API + Rinx form autofill + intent validation; no fixed model replies')
     parser.add_argument('--minimax-model', choices=('MiniMax-M3', 'MiniMax-M3.1-Flash-Preview'), default=MODEL, help='Default M3; Flash Preview requires account availability')
+    parser.add_argument('--minimax-intent', choices=('news', 'schedule'), default='news', help='Validate a real news or schedule understanding, without confirming it')
     parser.add_argument('--minimax-key-file', type=Path, help='Private key file; alternatively MINIMAX_API_KEY or saved Rinx MiniMax profile')
     parser.add_argument('--minimax-api-only', action='store_true', help='Check the real endpoint without opening Rinx')
     parser.add_argument('--rinx-data-dir', type=Path, help='Rinx data directory with an existing Matrix login; default .local-state/rinx')

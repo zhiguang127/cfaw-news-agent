@@ -321,6 +321,22 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
             return response.read()
     def snapshot(label):
         time.sleep(.12)
+        # Wait for the bounded orb reveal/contraction, then inspect the page
+        # where controls are actually interactive, rather than a halfway frame.
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            current = json.loads(get('/snap'))['s']
+            wants_intent = label in ('tracking-orb-opened', 'tracking-follow-scope', 'tracking-new-intent', 'tracking-draft-reopened')
+            wants_closed = label in ('tracking-home', 'tracking-orb-returned', 'tracking-follow-confirmed', 'tracking-draft-return')
+            if wants_intent:
+                ready = any(w.get('i') == 'intent_input' for w in current)
+            elif wants_closed:
+                ready = any(w.get('i') == 'ai_orb' for w in current)
+            else:
+                ready = any(w.get('t') == 'cfaw-news' or w.get('i') == 'intent_input' for w in current if w.get('ty') != 'Splash')
+            if ready:
+                break
+            time.sleep(.05)
         data = get('/snap')
         (work / (label + '.json')).write_bytes(data)
         widgets = json.loads(data)['s']
@@ -330,7 +346,7 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
             try:
                 png = get('/g', raw=1)
                 (work / (label + '.png')).write_bytes(png)
-                brand = next(w for w in widgets if w.get('ty') == 'Label' and w.get('t') == 'cfaw-news')
+                brand = next(w for w in widgets if w.get('ty') == 'Label' and w.get('t') in ('cfaw-news', '✦ 意图空间'))
                 if not region_has_ink(png, brand['r'], tuple(map(int, logical_size.split('x')))):
                     raise SystemExit('Tracking header painted blank')
                 captures.append('verified:' + label)
@@ -356,6 +372,21 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
             widgets = json.loads(get('/snap'))['s']
         raise SystemExit(f'Native tracking button missing: {text}; inspect {work}')
     home = snapshot('tracking-home')
+    orb = find(home, ident='ai_orb')
+    x, y, width, height = orb['r']
+    get('/click', x=x + width / 2, y=y + height / 2, wait=1)
+    if not rinx:
+        (work / 'intent-orb-expanding.png').write_bytes(get('/g', raw=1))
+        time.sleep(.1)
+        (work / 'intent-orb-expanding-mid.png').write_bytes(get('/g', raw=1))
+    expanded = snapshot('tracking-orb-opened')
+    if any(w.get('t') == 'cfaw-news' for w in expanded if w.get('ty') == 'Label'):
+        raise SystemExit('Intent scene did not occupy the full application viewport')
+    if not all(any(w.get('t') == t and w.get('ty') == 'Button' for w in expanded) for t in ('我想做…', '关注新闻', '安排日程')):
+        raise SystemExit('Unified intent modes are missing')
+    click(find(expanded, ident='intent_close'))
+    home = snapshot('tracking-orb-returned')
+    checks.append('floating orb expands into full-screen intent modes; closing preserves news context')
     titles = [w for w in home if w.get('ty') == 'Label' and w.get('t', '').startswith('固定测试：')]
     if len(titles) < 3:
         raise SystemExit('Tracking home no longer has a compact multi-item feed')
@@ -373,12 +404,16 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
         raise SystemExit('Follow action saved an unconfirmed permanent topic')
     checks.append('reminder opens independent scope confirmation, no implicit save')
     # Confirm the fixed understanding using the actual submit and confirm buttons.
-    submit = '重试整理' if any(w.get('t') == '重试整理' for w in panel) else '提交 / 重新理解'
+    submit = '重试整理' if any(w.get('t') == '重试整理' for w in panel) else '整理我的想法 ↗'
     button(submit)
     time.sleep(.15)
     ready = snapshot('tracking-intent-understood')
     button('确认关注并保存')
     returned = snapshot('tracking-follow-confirmed')
+    back = next((w for w in returned if w.get('t') == '‹ 返回' and w.get('ty') == 'Button'), None)
+    if back:
+        click(back)
+        returned = snapshot('tracking-follow-returned')
     record = json.loads(records_path.read_text())
     if len(record['topics']) != 2 or not any(d['state'] == 'followed' for d in record['decisions']):
         raise SystemExit('Confirmed follow did not persist topic and decision together')
@@ -392,7 +427,7 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
     edit = snapshot('tracking-new-intent')
     click(find(edit, ident='intent_input'))
     get('/t', t='关注开源 Agent 离线部署，融资少一点')
-    button('提交 / 重新理解')
+    button('整理我的想法 ↗')
     time.sleep(.15)
     snapshot('tracking-new-understanding')
     button('取消并保留草稿')
@@ -410,6 +445,28 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
         raise SystemExit('Reopening draft lost understanding')
     button('取消并保留草稿')
     checks.append('reopened draft retains understanding and return context')
+    home = snapshot('tracking-draft-return')
+    click(find(home, ident='ai_orb'))
+    edit = snapshot('tracking-new-intent')
+    click(find(edit, text='安排日程'))
+    edit = snapshot('tracking-schedule-input')
+    click(find(edit, text='北京时间'))
+    edit = snapshot('tracking-schedule-input-zone')
+    click(find(edit, ident='intent_input'))
+    get('/key', c='KeyA', ctrl=1, wait=1)
+    get('/t', t='固定测试：11月3日12点到13点，线上设计讨论')
+    button('整理我的想法 ↗')
+    preview = snapshot('tracking-schedule-preview')
+    if not any('2026-11-03' in w.get('t', '') for w in preview if w.get('ty') == 'Label'):
+        raise SystemExit('Schedule preview lost its explicit date')
+    schedule_path = work / 'data/dev.cfaw.runtime-tests/schedules_v1.json'
+    count = len(json.loads(schedule_path.read_text())['items'])
+    button('确认日程并保存')
+    snapshot('tracking-schedule-saved')
+    saved = json.loads(schedule_path.read_text())['items']
+    if len(saved) != count + 1 or not any(s.get('origin_intent_id') and s.get('title') == '固定测试：设计讨论' for s in saved):
+        raise SystemExit('Native schedule confirmation did not persist exactly one plan')
+    checks.append('native schedule mode, timezone, preview and explicit confirmation save one in-app plan')
     (work / 'tracking-ui-report.json').write_text(json.dumps({'viewport': logical_size, 'host': 'pinned Rinx App' if rinx else 'reference card-host', 'checks': checks, 'captures': captures}, ensure_ascii=False, indent=2))
     if '[E]' in (work / 'host.log').read_text(encoding='utf-8', errors='replace'):
         raise SystemExit('Native tracking UI script failure; inspect ' + str(work))

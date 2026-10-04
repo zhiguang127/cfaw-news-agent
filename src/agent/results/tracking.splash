@@ -41,6 +41,16 @@ fn intent_validate(value){
     } else if value["question"].trim() == "" || value["understanding"] != nil { return tracking_invalid("invalid_schema", "请只返回一个关键追问") }
     {valid: true error: "" message: "" result: value}
 }
+fn schedule_intent_validate(value){
+    if !record_object(value) || value["schema_version"] != 1 { return tracking_invalid("invalid_schema", "日程理解版本或结构无效") }
+    if !tracking_text(value["question"], 300) { return tracking_invalid("invalid_schema", "日程追问无效") }
+    if value["status"] == "ready" {
+        if value.question != "" || !schedule_intent_understanding_valid(value["understanding"]) { return tracking_invalid("invalid_schema", "日程时间或内容无效，请明确日期、起止时间和时区后重试") }
+    } else if value["status"] == "needs_clarification" {
+        if value.question.trim() == "" || value["understanding"] != nil { return tracking_invalid("invalid_schema", "请补充一个关键日程信息") }
+    } else { return tracking_invalid("invalid_schema", "日程理解状态无效") }
+    {valid: true error: "" message: "" result: value}
+}
 fn tracking_validate(value, snapshot){
     if !tracking_snapshot_valid(snapshot) { return tracking_invalid("invalid_schema", "追踪快照损坏或版本未知") }
     if !record_object(value) || value["schema_version"] != 1 { return tracking_invalid("invalid_schema", "追踪结果版本或结构无效") }
@@ -93,6 +103,13 @@ fn tracking_parse(text, kind, snapshot){
     let value = nil
     try { value = clean.parse_json() } { value = nil }
     if !record_object(value) { return tracking_invalid("invalid_json", "模型回复无法解析为 JSON 对象") }
+    if kind == "parse_schedule_intent" {
+        let checked = schedule_intent_validate(value)
+        if checked.valid && value.status == "needs_clarification" {
+            if snapshot["previous_question"] != "" || value.question.match_all(regex("[?？]", "g")).len() > 1 { return tracking_invalid("invalid_schema", "请一次补充日程日期、起止时间及地点后重试") }
+        }
+        return checked
+    }
     if kind == "parse_intent" {
         let checked = intent_validate(value)
         if checked.valid {

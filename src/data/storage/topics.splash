@@ -89,7 +89,8 @@ fn topics_commit(next){
 fn topic_find(id){ for item in topic_records.topics { if item.topic_id == id { return item } } nil }
 fn topic_new_draft(id){
     let draft = {draft_id: "draft-" + time_now() version: 1 target_topic_id: nil target_version: nil
-        original_input: "" supplement: "" understanding: nil state: "editing" question: "" origin_reminder_id: nil}
+        original_input: "" supplement: "" understanding: nil state: "editing" question: "" origin_reminder_id: nil
+        intent_kind: "news" schedule_understanding: nil schedule_timezone: "America/New_York"}
     let topic = topic_find(id)
     if topic != nil {
         draft.target_topic_id = topic.topic_id draft.target_version = topic.version

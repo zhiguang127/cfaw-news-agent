@@ -42,19 +42,6 @@ let FilterActive = Filter{
 }
 let Box = RoundedView{width: Fill height: Fit flow: Down padding: 16 spacing: 10
     show_bg: true draw_bg.color: soft draw_bg.border_radius: 12.0}
-let IntentSurface = RoundedView{width: Fill height: Fit flow: Down padding: 16 spacing: 9
-    show_bg: true draw_bg +: {
-        border_radius: 16.0
-        pixel: fn(){
-            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, 16.0)
-            sdf.fill(mix(#x202447, #x6655ad, self.pos.x * 0.65 + self.pos.y * 0.35))
-            return sdf.result
-        }
-    }
-}
-let IntentAction = Primary{height: 34 draw_bg +: {color: #xffd99a color_hover: #xffe6b9 color_down: #xf4ca85}
-    draw_text +: {color: #x302746 color_hover: #x302746 color_down: #x302746}}
 let Search = TextInput{width: Fill height: 32 empty_text: "搜索新闻"
     draw_bg +: {color: soft color_hover: soft color_focus: soft color_empty: soft
         border_color: #x00000000 border_color_hover: #x00000000 border_color_focus: #x00000000 border_color_empty: #x00000000 border_radius: 8.0}

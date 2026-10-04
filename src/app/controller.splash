@@ -203,7 +203,6 @@ fn render_main_now(){
     ui.feed_tab_active.set_visible(page != "schedule")
     ui.schedule_tab_active.set_visible(page == "schedule")
     ui.feed_filters.set_visible(page == "feed")
-    ui.intent_workbench.set_visible(page == "feed")
     ui.tracking_header.set_visible(page == "tracking")
     ui.bookmarks_header.set_visible(page == "saved")
     ui.search_box.set_visible(page != "schedule")
@@ -461,7 +460,6 @@ fn render_analysis_controls(){
     ui.pending_suggestions.set_visible(count > 0 && page == "feed" && detail_kind == "")
     ui.pending_suggestions.set_text("" + count + " 项日程影响待关注 ›")
     ui.manage_tracking_button.set_visible(analysis_has_focus())
-    if page == "feed" && detail_kind == "" { ui.intent_workbench_content.render() }
     if page == "tracking" { ui.tracking_analysis_actions.render() }
 }
 fn analysis_check_status(){
@@ -540,7 +538,6 @@ fn render_detail(){
     ui.tracking_panel.set_visible(detail_kind == "tracking")
     ui.results_panel.set_visible(detail_kind == "results")
     ui.weather_panel.set_visible(detail_kind == "weather")
-    ui.intent_panel.set_visible(detail_kind == "intent")
     if detail_kind == "intent" { ui.intent_content.render() }
     if detail_kind == "results" { ui.results_content.render() }
     if detail_kind == "weather" { ui.weather_content.render() }

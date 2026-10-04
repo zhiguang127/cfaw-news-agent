@@ -305,3 +305,9 @@ Matrix 的 `m.secret_storage.default_key` / `moments.preferences` 账户数据 4
 默认 `MiniMax-M3` 使用模型自带思考；`reasoning_effort` 的分档控制仅对 Flash Preview 生效。本次账号的 Flash Preview 返回 unknown model；显式选择该模型时失败会如实报告，不偷偷切换模型。Flash 配置通过固定 Octos 支持的 `primary.reasoning_effort=max` 和 `model_hints.reasoning_style=effort_max_only` 发送 max；通用 effort 方言会降为 high，因此不能直接用于本例。每次配置仍写入 Rinx 自己的 profile，不给应用 turn 参数增加未实现字段。
 
 Linux 桌面 GPU 抓图不稳定时，可用已安装的 Xvfb/软件 OpenGL 运行原生测试：`xvfb-run -a env -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 python3 scripts/test_runtime.py --suites tracking --inspect-ui --timeout-seconds 120`。截图失败与模型验证分别记录；截图失败不代表模型成功，固定输入通过也不代表真实模型成功。
+
+## 全屏意图交互
+
+悬浮小球和 reveal shader 位于 `frontend/components/intent_orb.splash`，全屏场景挂在 app view 的 overlay；`app/intent_motion.splash` 负责有界动画及前页恢复，动画时长 420 ms，空闲无重绘计时器。意图面板不复用普通详情页的标题栏。
+
+“我想做…”/“关注新闻”沿用 parse_intent，“安排日程”用同一 Agent 的 parse_schedule_intent，全部仍是 octos.turn.start 的 text，未添加宿主 API 参数。任务结构、草稿兼容和保存规则见[意图契约](../src/contracts/intents.md)。自然语言日程的真实联调执行 `python3 scripts/test_runtime.py --live-minimax --minimax-intent schedule`，只校验预览，不自动确认保存。

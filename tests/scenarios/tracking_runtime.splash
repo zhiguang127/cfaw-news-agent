@@ -45,6 +45,7 @@ fn tracking_test_run(){
     invalid_category.understanding.recall_rules.push({kind: "category" value: "exclude:financing"})
     tracking_test_assert(!intent_validate(invalid_category).valid, "invented category gates cannot hide all future candidates")
     tracking_test_assert(!topic_is_user_record({topic_id: "preset-agent-development-v1" version: 1}) && topic_is_user_record({topic_id: "preset-agent-development-v1" version: 2}), "untouched starter hidden while user edits remain usable")
+    tracking_test_schedule_validation()
     intent_begin(nil)
     intent_draft.draft_id = "draft-fixture"
     intent_changed("选开源 Agent 框架，关注离线部署，融资少一点", false)
@@ -310,6 +311,7 @@ fn tracking_test_bm25(){
         tracking_test_assert(recalled.rows[0].news_id == rows[239].news_id, "BM25 promotes rare specific query evidence over common repeated words")
         tracking_test_assert(recalled.rows[1].news_id == rows[0].news_id && recalled.rows[2].news_id == rows[1].news_id, "BM25 ties retain original time order")
         tracking_test_assert(bm25_prefix("杭州abcdef", 3) == "杭州a", "native prefix preserves Unicode boundaries")
+        tracking_test_schedule_flow()
         // Leave a labeled fixture UI. Subsequent native events get explicit fixed replies.
         analysis_host_request = fn(name, data, callback){
             if name == "octos.session.open" { callback({is_ok: true}) }
@@ -326,7 +328,9 @@ fn tracking_test_bm25(){
                     }
                     start_timeout(0.03, || callback(tracking_test_response(output)))
                 }
-                else {
+                else if agent_task.kind == "parse_schedule_intent" {
+                    start_timeout(0.03, || callback(tracking_test_response(tracking_test_schedule_output())))
+                } else {
                     let output = fixture_tracking_update.parse_json()
                     // UI confirmation changes target IDs. Adapt only fixture
                     // references to the actual snapshot, never production news.
@@ -345,6 +349,49 @@ fn tracking_test_bm25(){
         }
         tracking_test_stage = "complete" tracking_test_report()
     })
+}
+fn tracking_test_schedule_output(){
+    {schema_version: 1 status: "ready" question: "" understanding: {title: "固定测试：设计讨论" content: "仅用于原生交互测试" location: "线上"
+        start: "2026-11-03T12:00:00+08:00" end: "2026-11-03T13:00:00+08:00" timezone: "Asia/Shanghai"}}
+}
+fn tracking_test_schedule_validation(){
+    let output = tracking_test_schedule_output()
+    tracking_test_assert(tracking_parse(output.to_json(), "parse_schedule_intent", {previous_question: ""}).valid, "schedule understanding accepts explicit dates and local offset")
+    output.understanding.timezone = "America/New_York"
+    tracking_test_assert(!schedule_intent_validate(output).valid, "schedule understanding rejects mismatched timezone offset")
+    output = tracking_test_schedule_output() output.understanding.end = output.understanding.start
+    tracking_test_assert(!schedule_intent_validate(output).valid, "schedule understanding rejects empty intervals")
+    output = tracking_test_schedule_output() output.understanding.start = "2026-02-30T12:00:00+08:00"
+    tracking_test_assert(!schedule_intent_validate(output).valid, "schedule understanding rejects nonexistent dates")
+    output = tracking_test_schedule_output() output.understanding.timezone = "Unknown/Zone"
+    tracking_test_assert(!schedule_intent_validate(output).valid, "schedule understanding rejects unknown zones")
+    output = {schema_version: 1 status: "needs_clarification" question: "几点结束？" understanding: nil}
+    tracking_test_assert(tracking_parse(output.to_json(), "parse_schedule_intent", {previous_question: ""}).valid, "missing schedule time can ask one question without a fabricated plan")
+    tracking_test_assert(!tracking_parse(output.to_json(), "parse_schedule_intent", {previous_question: "哪一天？"}).valid, "schedule understanding bounds clarification rounds")
+}
+fn tracking_test_schedule_flow(){
+    let before = user_schedules.to_json()
+    let count = user_schedules.len() let topics_before = topic_records.topics.len()
+    intent_discard() intent_begin(nil) intent_pick_mode("schedule") intent_pick_timezone("Asia/Shanghai")
+    intent_changed("固定测试：11月3日12点到13点，线上设计讨论", false)
+    intent_submit()
+    tracking_test_assert(analysis_busy && agent_task.kind == "parse_schedule_intent", "schedule input uses the same host-managed Agent task boundary")
+    tracking_test_reply(tracking_test_response(tracking_test_schedule_output()))
+    tracking_test_assert(intent_draft.state == "ready" && user_schedules.len() == count && topic_records.topics.len() == topics_before, "parsed schedule stays a draft before user confirmation")
+    let saved_draft = intent_draft.to_json().parse_json()
+    tracking_test_assert(topic_draft_valid(saved_draft) && topic_records.draft.schedule_understanding.start == saved_draft.schedule_understanding.start, "schedule preview persists using the compatible draft schema")
+    intent_confirm()
+    tracking_test_assert(user_schedules.len() == count + 1 && topic_records.draft == nil && topic_records.topics.len() == topics_before, "confirm saves one schedule without creating an interest")
+    let plan = saved_draft.schedule_understanding
+    let repeated = schedule_create_record(plan.title, plan.content, plan.location, plan.start, plan.end, plan.timezone, nil, false, saved_draft.draft_id)
+    tracking_test_assert(repeated.success && repeated.idempotent && user_schedules.len() == count + 1, "retry after draft cleanup failure cannot duplicate a confirmed schedule")
+    let conflict = schedule_create_record(plan.title, plan.content, plan.location, plan.start, plan.end, plan.timezone, nil, false, "different-intent")
+    tracking_test_assert(!conflict.success && conflict.conflicts.len() > 0 && user_schedules.len() == count + 1, "confirmation checks current schedule conflicts before writing")
+    let changed = schedule_create_record("changed", plan.content, plan.location, plan.start, plan.end, plan.timezone, nil, false, saved_draft.draft_id)
+    tracking_test_assert(!changed.success && user_schedules.len() == count + 1, "an already saved intent cannot silently change its schedule on retry")
+    user_schedules = before.parse_json() schedule_write()
+    if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) tracking_auto_timer = nil }
+    tracking_check_pending = false
 }
 
 fn tracking_test_restart(){
