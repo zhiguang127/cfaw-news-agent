@@ -11,6 +11,7 @@ let SchedulePage = View{visible: false width: Fill height: Fill flow: Down
                 if !schedule_is_user_record(item) { continue }
                 View{width: Fill height: Fit flow: Down spacing: 3
                     Text{text: item.title}
+                    if item["demo_preset"] == true { Small{text: "演示预设 · 可编辑或取消"} }
                     if record_string(item["content"]) && item.content != "" { Small{text: item.content} }
                     if record_string(item["location"]) && item.location != "" { Small{text: "地点：" + item.location} }
                     if item["time_precision"] == "day" {

@@ -25,6 +25,7 @@ HostedView{width: Fill height: Fill
             }
             pending_suggestions := HintButton{visible: false height: 28 margin: Inset{left: 18 right: 18} text: "" on_click: || show_analysis_results()}
             feed_filters := FeedFilters{}
+            feed_context := FeedContext{}
             tracking_header := TrackingHeader{}
             bookmarks_header := BookmarksHeader{}
             status := Small{text: "正在准备新闻来源…" padding: Inset{left: 18 right: 18 bottom: 6}}
@@ -67,7 +68,7 @@ HostedView{width: Fill height: Fill
     }
     floating_ai := View{width: Fill height: Fill align: Align{x: 1.0 y: 1.0} padding: Inset{right: 18 bottom: 100}
         View{width: 72 height: Fit flow: Down align: Align{x: 0.5}
-            ai_orb := AIOrb{on_click: || { if !intent_open { intent_begin(nil) } }}
+            ai_orb := AIOrb{on_press: || intent_orb_press() on_click: || { if !intent_open { intent_begin(nil) } }}
         }
     }
     intent_overlay := View{visible: false width: Fill height: Fill flow: Overlay

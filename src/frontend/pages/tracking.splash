@@ -27,6 +27,9 @@ let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
                 if !topic_is_user_record(topic) { continue }
                 Box{
                     Section{text: topic.title draw_text.color: accent}
+                    if topic["demo_preset"] == true { Small{text: "演示预设 · 可修改或暂停"} }
+                    else if topic["intent_kind"] == "goal" { Small{text: "目标关注 · 围绕下一步决策追踪"} }
+                    else { Small{text: "新闻关注 · 持续了解话题"} }
                     if topic.purpose != "" { Text{text: topic.purpose} }
                     Small{text: topic.original_input}
                     let status_label = "关注中" if topic.status == "paused" { status_label = "已暂停" }

@@ -284,5 +284,5 @@ fn tracking_ui_update(){
     if detail_kind == "story" { ui.story_content.render() }
     if detail_kind == "results" { ui.results_content.render() }
     if detail_kind == "tracking" { ui.interest_list.render() }
-    if detail_kind == "intent" { ui.intent_content.render() }
+    if detail_kind == "intent" { intent_render() }
 }

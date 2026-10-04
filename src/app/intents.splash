@@ -9,7 +9,7 @@ fn intent_mode(){
     if intent_draft == nil || intent_draft["intent_kind"] == nil { return "news" }
     return intent_draft.intent_kind
 }
-fn intent_render(){ if detail_kind == "intent" { ui.intent_content.render() } }
+fn intent_render(){ if detail_kind == "intent" && intent_scene_ready { ui.intent_content.render() } }
 fn intent_begin(topic_id){
     tracking_recall_generation = tracking_recall_generation + 1
     notice("")
@@ -64,7 +64,7 @@ fn intent_submit(){
     let draft = intent_draft.to_json().parse_json()
     let key = draft.to_json()
     let current_topic = topic_find(draft.target_topic_id)
-    let snapshot = {original_input: draft.original_input supplement: draft.supplement current_topic: current_topic
+    let snapshot = {intent_kind: intent_mode() original_input: draft.original_input supplement: draft.supplement current_topic: current_topic
         previous_question: draft.question prompt_revision: tracking_prompt_revision}
     let kind = "parse_intent" let prompt = intent_prompt
     if intent_mode() == "schedule" {
@@ -113,8 +113,20 @@ fn intent_confirm(){
     if intent_mode() == "schedule" { intent_confirm_schedule() return }
     let error = topic_confirm(intent_draft)
     if error != "" { intent_error = error intent_render() return }
-    intent_draft = nil
-    intent_hide() notice("关注已确认并保存") tracking_schedule_check()
+    let label = "关注"
+    if intent_mode() == "goal" { label = "目标关注" }
+    let title = intent_draft.understanding.title
+    intent_finish(label + "「" + title + "」已保存；首页将按新关注排序")
+}
+fn intent_finish(message){
+    if intent_save_timer != nil { stop_timer(intent_save_timer) intent_save_timer = nil }
+    intent_parse_pending = false intent_error = "" intent_draft = nil
+    intent_hide()
+    // Publish the changed records immediately, even when no model is available.
+    tracking_ui_update()
+    if page == "schedule" { ui.schedule_list.render() }
+    notice(message)
+    tracking_schedule_check()
 }
 fn intent_confirm_schedule(){
     if intent_draft.state != "ready" || !schedule_intent_understanding_valid(intent_draft["schedule_understanding"]) { intent_error = "请先取得完整的日程理解" intent_render() return }
@@ -128,9 +140,7 @@ fn intent_confirm_schedule(){
     let next = topic_records.to_json().parse_json() next.draft = nil
     let error = topics_commit(next)
     if error != "" { intent_error = "日程已保存；草稿清理失败，可重试确认，不会重复创建：" + error intent_render() return }
-    intent_draft = nil intent_hide()
-    notice("日程已确认并保存") tracking_schedule_check()
-    if page == "schedule" { ui.schedule_list.render() }
+    intent_finish("日程「" + plan.title + "」已保存；首页将优先展示行程相关报道")
 }
 fn intent_cancel(){
     intent_parse_pending = false

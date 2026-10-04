@@ -327,7 +327,7 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
         while time.monotonic() < deadline:
             current = json.loads(get('/snap'))['s']
             wants_intent = label in ('tracking-orb-opened', 'tracking-follow-scope', 'tracking-new-intent', 'tracking-draft-reopened')
-            wants_closed = label in ('tracking-home', 'tracking-orb-returned', 'tracking-follow-confirmed', 'tracking-draft-return')
+            wants_closed = label in ('tracking-home', 'tracking-orb-returned', 'tracking-follow-confirmed', 'tracking-draft-return', 'tracking-goal-saved', 'tracking-schedule-saved')
             if wants_intent:
                 ready = any(w.get('i') == 'intent_input' for w in current)
             elif wants_closed:
@@ -384,7 +384,11 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
         raise SystemExit('Intent scene did not occupy the full application viewport')
     if not all(any(w.get('t') == t and w.get('ty') == 'Button' for w in expanded) for t in ('我想做…', '关注新闻', '安排日程')):
         raise SystemExit('Unified intent modes are missing')
-    click(find(expanded, ident='intent_close'))
+    click(find(expanded, text='我想做…'))
+    goal = snapshot('tracking-goal-boundary')
+    if not any('保存为目标关注' in w.get('t', '') for w in goal if w.get('ty') == 'Label'):
+        raise SystemExit('Goal mode did not explain its tracking boundary')
+    click(find(goal, ident='intent_close'))
     home = snapshot('tracking-orb-returned')
     checks.append('floating orb expands into full-screen intent modes; closing preserves news context')
     titles = [w for w in home if w.get('ty') == 'Label' and w.get('t', '').startswith('固定测试：')]
@@ -410,6 +414,8 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
     ready = snapshot('tracking-intent-understood')
     button('确认关注并保存')
     returned = snapshot('tracking-follow-confirmed')
+    if any(w.get('i') == 'intent_input' for w in returned) or not any(w.get('i') == 'ai_orb' for w in returned):
+        raise SystemExit('Confirmed interest did not contract into the floating orb')
     back = next((w for w in returned if w.get('t') == '‹ 返回' and w.get('ty') == 'Button'), None)
     if back:
         click(back)
@@ -446,6 +452,23 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
     button('取消并保留草稿')
     checks.append('reopened draft retains understanding and return context')
     home = snapshot('tracking-draft-return')
+    click(find(home, ident='ai_orb'))
+    edit = snapshot('tracking-new-intent')
+    click(find(edit, text='我想做…'))
+    edit = snapshot('tracking-goal-input')
+    click(find(edit, ident='intent_input'))
+    get('/key', c='KeyA', ctrl=1, wait=1)
+    get('/t', t='为本地知识库选开源 Agent 框架，重点关注离线部署')
+    button('整理我的想法 ↗')
+    snapshot('tracking-goal-preview')
+    button('确认目标关注并保存')
+    home = snapshot('tracking-goal-saved')
+    record = json.loads(records_path.read_text())
+    if record['draft'] is not None or not any(t.get('intent_kind') == 'goal' for t in record['topics']):
+        raise SystemExit('Goal confirmation did not persist its explicit kind and clear the draft')
+    if any(w.get('i') == 'intent_input' for w in home) or not any(w.get('t', '').startswith('目标 · ') for w in home if w.get('ty') == 'Label'):
+        raise SystemExit('Goal save did not close the panel and refresh the home context')
+    checks.append('goal confirmation contracts the orb and immediately updates home context')
     click(find(home, ident='ai_orb'))
     edit = snapshot('tracking-new-intent')
     click(find(edit, text='安排日程'))

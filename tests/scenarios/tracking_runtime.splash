@@ -37,6 +37,56 @@ fn tracking_test_run(){
     if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) tracking_auto_timer = nil }
     tracking_test_host()
     render_main()
+    tracking_test_presets(|| tracking_test_intent())
+}
+fn tracking_test_presets(complete){
+    tracking_test_stage = "demo context and browsing order"
+    let original_topics = topic_records.to_json() let original_schedules = user_schedules.to_json()
+    let now = schedule_instant("2026-10-04T08:00:00Z")
+    presets_initialize(now)
+    let topic = topic_find("preset-agent-development-v1")
+    let trip = schedule_find("preset-shanghai-trip-v1")
+    tracking_test_assert(topic != nil && topic.demo_preset && topic.status == "active", "first launch persists explicitly labeled Agent demo interest")
+    tracking_test_assert(trip != nil && trip.demo_preset && trip.start == "2026-10-18T00:00:00+08:00" && trip.time_precision == "day", "Shanghai demo is two weeks later in Beijing time without invented travel times")
+    let topics_before = topic_records.to_json() let schedules_before = user_schedules.to_json()
+    presets_initialize(now + 86400)
+    tracking_test_assert(topic_records.to_json() == topics_before && user_schedules.to_json() == schedules_before, "restart cannot duplicate or slide demo dates")
+    app_feed_rows = []
+    for i item in [{title: "固定测试：普通消息" summary: "普通浏览" link: "https://example.invalid/preset/ordinary"}
+        {title: "固定测试：Agent 框架更新" summary: "开源 Agent" link: "https://example.invalid/preset/agent"}
+        {title: "固定测试：上海地铁通告" summary: "上海交通" link: "https://example.invalid/preset/shanghai"}
+        {title: "固定测试：Shanghai travel" summary: "Shanghai transport" link: "https://example.invalid/preset/english"}] {
+        let row = news_normalize(item, news_sources[0], time_now()) row.published_at = time_now() - i * 100
+        app_feed_rows.push(row)
+    }
+    render_feed()
+    tracking_test_wait(|| !feed_render_pending && !main_render_pending, || {
+        tracking_test_assert(display_rows[0].news_id == app_feed_rows[2].news_id && display_rows[1].news_id == app_feed_rows[3].news_id && display_rows[2].news_id == app_feed_rows[1].news_id, "Shanghai and Agent context change the actual news order before any AI reply")
+        tracking_test_assert(row_agent_hint(display_rows[0]) == nil && tracking_test_calls == 0, "provisional schedule recall never fabricates an Agent impact or model call")
+        let row = app_feed_rows[2]
+        let decision = {reminder_id: "fixture-preset-dismissal" goal_key: "transport" schedule_id: trip.schedule_id schedule_version: trip.version
+            state: "dismissed" decided_at: time_now() evidence: [{news_id: row.news_id key: tracking_evidence_key(row)}]}
+        topic_records.decisions.push(decision)
+        tracking_test_assert(!tracking_schedule_candidate(row, tracking_schedule_rules(), tracking_schedule_decisions()), "dismissed evidence cannot return via schedule recall when an unrelated context change invalidates AI hints")
+        topic_records.decisions = []
+        let context = feed_context_state()
+        tracking_test_assert(regex("演示预设").test(context.topic_label) && regex("2026-10-18").test(context.schedule_label), "home exposes the active context behind personalized ordering")
+        set_query("Agent")
+        tracking_test_wait(|| !feed_render_pending, || {
+            tracking_test_assert(display_rows.len() == 1 && display_rows[0].news_id == app_feed_rows[1].news_id, "personalization respects search filtering")
+            topic_set_status(topic.topic_id, topic.version, "paused")
+            schedule_set_status(trip.schedule_id, trip.version, "cancelled")
+            presets_initialize(now + 2 * 86400)
+            topics_load() schedules_load()
+            tracking_test_assert(topic_find(topic.topic_id).status == "paused" && schedule_find(trip.schedule_id).status == "cancelled", "paused or cancelled demo context survives reload without reactivation")
+            tracking_test_assert(!feed_context_state().has_context && tracking_schedule_rules().len() == 0, "inactive demo context stops contributing to home and schedule recall")
+            topics_commit(original_topics.parse_json()) user_schedules = original_schedules.parse_json() schedule_write()
+            app_feed_rows = [] query = "" ui.search.set_text("")
+            start_timeout(0.02, complete)
+        }, time_now() + 5)
+    }, time_now() + 5)
+}
+fn tracking_test_intent(){
     tracking_test_stage = "intent confirmation and recovery"
     let intent_fixture = fixture_tracking_intent.parse_json()
     tracking_test_assert(tracking_parse("```json\n" + fixture_tracking_intent + "\n```", "parse_intent", {previous_question: ""}).valid, "MiniMax JSON code fence passes the same domain validation")
@@ -47,10 +97,11 @@ fn tracking_test_run(){
     tracking_test_assert(!topic_is_user_record({topic_id: "preset-agent-development-v1" version: 1}) && topic_is_user_record({topic_id: "preset-agent-development-v1" version: 2}), "untouched starter hidden while user edits remain usable")
     tracking_test_schedule_validation()
     intent_begin(nil)
+    intent_pick_mode("goal")
     intent_draft.draft_id = "draft-fixture"
     intent_changed("选开源 Agent 框架，关注离线部署，融资少一点", false)
     intent_submit()
-    tracking_test_assert(analysis_busy && agent_task.kind == "parse_intent", "intent uses real host task boundary")
+    tracking_test_assert(analysis_busy && agent_task.kind == "parse_intent" && agent_task.snapshot.intent_kind == "goal", "goal mode reaches the host-managed Agent as explicit context")
     tracking_test_reply(tracking_test_response({schema_version: 1 status: "needs_clarification" question: "是否需要离线部署？" understanding: nil}))
     tracking_test_assert(intent_draft.state == "needs_clarification" && topic_records.topics.len() == 0, "one clarification never saves a confirmed topic")
     intent_changed("需要离线部署，重点看内存和CPU", true)
@@ -61,9 +112,11 @@ fn tracking_test_run(){
     topics_load()
     tracking_test_assert(topic_records.draft.state == "ready" && topic_records.draft.supplement != "", "draft and understanding recover from actual filesystem")
     intent_begin(nil) intent_confirm()
+    tracking_test_assert(!intent_open && intent_draft == nil && topic_records.draft == nil && intent_save_timer == nil, "successful save closes the intent state and clears every draft timer")
     tracking_test_assert(topic_records.topics.len() == 1 && topic_records.topics[0].preferences.len() == 2, "confirmed purpose scope preferences original input persisted")
     if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) tracking_auto_timer = nil }
     topics_load()
+    tracking_test_assert(topic_records.topics[0].intent_kind == "goal" && topic_new_draft(topic_records.topics[0].topic_id).intent_kind == "goal", "goal distinction survives confirmation, reload and editing")
     tracking_test_assert(topic_records.topics[0].original_input != "" && topic_records.topics[0].version == 1, "confirmed topic restarts with stable ID/version")
     // Revision-safe updates and write rollback.
     let draft = topic_new_draft(topic_records.topics[0].topic_id)
@@ -75,7 +128,7 @@ fn tracking_test_run(){
     let document = topic_records.to_json().parse_json()
     document.revision = topic_records.revision + 1
     tracking_store_write(topic_file, document, topic_document_valid) topic_records = document
-    start_timeout(0.02, || tracking_test_recall())
+    tracking_test_wait(|| !intent_motion_active, || tracking_test_recall(), time_now() + 2)
 }
 fn tracking_test_recall(){
     tracking_test_stage = "BM25 and per-item results"

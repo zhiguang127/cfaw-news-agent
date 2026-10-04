@@ -160,7 +160,7 @@ fn render_feed_now(){
     let rows = visible_rows()
     prepare_feed_presentation(rows, generation, fn(prepared){
         if prepared == nil { feed_render_pending = false render_feed() return }
-        display_rows = prepared.rows feed_match_hints = prepared.matches feed_agent_hints = prepared.hints
+        display_rows = prepared.rows feed_match_hints = prepared.matches feed_agent_hints = prepared.hints feed_schedule_matches = prepared.schedule_matches
         feed_render_pending = false
         render_prepared_feed()
     })
@@ -453,6 +453,9 @@ fn analysis_has_focus(){
 fn suggestion_attention_count(){ tracking_active_reminders().len() }
 
 fn render_analysis_controls(){
+    let context = feed_context_state()
+    ui.feed_context.set_visible(context.has_context && page == "feed" && detail_kind == "")
+    if page == "feed" && detail_kind == "" { ui.feed_context_content.render() }
     let count = suggestion_attention_count()
     ui.menu_badge.set_visible(count > 0)
     ui.suggestions_button.set_text("分析与建议")
@@ -538,7 +541,7 @@ fn render_detail(){
     ui.tracking_panel.set_visible(detail_kind == "tracking")
     ui.results_panel.set_visible(detail_kind == "results")
     ui.weather_panel.set_visible(detail_kind == "weather")
-    if detail_kind == "intent" { ui.intent_content.render() }
+    if detail_kind == "intent" { intent_render() }
     if detail_kind == "results" { ui.results_content.render() }
     if detail_kind == "weather" { ui.weather_content.render() }
 }
@@ -554,6 +557,7 @@ fn show_detail(kind, title){
     render_detail()
 }
 fn open_story(row){
+    if intent_open || intent_motion_active || time_now() - last_intent_orb_press_at < news_config.overlay_tap_guard_seconds { return }
     // The pinned GestureView can also deliver a tap through a sibling overlay.
     // Remove this guard when host capture excludes overlapping sibling controls.
     if time_now() - last_return_top_at < news_config.overlay_tap_guard_seconds { return }

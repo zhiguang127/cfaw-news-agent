@@ -6,3 +6,20 @@ let FeedFilters = View{width: Fill height: Fit flow: Down
         }
     }}
 }
+let FeedContext = View{visible: false width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 4 bottom: 4} spacing: 2
+    feed_context_content := View{width: Fill height: Fit flow: Down on_render: || {
+        let context = feed_context_state()
+        if context.topic_label != "" {
+            View{width: Fill height: 24 flow: Right align: Align{y: 0.5}
+                Small{width: Fill max_lines: 1 text: context.topic_label}
+                LinkButton{text: "管理" on_click: || manage_tracking()}
+            }
+        }
+        if context.schedule_label != "" {
+            View{width: Fill height: 24 flow: Right align: Align{y: 0.5}
+                Small{width: Fill max_lines: 1 text: context.schedule_label}
+                LinkButton{text: "日程" on_click: || select_page("schedule")}
+            }
+        }
+    }}
+}
