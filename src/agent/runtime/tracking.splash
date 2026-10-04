@@ -38,7 +38,7 @@ fn agent_task_start(kind, snapshot, prompt, current, complete){
     analysis_error = "" analysis_error_category = ""
     if prompt.to_bytes().len() > tracking_config.max_prompt_bytes { agent_task_finish(task, "failed", "上下文超过宿主32 KiB限制，未发送", "invalid_schema", nil) return "" }
     if !analysis_host_has("octos.session.open") || !analysis_host_has("octos.turn.start") || !analysis_host_has("octos.turn.interrupt") {
-        agent_task_finish(task, "failed", "当前宿主未提供 Octos 服务；规则匹配仍可使用", "service_unavailable", nil) return ""
+        agent_task_finish(task, "failed", "当前宿主未提供 Octos 服务；新闻浏览仍可使用", "service_unavailable", nil) return ""
     }
     task.timer = start_timeout(tracking_config.request_timeout_seconds, || agent_task_stop("failed", "请求超时", "timeout"))
     analysis_host_request("octos.session.open", {}, fn(opened){

@@ -422,6 +422,8 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
 
 def run():
     parser = argparse.ArgumentParser(description=__doc__)
+    from test_live_minimax import add_arguments, run_live
+    add_arguments(parser)
     parser.add_argument('--host', type=Path, help='Pinned card-host executable')
     parser.add_argument('--agent-only', action='store_true', help='Run isolated agent validation tests')
     parser.add_argument('--restart', action='store_true', help='Restart tracking fixture in a fresh native process and verify persisted records/cache')
@@ -433,6 +435,14 @@ def run():
     parser.add_argument('--navigation-rounds', type=int, default=1000, help='Rinx render-probe rounds, four queued page clicks each (1..2000)')
     parser.add_argument('--suites', nargs='+', choices=('news', 'weather', 'holiday', 'fx', 'feed', 'tracking'), help='Run selected suites; feed exercises application refresh (default: data suites)')
     args = parser.parse_args()
+    if args.live_minimax:
+        if args.suites or args.agent_only or args.restart or args.rinx_runtime or args.rinx_render_probe or args.host:
+            parser.error('--live-minimax is a separate real-service test; omit fixture suite flags')
+        try:
+            run_live(args)
+        except (OSError, ValueError, RuntimeError) as error:
+            raise SystemExit(str(error)) from None
+        return
     if args.restart and (args.agent_only or args.suites != ['tracking']):
         parser.error('--restart requires --suites tracking')
     if args.agent_only and args.suites:

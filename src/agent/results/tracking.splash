@@ -23,12 +23,21 @@ fn tracking_refs(ids, values, field, allow_empty){
     for id in ids { if seen[id] == true || tracking_find(values, field, id) == nil { return false } seen[id] = true }
     true
 }
+fn intent_category_known(value){
+    for source in news_sources { if source.category == value { return true } }
+    false
+}
+fn intent_rules_known(rules){
+    for rule in rules { if rule.kind == "category" && !intent_category_known(rule.value) { return false } }
+    true
+}
 fn intent_validate(value){
     if !record_object(value) || value["schema_version"] != 1 { return tracking_invalid("invalid_schema", "意图结果版本或结构无效") }
     if value["status"] != "ready" && value["status"] != "needs_clarification" { return tracking_invalid("invalid_schema", "意图状态无效") }
     if !tracking_text(value["question"], 300) { return tracking_invalid("invalid_schema", "追问无效") }
     if value["status"] == "ready" {
         if !topic_understanding_valid(value["understanding"]) || value["question"] != "" { return tracking_invalid("invalid_schema", "理解结果不完整") }
+        if !intent_rules_known(value.understanding.recall_rules) { return tracking_invalid("invalid_schema", "理解结果包含未知新闻分类，请重试整理") }
     } else if value["question"].trim() == "" || value["understanding"] != nil { return tracking_invalid("invalid_schema", "请只返回一个关键追问") }
     {valid: true error: "" message: "" result: value}
 }
@@ -67,15 +76,29 @@ fn tracking_validate(value, snapshot){
     }
     {valid: true error: "" message: "" result: value}
 }
+fn tracking_json_body(text){
+    let clean = text.trim()
+    let lines = clean.split("\n")
+    if lines.len() >= 3 && (lines[0].trim() == "```json" || lines[0].trim() == "```") && lines[lines.len() - 1].trim() == "```" {
+        let body = ""
+        for i line in lines { if i > 0 && i < lines.len() - 1 { body = body + line + "\n" } }
+        return body.trim()
+    }
+    clean
+}
 fn tracking_parse(text, kind, snapshot){
     if !record_string(text) || text.len() > 16000 { return tracking_invalid("invalid_json", "模型回复为空或超限") }
+    let clean = tracking_json_body(text)
+    if !regex("^[{]").test(clean) || !regex("[}]$").test(clean) { return tracking_invalid("invalid_json", "模型回复应为单个 JSON 对象") }
     let value = nil
-    try { value = text.parse_json() } { return tracking_invalid("invalid_json", "模型回复不是有效 JSON") }
+    try { value = clean.parse_json() } { value = nil }
     if !record_object(value) { return tracking_invalid("invalid_json", "模型回复无法解析为 JSON 对象") }
     if kind == "parse_intent" {
         let checked = intent_validate(value)
-        if checked.valid && value["status"] == "needs_clarification" {
-            if snapshot["previous_question"] != "" || value["question"].match_all(regex("[?？]", "g")).len() > 1 { return tracking_invalid("invalid_schema", "最多追问一个关键问题；请补充范围后重试") }
+        if checked.valid {
+            if value["status"] == "needs_clarification" {
+                if snapshot["previous_question"] != "" || value["question"].match_all(regex("[?？]", "g")).len() > 1 { return tracking_invalid("invalid_schema", "最多追问一个关键问题；请补充范围后重试") }
+            }
         }
         return checked
     }

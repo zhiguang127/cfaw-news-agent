@@ -65,3 +65,10 @@ python scripts/package.py
 两人开工只看[两人一天开发交接](docs/agent-integration-plan.md)：本分支已实施 A，并在未发现 B 交付的情况下承接 B 的意图解析、BM25＋LLM 追踪及请求保护；接口、覆盖范围和剩余真实服务联调见交接，实际检查见验收记录。运行说明与验收记录按需查阅，不另维护一套分工。
 
 开发约定在 [AGENTS.md](AGENTS.md)，宿主版本在 [依赖锁](dev-dependencies.lock.json)。日期报告和原始分阶段设计保存在 [历史归档](docs/archive/README.md)，不作为当前状态依据。保留 `LICENSE`、`NOTICE` 和上游署名；模型密钥与用户数据只交给宿主。
+
+## MiniMax 真实联调
+
+使用宿主管理的 MiniMax-M3，提供方 `minimax`、Base URL `https://api.minimax.cn/v1`。
+执行 `python3 scripts/test_runtime.py --live-minimax` 自动填写本项目 bundle 地址、模型和凭据，Review 后运行并校验意图回复；已有用户草稿保留。
+密钥从 `MINIMAX_API_KEY`、`--minimax-key-file` 指定的私有文件或已保存的 Rinx 配置读取，不进入源码或报告。
+M3 已实测可用；Flash Preview 实测返回 unknown model，可通过 `--minimax-model` 显式选择。

@@ -38,6 +38,12 @@ fn tracking_test_run(){
     tracking_test_host()
     render_main()
     tracking_test_stage = "intent confirmation and recovery"
+    let intent_fixture = fixture_tracking_intent.parse_json()
+    tracking_test_assert(tracking_parse("```json\n" + fixture_tracking_intent + "\n```", "parse_intent", {previous_question: ""}).valid, "MiniMax JSON code fence passes the same domain validation")
+    tracking_test_assert(!tracking_parse("Here is JSON: " + fixture_tracking_intent, "parse_intent", {previous_question: ""}).valid, "prose around model JSON is rejected")
+    let invalid_category = intent_fixture.to_json().parse_json()
+    invalid_category.understanding.recall_rules.push({kind: "category" value: "exclude:financing"})
+    tracking_test_assert(!intent_validate(invalid_category).valid, "invented category gates cannot hide all future candidates")
     intent_begin(nil)
     intent_draft.draft_id = "draft-fixture"
     intent_changed("选开源 Agent 框架，关注离线部署，融资少一点", false)
