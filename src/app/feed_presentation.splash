@@ -1,6 +1,41 @@
 // Prepare relevance before drawing. The feed stays a single stable news list.
 let feed_match_hints = {}
 let feed_agent_hints = {}
+let feed_schedule_matches = {}
+
+fn feed_context_state(){
+    let topics = 0 let first = nil let legacy = 0 let next_schedule = nil let schedules = 0
+    for item in topic_records.topics {
+        if topic_is_user_record(item) && item.status == "active" {
+            topics = topics + 1
+            if first == nil { first = item }
+            else if item.updated_at > first.updated_at { first = item }
+        }
+    }
+    for item in user_interests { if item.enabled { legacy = legacy + 1 } }
+    for item in user_schedules {
+        if !schedule_is_user_record(item) || !schedule_active(item) || schedule_instant(item.end) < time_now() { continue }
+        schedules = schedules + 1
+        if next_schedule == nil { next_schedule = item }
+        else if schedule_instant(item.start) < schedule_instant(next_schedule.start) { next_schedule = item }
+    }
+    let topic_label = ""
+    if first != nil {
+        let title = bm25_prefix(first.title, 16)
+        if first.title.to_chars().len() > 16 { title = title + "…" }
+        topic_label = "关注 · " + title
+        if first["intent_kind"] == "goal" { topic_label = "目标 · " + title }
+        if first["demo_preset"] == true { topic_label = topic_label + "（演示预设）" }
+        if topics + legacy > 1 { topic_label = topic_label + " 等 " + (topics + legacy) + " 项" }
+    } else if legacy > 0 { topic_label = "已关注 " + legacy + " 个来源或话题" }
+    let schedule_label = ""
+    if next_schedule != nil {
+        let date = schedule_entry_parts(next_schedule.start, next_schedule.timezone).date
+        schedule_label = "行程 · " + date + " " + bm25_prefix(next_schedule.title, 12)
+        if next_schedule["demo_preset"] == true { schedule_label = schedule_label + "（演示预设）" }
+    }
+    {topic_label: topic_label schedule_label: schedule_label has_context: topics + legacy + schedules > 0}
+}
 
 fn prepare_feed_presentation(rows, generation, complete){
     let latest_by_news = {}
@@ -11,7 +46,7 @@ fn prepare_feed_presentation(rows, generation, complete){
     let tracked_ids = {}
     for run in tracking_cache.runs { for item in run.result.items { tracked_ids[item.news_id] = true } }
     let work = {tracked_ids: tracked_ids tracking_values: tracking_values rows: rows all_rows: app_feed_rows generation: generation complete: complete page: page
-        groups: [[], [], []] seen: {}
+        groups: [[], [], [], []] seen: {} schedule_rules: tracking_schedule_rules() schedule_matches: {} schedule_decisions: tracking_schedule_decisions()
         latest_by_news: latest_by_news suggestions_by_id: suggestions_by_id matches: {} hints: {} phase: "matches" index: 0}
     start_timeout(0.01, || prepare_feed_presentation_step(work))
 }
@@ -25,17 +60,18 @@ fn prepare_feed_presentation_step(work){
             let row = work.all_rows[work.index]
             let hint = tracking_rule_hint(row)
             work.matches[row.news_id] = hint
+            work.schedule_matches[row.news_id] = tracking_schedule_candidate(row, work.schedule_rules, work.schedule_decisions)
         } else if work.phase == "groups" {
             if work.index >= work.rows.len() {
                 let ordered = []
-                for group in [2 1 0] { for row in work.groups[group] { ordered.push(row) } }
+                for group in [3 2 1 0] { for row in work.groups[group] { ordered.push(row) } }
                 work.rows = ordered
                 prepare_feed_presentation_complete(work) return
             }
             let row = work.rows[work.index]
             if work.seen[row.news_id] != true {
                 work.seen[row.news_id] = true
-                let group = feed_priority_group(row, work.matches, work.hints)
+                let group = feed_priority_group(row, work.matches, work.hints, work.schedule_matches)
                 if work.page != "tracking" || group > 0 { work.groups[group].push(row) }
             }
         } else {
@@ -53,6 +89,9 @@ fn prepare_feed_presentation_step(work){
             }
             let tracked = work.tracking_values[row.news_id]
             if tracked != nil {
+                // Current Agent judgment replaces provisional recall. Handled
+                // reminders must not sneak back to the top as lexical matches.
+                work.schedule_matches[row.news_id] = false
                 if tracked.item.relevance != "related" { work.matches[row.news_id] = "" }
                 let reminders = tracking_item_reminders(tracked)
                 let text = "Agent · " + tracked.item.why_related
@@ -86,26 +125,29 @@ fn prepare_feed_presentation_complete(work){
         else { work.complete(work) }
     })
 }
-fn feed_priority_group(row, matches, hints){
+fn feed_priority_group(row, matches, hints, schedule_matches){
     let group = 0 let hint = hints[row.news_id] let match_hint = matches[row.news_id]
     if match_hint != nil && match_hint != "" { group = 1 }
+    if schedule_matches[row.news_id] == true { group = 2 }
     if hint != nil {
         if hint.priority { group = 1 }
-        if hint["group"] == 2 { group = 2 }
+        if hint["group"] == 2 { group = 3 }
         if hint["group"] == 0 { group = 0 }
     }
     group
 }
 fn prioritize_feed_rows(rows){
-    let impacts = [] let related = [] let other = [] let seen = {}
+    let impacts = [] let schedule_candidates = [] let related = [] let other = [] let seen = {}
     for row in rows {
         if seen[row.news_id] == true { continue } seen[row.news_id] = true
-        let group = feed_priority_group(row, feed_match_hints, feed_agent_hints)
+        let group = feed_priority_group(row, feed_match_hints, feed_agent_hints, feed_schedule_matches)
         if page == "tracking" && group == 0 { continue }
-        if group == 2 { impacts.push(row) }
+        if group == 3 { impacts.push(row) }
+        else if group == 2 { schedule_candidates.push(row) }
         else if group == 1 { related.push(row) }
         else { other.push(row) }
     }
+    for row in schedule_candidates { impacts.push(row) }
     for row in related { impacts.push(row) }
     for row in other { impacts.push(row) }
     impacts

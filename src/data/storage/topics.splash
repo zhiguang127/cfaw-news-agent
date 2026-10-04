@@ -96,6 +96,7 @@ fn topic_new_draft(id){
         draft.target_topic_id = topic.topic_id draft.target_version = topic.version
         draft.original_input = topic.original_input draft.supplement = topic.supplement
         draft.understanding = topic.to_json().parse_json()
+        if topic["intent_kind"] == "goal" { draft.intent_kind = "goal" }
     }
     draft
 }
@@ -123,6 +124,10 @@ fn topic_confirm(draft){
     topic.topic_id = "topic-" + draft.draft_id topic.version = 1
     topic.original_input = draft.original_input topic.supplement = draft.supplement
     topic.created_at = time_now() topic.updated_at = time_now() topic.status = "active"
+    topic.intent_kind = "news"
+    if draft["intent_kind"] == "goal" { topic.intent_kind = "goal" }
+    // Editing a starter makes this the user's own confirmed tracking intent.
+    topic.demo_preset = false
     if current != nil { topic.topic_id = current.topic_id topic.version = current.version + 1 topic.created_at = current.created_at }
     next.topics.retain(|item| item.topic_id != topic.topic_id) next.topics.push(topic) next.draft = nil
     if draft.origin_reminder_id != nil {

@@ -33,6 +33,7 @@ fn bm25_terms(targets){
     }
     for interest in targets.legacy_interests { if interest.kind == "keyword" { queries.push(interest.value) } }
     for item in targets.schedules {
+        if item["news_keywords"] != nil { for word in item.news_keywords { queries.push(word) } }
         if record_string(item["location"]) { queries.push(item["location"]) }
         queries.push(item.title)
         if record_string(item["content"]) { queries.push(item["content"]) }

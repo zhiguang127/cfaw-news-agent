@@ -41,6 +41,7 @@ ORDER = [
     'src/agent/results/tracking.splash',
     'src/agent/runtime/tracking.splash',
     'src/app/controller.splash',
+    'src/app/presets.splash',
     'src/app/tracking.splash',
     'src/app/intent_motion.splash',
     'src/app/intents.splash',

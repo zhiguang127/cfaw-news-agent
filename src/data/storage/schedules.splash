@@ -81,6 +81,8 @@ fn schedule_valid(item){
     if item["status"] != nil && item.status != "active" && item.status != "cancelled" && item.status != "completed" { return false }
     if item["allow_reschedule"] != nil && item.allow_reschedule != true && item.allow_reschedule != false { return false }
     if item["origin_intent_id"] != nil && (!record_string(item.origin_intent_id) || item.origin_intent_id == "" || item.origin_intent_id.len() > 200) { return false }
+    if item["news_keywords"] != nil && !tracking_strings(item.news_keywords, 6, 120) { return false }
+    if item["demo_preset"] != nil && item.demo_preset != true && item.demo_preset != false { return false }
     schedule_interval(item["start"], item["end"])
 }
 fn schedule_doc_valid(value){

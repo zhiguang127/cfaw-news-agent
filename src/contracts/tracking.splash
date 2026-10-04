@@ -23,6 +23,8 @@ fn topic_understanding_valid(value){
 }
 fn topic_valid(value){
     if !topic_understanding_valid(value) { return false }
+    if value["intent_kind"] != nil && value.intent_kind != "goal" && value.intent_kind != "news" { return false }
+    if value["demo_preset"] != nil && value.demo_preset != true && value.demo_preset != false { return false }
     if !tracking_text(value["topic_id"], 120) || value["topic_id"] == "" || !record_number(value["version"]) || value["version"] < 1 || floor(value["version"]) != value["version"] { return false }
     if !tracking_text(value["original_input"], tracking_config.max_input_chars) || !tracking_text(value["supplement"], tracking_config.max_input_chars) { return false }
     if value["status"] != "active" && value["status"] != "paused" { return false }
@@ -62,7 +64,7 @@ fn tracking_evidence_key(row){
         published_at: row.published_at timestamp_kind: row.timestamp_kind evidence_kind: row.evidence_kind references: row.references}.to_json()
 }
 
-// Compatibility for saved starter records. Never delete user files. An edited
-// starter (version > 1) is user-owned and remains visible and usable.
-fn topic_is_user_record(item){ item.topic_id != "preset-agent-development-v1" || item.version > 1 }
-fn schedule_is_user_record(item){ item.schedule_id != "preset-shanghai-trip-v1" || item.version > 1 }
+// Old untouched starters stay hidden until explicitly labeled by demo setup.
+// Edited records remain user-owned; pausing/cancelling never resets on boot.
+fn topic_is_user_record(item){ item["demo_preset"] == true || item.topic_id != "preset-agent-development-v1" || item.version > 1 }
+fn schedule_is_user_record(item){ item["demo_preset"] == true || item.schedule_id != "preset-shanghai-trip-v1" || item.version > 1 }

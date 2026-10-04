@@ -3,6 +3,10 @@ let intent_motion_config = {duration_seconds: 0.42 frame_seconds: 0.016}
 let intent_motion_generation = 0
 let intent_reveal = 0
 let intent_return_kind = ""
+let intent_scene_ready = false
+let intent_motion_active = false
+let last_intent_orb_press_at = 0
+fn intent_orb_press(){ last_intent_orb_press_at = time_now() }
 fn intent_motion_frame(generation, opening, started){
     if generation != intent_motion_generation { return }
     let progress = 1.0
@@ -14,10 +18,13 @@ fn intent_motion_frame(generation, opening, started){
     ui.intent_wave.render()
     if progress < 1.0 { start_timeout(intent_motion_config.frame_seconds, || intent_motion_frame(generation, opening, started)) }
     else if opening {
+        intent_motion_active = false
         ui.app_shell.set_visible(false)
         ui.intent_scene.set_visible(true)
+        intent_scene_ready = true
         intent_render()
     } else {
+        intent_motion_active = false
         ui.intent_overlay.set_visible(false)
         ui.floating_ai.set_visible(true)
         render_analysis_controls()
@@ -27,6 +34,11 @@ fn intent_show(){
     if !intent_open { intent_return_kind = detail_kind }
     close_menu()
     intent_open = true detail_kind = "intent"
+    intent_motion_active = true
+    intent_scene_ready = false
+    // A fresh intent scroll view keeps mode choices and the saved draft's
+    // preview discoverable on reopen; the underlying news scroll stays intact.
+    ui.intent_panel.render()
     intent_motion_generation = intent_motion_generation + 1
     ui.intent_scene.set_visible(false)
     ui.floating_ai.set_visible(false)
@@ -34,6 +46,8 @@ fn intent_show(){
     intent_motion_frame(intent_motion_generation, true, time_now())
 }
 fn intent_hide(){
+    intent_motion_active = true
+    intent_scene_ready = false
     intent_open = false detail_kind = intent_return_kind
     if detail_kind != "" { render_detail() }
     intent_motion_generation = intent_motion_generation + 1

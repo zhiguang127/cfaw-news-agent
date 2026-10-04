@@ -13,6 +13,45 @@ fn tracking_rule_hint(row){
     if reasons.len() > 0 { return "规则匹配 · " + reasons[0] }
     ""
 }
+// Recall for browsing only. A location/title match does not prove a dated impact.
+fn tracking_schedule_rules(){
+    let rules = []
+    for item in user_schedules {
+        if !schedule_is_user_record(item) || !schedule_active(item) || schedule_instant(item.end) < time_now() { continue }
+        let words = [item.title]
+        if record_string(item["location"]) && item.location.trim() != "" { words.push(item.location) }
+        if item["news_keywords"] != nil { for word in item.news_keywords { words.push(word) } }
+        for i word in words { rules.push({interest_id: "schedule:" + item.schedule_id + ":" + item.version + ":" + i kind: "keyword" value: word enabled: true
+            schedule_id: item.schedule_id schedule_version: item.version}) }
+    }
+    rules
+}
+fn tracking_schedule_decisions(){
+    let handled = {}
+    for decision in topic_records.decisions {
+        for evidence in decision.evidence {
+            let key = decision.schedule_id + ":" + decision.schedule_version + ":" + evidence.news_id
+            let keys = handled[key]
+            if keys == nil { keys = [] handled[key] = keys }
+            keys.push(evidence.key)
+        }
+    }
+    handled
+}
+fn tracking_schedule_candidate(row, rules, handled){
+    let evidence_key = ""
+    for rule in rules {
+        if interest_matches(row, [rule]).len() == 0 { continue }
+        let keys = handled[rule.schedule_id + ":" + rule.schedule_version + ":" + row.news_id]
+        let suppressed = false
+        if keys != nil {
+            if evidence_key == "" { evidence_key = tracking_evidence_key(row) }
+            for key in keys { if key == evidence_key { suppressed = true } }
+        }
+        if !suppressed { return true }
+    }
+    false
+}
 fn tracking_target_checked(kind, id, version){
     let checked_at = 0
     for run in tracking_cache.runs {

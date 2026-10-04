@@ -6,6 +6,7 @@ fn boot(){
     start_timeout(0.01, || boot_loaded())
 }
 fn boot_loaded(){
+    presets_initialize(time_now())
     feed_initialize()
     render_main()
     start_timeout(0.01, || weather_app_boot())

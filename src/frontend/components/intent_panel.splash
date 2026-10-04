@@ -1,4 +1,4 @@
-let IntentPanel = View{width: Fill height: Fill flow: Down
+let IntentPanel = View{width: Fill height: Fill flow: Down on_render: || {
     intent_content := ScrollYView{width: Fill height: Fill flow: Down padding: Inset{left: 24 right: 24 top: 12 bottom: 24} spacing: 14 on_render: || {
         if intent_draft != nil {
             let mode = intent_mode()
@@ -22,6 +22,9 @@ let IntentPanel = View{width: Fill height: Fill flow: Down
                     else { IntentMode{text: "安排日程" on_click: || intent_pick_mode("schedule")} }
                 }
             }
+            if mode == "goal" { Small{text: "围绕要达成的目标追踪消息，例如选 Agent 框架；保存为目标关注。"} }
+            else if mode == "news" { Small{text: "持续了解一个话题，例如 Agent 新进展；保存为新闻关注。"} }
+            else { Small{text: "保存有明确日期和时间的安排，新闻会结合这段日程检查影响。"} }
             let placeholder = "想关注什么新闻？有哪些内容想多看、少看？"
             if mode == "goal" { placeholder = "想做什么、为什么做？我会帮你关注相关的新消息。" }
             if mode == "schedule" { placeholder = "说说你的安排：日期、几点开始和结束、在哪里做什么。" }
@@ -63,12 +66,20 @@ let IntentPanel = View{width: Fill height: Fill flow: Down
                             let old = topic_find(intent_draft.target_topic_id)
                             if old != nil { Small{text: "修改前 · " + old.title + "（版本 " + old.version + "）"} }
                         }
-                        IntentSend{text: "确认关注并保存" on_click: || intent_confirm()}
+                        if mode == "goal" {
+                            Small{text: "保存后收起面板，首页按目标关注优先展示相关消息；具体安排请用「安排日程」。"}
+                            IntentSend{text: "确认目标关注并保存" on_click: || intent_confirm()}
+                        } else {
+                            Small{text: "保存后收起面板，首页按新关注排序。"}
+                            IntentSend{text: "确认关注并保存" on_click: || intent_confirm()}
+                        }
                     }
                 }
             }
             if analysis_busy {
                 SecondaryButton{text: "取消请求" on_click: || {intent_parse_pending = false analysis_cancel()}}
+            } else if intent_draft.state == "ready" {
+                LinkButton{width: Fit text: "重新整理" on_click: || intent_submit()}
             } else if intent_error != "" {
                 IntentSend{text: "重试整理" on_click: || intent_submit()}
             } else {
@@ -81,4 +92,4 @@ let IntentPanel = View{width: Fill height: Fill flow: Down
             Small{text: "理解由 AI 整理，保存由你决定。" align: Align{x: 0.5} draw_text.color: #x8c97ac}
         }
     }}
-}
+}}
