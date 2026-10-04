@@ -7,7 +7,11 @@ fn prepare_feed_presentation(rows, generation, complete){
     let suggestions_by_id = {}
     for item in analysis_history { latest_by_news[item.news_id] = item }
     for item in suggestion_history { suggestions_by_id[item.suggestion_id] = item }
-    let work = {rows: rows all_rows: app_feed_rows generation: generation complete: complete page: page
+    let tracking_values = tracking_current_values()
+    let tracked_ids = {}
+    for run in tracking_cache.runs { for item in run.result.items { tracked_ids[item.news_id] = true } }
+    let work = {tracked_ids: tracked_ids tracking_values: tracking_values rows: rows all_rows: app_feed_rows generation: generation complete: complete page: page
+        groups: [[], [], []] seen: {}
         latest_by_news: latest_by_news suggestions_by_id: suggestions_by_id matches: {} hints: {} phase: "matches" index: 0}
     start_timeout(0.01, || prepare_feed_presentation_step(work))
 }
@@ -19,12 +23,26 @@ fn prepare_feed_presentation_step(work){
         if work.phase == "matches" {
             if work.index >= work.all_rows.len() { work.phase = "hints" work.index = 0 continue }
             let row = work.all_rows[work.index]
-            let reasons = interest_matches(row, user_interests)
-            let hint = ""
-            if reasons.len() > 0 { hint = reasons[0] }
+            let hint = tracking_rule_hint(row)
             work.matches[row.news_id] = hint
+        } else if work.phase == "groups" {
+            if work.index >= work.rows.len() {
+                let ordered = []
+                for group in [2 1 0] { for row in work.groups[group] { ordered.push(row) } }
+                work.rows = ordered
+                prepare_feed_presentation_complete(work) return
+            }
+            let row = work.rows[work.index]
+            if work.seen[row.news_id] != true {
+                work.seen[row.news_id] = true
+                let group = feed_priority_group(row, work.matches, work.hints)
+                if work.page != "tracking" || group > 0 { work.groups[group].push(row) }
+            }
         } else {
-            if work.index >= work.rows.len() { work.complete(work) return }
+            if work.index >= work.rows.len() {
+                if work.page == "feed" || work.page == "tracking" { work.phase = "groups" work.index = 0 continue }
+                prepare_feed_presentation_complete(work) return
+            }
             let row = work.rows[work.index]
             // A saved snapshot can differ from today's item with the same URL.
             if work.page == "saved" {
@@ -33,8 +51,24 @@ fn prepare_feed_presentation_step(work){
                 if reasons.len() > 0 { hint = reasons[0] }
                 work.matches[row.news_id] = hint
             }
+            let tracked = work.tracking_values[row.news_id]
+            if tracked != nil {
+                if tracked.item.relevance != "related" { work.matches[row.news_id] = "" }
+                let reminders = tracking_item_reminders(tracked)
+                let text = "Agent · " + tracked.item.why_related
+                let priority = tracked.item.relevance == "related"
+                let group = 0 if priority { group = 1 }
+                if reminders.len() > 0 {
+                    let schedule = schedule_find(reminders[0].schedule_id)
+                    text = "Agent · 可能影响日程「" + schedule.title + "」：" + reminders[0].impact_summary
+                    priority = true group = 2
+                }
+                work.hints[row.news_id] = {text: text suggestion_id: nil priority: priority group: group}
+                if tracked.item.relevance == "related" { work.matches[row.news_id] = "" }
+                work.index = work.index + 1 processed = processed + 1 continue
+            }
             let latest = work.latest_by_news[row.news_id]
-            if latest != nil {
+            if latest != nil && topic_records.topics.len() == 0 && work.tracked_ids[row.news_id] != true {
                 let hint = analysis_feed_hint(row, latest, work.suggestions_by_id)
                 analyzed = analyzed + 1
                 if hint != nil && (work.matches[row.news_id] != "" || hint.priority) { work.hints[row.news_id] = hint }
@@ -44,15 +78,37 @@ fn prepare_feed_presentation_step(work){
     }
     start_timeout(0.01, || prepare_feed_presentation_step(work))
 }
+fn prepare_feed_presentation_complete(work){
+    // Matching, stable grouping and UI publication need separate bounded
+    // events, including during real source completions and cache recovery.
+    start_timeout(0.01, || {
+        if work.generation != feed_render_generation { work.complete(nil) }
+        else { work.complete(work) }
+    })
+}
+fn feed_priority_group(row, matches, hints){
+    let group = 0 let hint = hints[row.news_id] let match_hint = matches[row.news_id]
+    if match_hint != nil && match_hint != "" { group = 1 }
+    if hint != nil {
+        if hint.priority { group = 1 }
+        if hint["group"] == 2 { group = 2 }
+        if hint["group"] == 0 { group = 0 }
+    }
+    group
+}
 fn prioritize_feed_rows(rows){
-    let related = [] let other = []
+    let impacts = [] let related = [] let other = [] let seen = {}
     for row in rows {
-        let agent_hint = feed_agent_hints[row.news_id]
-        if row_match_hint(row) != "" || (agent_hint != nil && agent_hint.priority) { related.push(row) }
+        if seen[row.news_id] == true { continue } seen[row.news_id] = true
+        let group = feed_priority_group(row, feed_match_hints, feed_agent_hints)
+        if page == "tracking" && group == 0 { continue }
+        if group == 2 { impacts.push(row) }
+        else if group == 1 { related.push(row) }
         else { other.push(row) }
     }
-    for row in other { related.push(row) }
-    related
+    for row in related { impacts.push(row) }
+    for row in other { impacts.push(row) }
+    impacts
 }
 fn row_agent_hint(row){ feed_agent_hints[row.news_id] }
 fn open_feed_hint(row){

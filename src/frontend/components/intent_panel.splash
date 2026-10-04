@@ -1,0 +1,44 @@
+let IntentPanel = View{visible: false width: Fill height: Fill flow: Down
+    intent_content := ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 10 on_render: || {
+        Heading{text: "让新闻围绕你的关注"}
+        Small{text: "说明想了解什么、为什么关注，以及希望多看或少看的内容。一般兴趣也可以没有目的。"}
+        if intent_draft != nil {
+            Section{text: "你的原话"}
+            intent_input := Search{text: intent_draft.original_input height: 64 empty_text: "例如：选开源 Agent 框架，关注离线部署，融资少一点" on_change: |value| intent_changed(value, false)}
+            if intent_draft.question != "" { Text{text: intent_draft.question draw_text.color: accent} }
+            Section{text: "继续补充"}
+            intent_supplement := Search{text: intent_draft.supplement height: 48 empty_text: "补充范围、偏好或回答追问" on_change: |value| intent_changed(value, true)}
+            if intent_draft.origin_reminder_id != nil { Small{text: "请补充并确认关注范围；此处尚未创建永久关注" draw_text.color: accent} }
+            if intent_error != "" { Small{text: intent_error max_lines: 4 draw_text.color: accent} }
+            if intent_draft.state == "ready" && intent_draft.understanding != nil {
+                Divider{}
+                Section{text: "待确认的理解"}
+                Text{text: intent_draft.understanding.title}
+                if intent_draft.understanding.purpose == "" { Small{text: "目的：一般兴趣（未替你编造目的）"} }
+                else { Text{text: "目的：" + intent_draft.understanding.purpose} }
+                for scope_text in intent_draft.understanding["scope"] { Text{text: "范围：" + scope_text} }
+                for preference in intent_draft.understanding.preferences { Small{text: "偏好：" + preference} }
+                if intent_draft.target_topic_id != nil {
+                    let old = topic_find(intent_draft.target_topic_id)
+                    if old != nil {
+                        Small{text: "修改前：" + old.title + " · 版本 " + old.version}
+                        Small{text: "原目的：" + old.purpose}
+                        for scope_text in old["scope"] { Small{text: "原范围：" + scope_text} }
+                        for preference in old.preferences { Small{text: "原偏好：" + preference} }
+                    }
+                }
+                Primary{text: "确认关注并保存" on_click: || intent_confirm()}
+            }
+            if analysis_busy {
+                SecondaryButton{text: "取消请求" on_click: || { intent_parse_pending = false analysis_cancel() }}
+            } else {
+                if intent_error != "" { Primary{text: "重试整理" on_click: || intent_submit()} }
+                else { Primary{text: "提交 / 重新理解" on_click: || intent_submit()} }
+            }
+            View{width: Fill height: Fit flow: Right spacing: 8
+                QuietButton{text: "取消并保留草稿" on_click: || intent_cancel()}
+                QuietButton{text: "丢弃草稿" on_click: || intent_discard()}
+            }
+        }
+    }}
+}

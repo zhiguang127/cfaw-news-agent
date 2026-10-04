@@ -52,6 +52,7 @@ HostedView{width: Fill height: Fill
             tracking_panel := TrackingEditor{}
             results_panel := AnalysisResultsPage{}
             weather_panel := WeatherPage{}
+            intent_panel := IntentPanel{}
         }
         feedback_panel := View{visible: false width: Fill height: Fit flow: Right padding: Inset{left: 18 right: 12 top: 6 bottom: 6} align: Align{y: 0.5}
             feedback := Small{text: "" max_lines: 2}

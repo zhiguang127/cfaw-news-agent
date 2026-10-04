@@ -132,8 +132,8 @@ Use a Threads-inspired compact vertical feed. Several news items should remain v
 
 1. Read README, relevant code, and Git status before editing. Preserve unrelated changes and existing user work.
 2. Make the smallest coherent change. Complete routine, reversible work within the user's request without adding approval steps.
-3. Validate behavior where it runs. Test parsing, deduplication, ranking, output validation, and state transitions when those behaviors change; do not create tests merely to mirror trivial implementation details.
-4. For the tracking loop, exercise changed news, repeated news, missing dates, contradictory evidence, unavailable AI, and a previously dismissed suggestion. For UI work, inspect actual interactions at the intended viewport size.
+3. Prioritize delivery with the smallest meaningful verification for the changed behavior. Reuse existing targeted checks; do not add tests for reversible, low-impact edits or tests that merely mirror the implementation. Do not run the full suite by default, or repeat passing checks without a new relevant change, failure, or unresolved concern.
+4. Validate behavior where it runs. Select only the tracking cases affected by the change, such as ranking, stale versions, unavailable AI, or dismissed reminders. For UI changes, inspect the affected interaction at the intended viewport size; expand to other sizes or stress runs only when the change or a failure warrants it. Once necessary checks pass, package and deliver instead of expanding test coverage speculatively.
 5. Label fixture and demo content explicitly. Network failure must not silently substitute fabricated news or successful actions.
 6. Report what changed, what was actually checked, and what remains unverified. Do not claim host acceptance from a package digest or a concept preview.
 

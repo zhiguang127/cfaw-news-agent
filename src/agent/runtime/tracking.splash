@@ -1,0 +1,90 @@
+let analysis_busy = false
+let analysis_state = "idle"
+let analysis_result = nil
+let analysis_error = ""
+let analysis_error_category = ""
+let analysis_request_id = ""
+let analysis_terminal = false
+let analysis_needs_reopen = false
+let analysis_active_row_id = ""
+let analysis_host_has = |name| host.has(name)
+let analysis_host_request = |name, data, callback| host.request(name, data, callback)
+// Single Octos turn boundary shared by intent, tracking and connectivity probe.
+// Credentials/model/session stay with the host. Only {text} goes to turn.start.
+let agent_task = nil
+let agent_task_counter = 0
+let agent_last_error = ""
+let agent_last_category = ""
+fn agent_task_finish(task, state, error, category, result){
+    if agent_task == nil { return }
+    if agent_task.id != task.id || task.terminal { return }
+    task.terminal = true
+    if task.timer != nil { stop_timer(task.timer) task.timer = nil }
+    analysis_busy = false analysis_terminal = true analysis_state = state
+    analysis_error = error analysis_error_category = category
+    agent_last_error = error agent_last_category = category
+    task.complete({success: state == "succeeded" result: result error: error category: category task_id: task.id})
+    intent_after_interrupt()
+    if tracking_check_pending && !intent_open && !analysis_needs_reopen { tracking_schedule_check() }
+}
+fn agent_task_start(kind, snapshot, prompt, current, complete){
+    if analysis_busy || octos_testing || analysis_needs_reopen { return "助手忙碌或中断未确认，请稍后重试" }
+    agent_task_counter = agent_task_counter + 1
+    let task = {id: "tracking-" + time_now() + "-" + agent_task_counter kind: kind snapshot: snapshot
+        current: current complete: complete terminal: false stopping: false timer: nil interrupt_timer: nil
+        stop_state: "cancelled" stop_error: "已取消请求" stop_category: "cancelled"}
+    agent_task = task analysis_request_id = task.id
+    analysis_busy = true analysis_terminal = false analysis_state = "running"
+    analysis_error = "" analysis_error_category = ""
+    if prompt.to_bytes().len() > tracking_config.max_prompt_bytes { agent_task_finish(task, "failed", "上下文超过宿主32 KiB限制，未发送", "invalid_schema", nil) return "" }
+    if !analysis_host_has("octos.session.open") || !analysis_host_has("octos.turn.start") || !analysis_host_has("octos.turn.interrupt") {
+        agent_task_finish(task, "failed", "当前宿主未提供 Octos 服务；规则匹配仍可使用", "service_unavailable", nil) return ""
+    }
+    task.timer = start_timeout(tracking_config.request_timeout_seconds, || agent_task_stop("failed", "请求超时", "timeout"))
+    analysis_host_request("octos.session.open", {}, fn(opened){
+        if agent_task == nil { return }
+        if agent_task.id != task.id || task.terminal || task.stopping { return }
+        if !opened.is_ok { agent_task_finish(task, "failed", "Octos 上下文失败：" + opened.error, "service_unavailable", nil) return }
+        analysis_host_request("octos.turn.start", {text: prompt}, fn(reply){
+            if agent_task == nil { return }
+            if agent_task.id != task.id || task.terminal || task.stopping { return }
+            if !reply.is_ok { agent_task_finish(task, "failed", "Octos 请求失败：" + reply.error, "request_failed", nil) return }
+            if !task.current() { agent_task_finish(task, "failed", "关注、日程、证据或决定已变化，请重新检查", "stale_context", nil) return }
+            let model_text = nil if reply["data"] != nil { model_text = reply.data["text"] }
+            let checked = tracking_parse(model_text, kind, snapshot)
+            if !checked.valid { agent_task_finish(task, "failed", checked.message, checked.error, nil) return }
+            agent_task_finish(task, "succeeded", "", "", checked.result)
+        })
+    })
+    ""
+}
+fn agent_task_stop(state, error, category){
+    if agent_task == nil { return }
+    let task = agent_task
+    if task.terminal || task.stopping { return }
+    task.stopping = true task.stop_state = state task.stop_error = error task.stop_category = category
+    analysis_terminal = true
+    if task.timer != nil { stop_timer(task.timer) task.timer = nil }
+    task.interrupt_timer = start_timeout(tracking_config.interrupt_timeout_seconds, || agent_task_stop_ack(task, false))
+    analysis_host_request("octos.turn.interrupt", {}, fn(reply){ agent_task_stop_ack(task, reply.is_ok) })
+    tracking_ui_update()
+}
+fn agent_task_stop_ack(task, acknowledged){
+    if agent_task == nil { return }
+    if agent_task.id != task.id || task.terminal || !task.stopping { return }
+    if task.interrupt_timer != nil { stop_timer(task.interrupt_timer) task.interrupt_timer = nil }
+    if !acknowledged { analysis_needs_reopen = true task.stop_error = "中断未确认，请关闭并重新打开应用" }
+    agent_task_finish(task, task.stop_state, task.stop_error, task.stop_category, nil)
+}
+fn analysis_cancel(){
+    tracking_check_pending = false
+    if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) tracking_auto_timer = nil }
+    if tracking_status == "recalling" {
+        tracking_recall_generation = tracking_recall_generation + 1 tracking_status = "cancelled" tracking_message = "已停止候选召回"
+        tracking_ui_update() return
+    }
+    agent_task_stop("cancelled", "已取消请求；草稿保留", "cancelled")
+}
+fn analysis_timeout(){ agent_task_stop("failed", "请求超时", "timeout") }
+// Compatibility for old test/history callers: all live analysis uses tracking.
+fn analysis_start(row){ tracking_start(row) }

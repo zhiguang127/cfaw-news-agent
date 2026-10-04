@@ -1,0 +1,363 @@
+// Only host/model replies substituted. Actual BM25, validator, state owner,
+// filesystem, navigation and widgets execute. Isolated, labeled fixture news.
+let tracking_test_passed = 0
+let tracking_test_failed = 0
+let tracking_test_failures = []
+let tracking_test_reply = nil
+let tracking_test_interrupt = nil
+let tracking_test_calls = 0
+let tracking_test_stage = "startup"
+let tracking_test_rows = []
+fn tracking_test_assert(value, label){
+    if value { tracking_test_passed = tracking_test_passed + 1 }
+    else { tracking_test_failed = tracking_test_failed + 1 tracking_test_failures.push(label) }
+}
+fn tracking_test_report(){ fs.write("tracking-report.json", {passed: tracking_test_passed failed: tracking_test_failed stage: tracking_test_stage failures: tracking_test_failures tracking_status: tracking_status message: tracking_message error: analysis_error task_kind: if agent_task == nil {"none"} else {agent_task.kind}}.to_json()) }
+fn tracking_test_wait(condition, complete, deadline){
+    if time_now() > deadline { tracking_test_assert(false, "deadline: " + tracking_test_stage) tracking_test_stage = "complete" tracking_test_report() return }
+    if !condition() { start_timeout(0.02, || tracking_test_wait(condition, complete, deadline)) return }
+    start_timeout(0.02, complete)
+}
+fn tracking_test_host(){
+    analysis_host_has = |name| true
+    analysis_host_request = fn(name, data, callback){
+        if name == "octos.session.open" { callback({is_ok: true}) }
+        if name == "octos.turn.start" { tracking_test_calls = tracking_test_calls + 1 tracking_test_reply = callback }
+        if name == "octos.turn.interrupt" { tracking_test_interrupt = callback }
+    }
+}
+fn tracking_test_response(value){ {is_ok: true data: {turn_id: "fixture-turn" text: value.to_json()}} }
+fn tracking_test_cache(){
+    feed_rows_by_source[news_sources[0].id] = app_feed_rows
+    fs.write("news_cache_v1_" + news_sources[0].id + ".json", {schema_version: 1 source_id: news_sources[0].id retrieved_at: time_now() items: app_feed_rows}.to_json())
+}
+fn tracking_test_run(){
+    records_load() schedules_load() history_load() topics_load() feed_initialize() weather_initialize()
+    weather_app_ready = true
+    if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) tracking_auto_timer = nil }
+    tracking_test_host()
+    render_main()
+    tracking_test_stage = "intent confirmation and recovery"
+    intent_begin(nil)
+    intent_draft.draft_id = "draft-fixture"
+    intent_changed("选开源 Agent 框架，关注离线部署，融资少一点", false)
+    intent_submit()
+    tracking_test_assert(analysis_busy && agent_task.kind == "parse_intent", "intent uses real host task boundary")
+    tracking_test_reply(tracking_test_response({schema_version: 1 status: "needs_clarification" question: "是否需要离线部署？" understanding: nil}))
+    tracking_test_assert(intent_draft.state == "needs_clarification" && topic_records.topics.len() == 0, "one clarification never saves a confirmed topic")
+    intent_changed("需要离线部署，重点看内存和CPU", true)
+    intent_submit()
+    tracking_test_reply(tracking_test_response(fixture_tracking_intent.parse_json()))
+    tracking_test_assert(intent_draft.state == "ready" && topic_records.topics.len() == 0, "understanding remains a draft before confirmation")
+    intent_cancel()
+    topics_load()
+    tracking_test_assert(topic_records.draft.state == "ready" && topic_records.draft.supplement != "", "draft and understanding recover from actual filesystem")
+    intent_begin(nil) intent_confirm()
+    tracking_test_assert(topic_records.topics.len() == 1 && topic_records.topics[0].preferences.len() == 2, "confirmed purpose scope preferences original input persisted")
+    if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) tracking_auto_timer = nil }
+    topics_load()
+    tracking_test_assert(topic_records.topics[0].original_input != "" && topic_records.topics[0].version == 1, "confirmed topic restarts with stable ID/version")
+    // Revision-safe updates and write rollback.
+    let draft = topic_new_draft(topic_records.topics[0].topic_id)
+    draft.state = "ready" draft.understanding = fixture_tracking_intent.parse_json().understanding
+    topic_set_status(draft.target_topic_id, 1, "paused")
+    tracking_test_assert(topic_confirm(draft) != "", "confirmation rejects old target version")
+    topic_set_status(draft.target_topic_id, 2, "active")
+    topic_records.topics[0].version = 1
+    let document = topic_records.to_json().parse_json()
+    document.revision = topic_records.revision + 1
+    tracking_store_write(topic_file, document, topic_document_valid) topic_records = document
+    start_timeout(0.02, || tracking_test_recall())
+}
+fn tracking_test_recall(){
+    tracking_test_stage = "BM25 and per-item results"
+    user_schedules = [{schedule_id: "fixture-trip" version: 1 title: "杭州出差" content: "杭州铁路班次" location: "杭州"
+        start: "2026-10-09T09:00:00+08:00" end: "2026-10-09T18:00:00+08:00" timezone: "Asia/Shanghai" status: "active" allow_reschedule: false}]
+    tracking_test_assert(schedule_write() == "", "existing schedule saved without reschedule permission")
+    let data = [{title: "固定测试：普通新闻" summary: "普通浏览" link: "https://example.invalid/tracking/ordinary"}
+        {title: "固定测试：Agent融资" summary: "Agent company funding" link: "https://example.invalid/tracking/finance"}
+        {title: "固定测试：开源 Agent 离线部署" summary: "Agent frameworks 开源部署内存测试" link: "https://example.invalid/tracking/open"}
+        {title: "固定测试：杭州铁路班次限制" summary: "杭州铁路公告：2026-10-09全天部分班次受限" link: "https://example.invalid/tracking/travel"}]
+    app_feed_rows = []
+    for i item in data {
+        let row = news_normalize(item, news_sources[0], time_now()) row.published_at = time_now() - i * 100
+        app_feed_rows.push(row)
+    }
+    tracking_test_rows = app_feed_rows
+    tracking_test_cache()
+    tracking_start(nil)
+    tracking_test_wait(|| analysis_busy, || {
+        tracking_test_assert(agent_task.snapshot.evidence.len() == 3, "BM25 recalls technical and location/date candidates, not ordinary news")
+        let valid = fixture_tracking_update.parse_json()
+        let invalid = valid.to_json().parse_json() invalid.items[2].schedule_impacts[0].schedule_version = 99
+        tracking_test_assert(!tracking_validate(invalid, agent_task.snapshot).valid, "invalid schedule versions rejected")
+        invalid = valid.to_json().parse_json() invalid.items[2].schedule_impacts[0].event_start = "2026-10-11T00:00:00+08:00" invalid.items[2].schedule_impacts[0].event_end = "2026-10-12T00:00:00+08:00"
+        tracking_test_assert(!tracking_validate(invalid, agent_task.snapshot).valid, "nonoverlapping event dates cannot create schedule impacts")
+        invalid = valid.to_json().parse_json() invalid.items[1].topic_ids = ["invented-topic"]
+        tracking_test_assert(!tracking_validate(invalid, agent_task.snapshot).valid, "unknown topic IDs rejected")
+        invalid = valid.to_json().parse_json() invalid.items.push(invalid.items[0])
+        tracking_test_assert(!tracking_validate(invalid, agent_task.snapshot).valid, "duplicate news results rejected")
+        tracking_test_reply(tracking_test_response(valid))
+        tracking_test_assert(tracking_status == "update" && tracking_cache.runs.len() == 1, "validated results persisted via application owner")
+        tracking_test_reply(tracking_test_response(valid))
+        tracking_test_assert(tracking_cache.runs.len() == 1, "duplicate callback has one terminal result")
+        render_feed()
+        tracking_test_wait(|| !feed_render_pending && !main_render_pending, || tracking_test_order(), time_now() + 5)
+    }, time_now() + 5)
+}
+fn tracking_test_order(){
+    tracking_test_stage = "sort and reminders"
+    tracking_test_assert(display_rows[0].news_id == tracking_test_rows[3].news_id && display_rows[1].news_id == tracking_test_rows[2].news_id, "schedule impacts first, related reports second")
+    tracking_test_assert(display_rows[2].news_id == tracking_test_rows[0].news_id && display_rows[3].news_id == tracking_test_rows[1].news_id, "ordinary group retains time order, financing preference prevents promotion")
+    tracking_test_assert(regex("可能影响日程「杭州出差」").test(row_agent_hint(display_rows[0]).text), "home names the actual schedule and impact")
+    tracking_test_assert(row_match_hint(tracking_test_rows[1]) == "", "unrelated LLM judgment overrides lexical rule hint")
+    let duplicated = prioritize_feed_rows([display_rows[0] display_rows[0] display_rows[1]])
+    tracking_test_assert(duplicated.len() == 2, "same report shown once")
+    set_query("普通")
+    tracking_test_wait(|| !feed_render_pending, || {
+        tracking_test_assert(display_rows.len() == 1 && display_rows[0].news_id == tracking_test_rows[0].news_id, "search precedes personalization")
+        set_query("")
+        let calls = tracking_test_calls
+        tracking_start(nil)
+        tracking_test_wait(|| tracking_status != "recalling", || {
+            tracking_test_assert(tracking_test_calls == calls && tracking_status == "no_change", "unchanged successful input reuses result without LLM")
+            tracking_test_decisions()
+        }, time_now() + 5)
+    }, time_now() + 5)
+}
+fn tracking_test_decisions(){
+    let reminder = tracking_active_reminders()[0]
+    open_story(tracking_test_rows[3])
+    tracking_test_assert(tracking_item_reminders(tracking_latest_item(reading)).len() == 1, "detail and home read the same reminder")
+    let before = topic_records.to_json()
+    let writer = tracking_storage_write
+    tracking_storage_write = |path, value| {return false}
+    tracking_dismiss(reminder.reminder_id)
+    tracking_test_assert(topic_records.to_json() == before && tracking_active_reminders().len() == 1, "failed write verification neither records decision nor claims success")
+    tracking_storage_write = writer
+    tracking_dismiss(reminder.reminder_id)
+    if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) tracking_auto_timer = nil }
+    tracking_test_assert(tracking_active_reminders().len() == 0 && topic_records.decisions.len() == 1, "dismiss persists and removes the home/detail reminder")
+    close_detail() topics_load()
+    tracking_test_assert(topic_records.decisions.len() == 1 && tracking_active_reminders().len() == 0, "restart retains dismissal with same evidence")
+    let impact = fixture_tracking_update.parse_json().items[2].schedule_impacts[0]
+    let run = tracking_cache.runs[0]
+    let changed = tracking_reminder(run.result.items[2], impact, run)
+    let changed_evidence = changed.evidence[0].key.parse_json()
+    changed_evidence.summary = changed_evidence.summary + " 新增班次停运"
+    changed.evidence[0].key = changed_evidence.to_json()
+    tracking_test_assert(tracking_reminder_suppressed(changed), "rewritten impact without material facts remains dismissed")
+    changed.material_change = "Fixed new evidence: additional train suspension"
+    tracking_test_assert(!tracking_reminder_suppressed(changed), "new evidence plus explicit material change can revise dismissal")
+    let repeated = tracking_reminder(run.result.items[2], impact, run)
+    repeated.material_change = "同文转载"
+    let copy = repeated.evidence[0].key.parse_json() copy.source_url = "https://example.invalid/repeated"
+    repeated.evidence[0].key = copy.to_json()
+    tracking_test_assert(tracking_reminder_suppressed(repeated), "repeated article at another URL is not material new facts")
+    let old = tracking_latest_item(tracking_test_rows[2])
+    user_schedules[0].version = 2
+    tracking_test_assert(tracking_latest_item(tracking_test_rows[2]) == nil, "schedule change invalidates old conclusions")
+    user_schedules[0].version = 1
+    topic_records.topics[0].status = "paused"
+    tracking_test_assert(tracking_latest_item(tracking_test_rows[2]) == nil, "topic pause invalidates old conclusions")
+    topic_records.topics[0].status = "active"
+    tracking_test_rows[2].source_url = "https://example.invalid/changed-source"
+    tracking_test_assert(tracking_latest_item(tracking_test_rows[2]) == nil, "evidence provenance change invalidates conclusions")
+    tracking_test_rows[2].source_url = "https://example.invalid/tracking/open"
+    start_timeout(0.02, || tracking_test_failures_and_cancel())
+}
+fn tracking_test_failures_and_cancel(){
+    tracking_test_stage = "failures and task protection"
+    topic_records.decisions = []
+    tracking_test_rows[2].summary = tracking_test_rows[2].summary + " changed fixture"
+    tracking_test_cache()
+    tracking_start(nil)
+    tracking_test_wait(|| analysis_busy, || {
+        let old_reply = tracking_test_reply
+        tracking_schedule_check()
+        analysis_cancel()
+        tracking_test_assert(analysis_busy && analysis_terminal, "cancel waits for interrupt confirmation")
+        tracking_test_assert(!tracking_check_pending && tracking_auto_timer == nil, "explicit cancellation discards pending automatic checks")
+        let calls = tracking_test_calls
+        intent_begin(nil) intent_draft.original_input = "普通兴趣" intent_submit()
+        tracking_test_assert(tracking_test_calls == calls, "input request does not race an unacknowledged interrupt")
+        tracking_test_interrupt({is_ok: true})
+        tracking_test_wait(|| analysis_busy && agent_task.kind == "parse_intent", || {
+            old_reply(tracking_test_response(fixture_tracking_update.parse_json()))
+            tracking_test_assert(analysis_busy && agent_task.kind == "parse_intent", "late tracking callback cannot finish new intent")
+            tracking_test_reply({is_ok: true data: {text: "not-json"}})
+            tracking_test_assert(analysis_state == "failed" && analysis_error_category != "" && topic_records.topics.len() == 1, "parse failure retains user records")
+            intent_submit()
+            intent_changed("另一个关注", false)
+            tracking_test_reply(tracking_test_response(fixture_tracking_intent.parse_json()))
+            tracking_test_assert(analysis_error_category == "stale_context", "changed draft rejects in-flight understanding")
+            intent_submit() analysis_timeout()
+            agent_task_stop_ack(agent_task, false)
+            tracking_test_assert(analysis_needs_reopen && !analysis_busy, "unacknowledged timeout blocks future tasks")
+            analysis_needs_reopen = false intent_cancel()
+            if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) tracking_auto_timer = nil }
+            tracking_test_storage()
+        }, time_now() + 5)
+    }, time_now() + 5)
+}
+fn tracking_test_storage(){
+    tracking_test_stage = "storage recovery and errors"
+    let stored = fs.read(topic_file.path)
+    // Existing backups are validated snapshots written by the production path.
+    fs.write(topic_file.path, "broken fixture file")
+    topics_load()
+    tracking_test_assert(!topic_file.writable && topic_file.recovered && topic_records.topics.len() == 1, "broken primary recovers a prior valid backup")
+    let draft = topic_new_draft(nil) draft.original_input = "保留坏文件"
+    tracking_test_assert(topic_save_draft(draft) == "" && fs.read(topic_file.path) == "broken fixture file", "recovered writes use backup and preserve broken primary")
+    fs.write(topic_file.path, stored) topics_load()
+    let document = topic_records.to_json().parse_json()
+    document.revision = document.revision + 1 fs.write(topic_file.path, document.to_json())
+    tracking_test_assert(topic_save_draft(draft) != "", "concurrent disk revision rejects overwrite")
+    topics_load()
+    let previous = topic_records.to_json()
+    let writer = tracking_storage_write
+    tracking_storage_write = |path, value| fs.write(".", value)
+    tracking_test_assert(topic_save_draft(draft) != "" && topic_records.to_json() == previous, "actual filesystem write error rolls back topic owner")
+    tracking_storage_write = writer
+    records_add_interest("keyword", "legacy persisted")
+    records_toggle_bookmark(tracking_test_rows[2])
+    history_record_analysis(tracking_test_rows[2], "legacy-compat", 1, "fixture", {outcome: "suggestions" explanation: "旧决定固定测试"
+        suggestions: [{goal_key: "legacy" interest_ids: ["keyword:legacy persisted"] evidence_ids: [tracking_test_rows[2].news_id] schedule_id: nil schedule_version: nil change_summary: "旧版提醒" rationale: "Fixture only" uncertainties: [] proposed_action: nil}]})
+    history_update_suggestion_state(suggestion_history[0].suggestion_id, "dismissed")
+    records_load() history_load() schedules_load() topics_load()
+    tracking_test_assert(user_interests.len() == 1 && user_bookmarks.len() == 1 && user_schedules.len() == 1 && suggestion_history[0].state == "dismissed", "old interests bookmarks schedules and decisions remain readable alongside v2 records")
+    records_remove_interest("keyword:legacy persisted")
+    start_timeout(0.02, || tracking_test_schedule_only())
+}
+fn tracking_test_schedule_only(){
+    tracking_test_stage = "schedule only, missing dates and no candidates"
+    let saved_topics = topic_records.topics
+    topic_records.topics = [] topic_records.decisions = [] tracking_cache.runs = []
+    tracking_start(nil)
+    tracking_test_wait(|| analysis_busy, || {
+        tracking_test_assert(agent_task.snapshot.topics.len() == 0 && agent_task.snapshot.schedules.len() == 1, "schedule-only context never invents a topic")
+        let result = fixture_tracking_update.parse_json() result.items = [result.items[2]]
+        tracking_test_reply(tracking_test_response(result))
+        tracking_test_assert(tracking_active_reminders().len() == 1 && user_schedules[0].version == 1, "schedule-only impact surfaces without modifying schedule")
+        // Missing/contradictory timing must be represented as uncertainty, no impact.
+        tracking_test_rows[3].summary = "杭州班次可能受限，日期未知，两家来源说法相反"
+        tracking_test_rows[3].published_at = nil tracking_test_cache()
+        tracking_start(nil)
+        tracking_test_wait(|| analysis_busy, || {
+            let result = {schema_version: 1 outcome: "insufficient_evidence" explanation: "固定测试：日期未知且证据矛盾，不能确定影响" items: [{news_id: tracking_test_rows[3].news_id relevance: "uncertain" topic_ids: [] legacy_interest_ids: [] why_related: "地点相关但时段未知" evidence_ids: [tracking_test_rows[3].news_id] uncertainties: ["日期未知" "报道相互矛盾"] schedule_impacts: []}]}
+            tracking_test_reply(tracking_test_response(result))
+            tracking_test_assert(tracking_status == "insufficient_evidence" && tracking_active_reminders().len() == 0 && tracking_test_rows[3].published_at == nil, "insufficient contradictory evidence withdraws impact and preserves unknown date")
+            app_feed_rows = [tracking_test_rows[0]]
+            let calls = tracking_test_calls tracking_start(nil)
+            tracking_test_wait(|| tracking_status != "recalling", || {
+                tracking_test_assert(tracking_status == "no_candidates" && tracking_test_calls == calls, "no candidates distinct from no change, no model request")
+                app_feed_rows = tracking_test_rows tracking_test_rows[3].retrieved_at = time_now() - 8000
+                tracking_start(nil)
+                tracking_test_wait(|| tracking_status != "recalling", || {
+                    tracking_test_assert(tracking_status == "stale", "expired-only evidence distinct from request failure")
+                    tracking_test_rows[3].retrieved_at = time_now()
+                    topic_records.topics = saved_topics topic_records.decisions = []
+                    tracking_test_rows[3].summary = "杭州铁路公告：2026-10-09全天部分班次受限（固定测试）"
+                    tracking_test_rows[3].published_at = time_now()
+                    tracking_test_cache()
+                    analysis_host_has = |name| false
+                    tracking_start(nil)
+                    tracking_test_wait(|| tracking_status != "recalling", || {
+                        tracking_test_assert(tracking_status == "failed" && agent_last_category == "service_unavailable", "AI unavailable remains real service failure with readable feed")
+                        tracking_test_host()
+                        tracking_cache.runs = []
+                        tracking_start(nil)
+                        tracking_test_wait(|| analysis_busy, || {
+                            tracking_test_reply(tracking_test_response(fixture_tracking_update.parse_json()))
+                            topics_commit(topic_records.to_json().parse_json())
+                            tracking_test_cache()
+                            render_feed()
+                            tracking_test_wait(|| !feed_render_pending, || {
+                                tracking_test_bm25()
+                            }, time_now() + 5)
+                        }, time_now() + 5)
+                    }, time_now() + 5)
+                }, time_now() + 5)
+            }, time_now() + 5)
+        }, time_now() + 5)
+    }, time_now() + 5)
+}
+start_timeout(0.05, || {
+    if fs.exists("restart_expected.json") { tracking_test_restart() }
+    else { tracking_test_run() }
+})
+
+fn tracking_test_bm25(){
+    tracking_test_stage = "BM25 ranking and capacity"
+    let rows = []
+    for i in 240 {
+        let title = "common common common" let summary = "common filler filler filler filler"
+        if i == 239 { title = "rare" summary = "rare" }
+        let row = news_normalize({title: title summary: summary link: "https://example.invalid/bm25/" + i}, news_sources[0], time_now())
+        rows.push(row)
+    }
+    rows.push(rows[239])
+    let targets = {topics: [] schedules: [] legacy_interests: [{interest_id: "keyword:rare common" kind: "keyword" value: "rare common" enabled: true created_at: 1}] omitted_targets: 0}
+    bm25_recall(rows, targets, || true, fn(recalled){
+        tracking_test_assert(recalled.rows.len() == 8 && recalled.matched == 240 && recalled.omitted_candidates == 232, "BM25 deduplicates and caps 240-item recall with explicit omissions")
+        tracking_test_assert(recalled.rows[0].news_id == rows[239].news_id, "BM25 promotes rare specific query evidence over common repeated words")
+        tracking_test_assert(recalled.rows[1].news_id == rows[0].news_id && recalled.rows[2].news_id == rows[1].news_id, "BM25 ties retain original time order")
+        tracking_test_assert(bm25_prefix("杭州abcdef", 3) == "杭州a", "native prefix preserves Unicode boundaries")
+        // Leave a labeled fixture UI. Subsequent native events get explicit fixed replies.
+        analysis_host_request = fn(name, data, callback){
+            if name == "octos.session.open" { callback({is_ok: true}) }
+            if name == "octos.turn.interrupt" { callback({is_ok: true}) }
+            if name == "octos.turn.start" {
+                if agent_task.kind == "parse_intent" {
+                    let output = fixture_tracking_intent.parse_json()
+                    if intent_draft.origin_reminder_id != nil {
+                        output.understanding.title = "杭州出行信息（固定测试）"
+                        output.understanding.purpose = "核对已有杭州出差的交通影响"
+                        output.understanding["scope"] = ["杭州铁路班次"]
+                        output.understanding.preferences = ["只看与行程有关的限制"]
+                        output.understanding.recall_rules = [{kind: "keyword" value: "杭州"}]
+                    }
+                    start_timeout(0.03, || callback(tracking_test_response(output)))
+                }
+                else {
+                    let output = fixture_tracking_update.parse_json()
+                    // UI confirmation changes target IDs. Adapt only fixture
+                    // references to the actual snapshot, never production news.
+                    output.items.retain(|item| tracking_find(agent_task.snapshot.evidence, "news_id", item.news_id) != nil)
+                    for item in output.items {
+                        item.topic_ids = []
+                        if item.relevance == "related" {
+                            for topic in agent_task.snapshot.topics { item.topic_ids.push(topic.topic_id) }
+                            if item.topic_ids.len() == 0 { item.relevance = "unrelated" }
+                        }
+                        item.schedule_impacts.retain(|impact| tracking_find(agent_task.snapshot.schedules, "schedule_id", impact.schedule_id) != nil)
+                    }
+                    start_timeout(0.03, || callback(tracking_test_response(output)))
+                }
+            }
+        }
+        tracking_test_stage = "complete" tracking_test_report()
+    })
+}
+
+fn tracking_test_restart(){
+    records_load() schedules_load() history_load() topics_load() feed_initialize() weather_initialize()
+    weather_app_ready = true
+    let expected = fs.read("restart_expected.json").parse_json()
+    tracking_test_assert(topic_records.to_json() == expected.topics.to_json(), "fresh VM restores confirmed topics, draft, versions and decisions exactly")
+    tracking_test_assert(user_bookmarks.to_json() == expected.bookmarks.to_json(), "fresh VM restores legacy bookmark snapshots")
+    tracking_test_assert(user_schedules.to_json() == expected.schedules.to_json(), "fresh VM restores unchanged existing schedule")
+    tracking_test_assert(suggestion_history.to_json() == expected.suggestions.to_json(), "fresh VM restores old decisions")
+    tracking_test_assert(!analysis_busy && agent_task == nil, "fresh VM has no dangling reasoning task")
+    render_main()
+    feed_restore_cache(enabled_source_ids, 0, feed_generation, || {
+        rebuild_feed(|| {
+            render_feed()
+            tracking_test_wait(|| !feed_render_pending && !main_render_pending, || {
+                tracking_test_assert(app_feed_rows.len() == 4 && display_rows.len() == 4, "fresh VM restores ordinary cached news without model/network")
+                tracking_test_assert(tracking_active_reminders().len() == expected.reminder_count, "fresh VM honors persisted reminder decisions")
+                fs.write("tracking-restart-report.json", {stage: "complete" passed: tracking_test_passed failed: tracking_test_failed failures: tracking_test_failures}.to_json())
+            }, time_now() + 5)
+        })
+    })
+}

@@ -15,8 +15,6 @@ let last_return_top_at = 0
 let settings_show_diagnostics = false
 let results_show_error_detail = false
 let analysis_check_message = ""
-let analysis_batch_no_change = 0
-let analysis_batch_insufficient = 0
 let app_feed_rows = []
 let app_feed_build_task = nil
 let app_feed_build_counter = 0
@@ -111,8 +109,9 @@ fn visible_rows(){
         for i in user_bookmarks.len() { rows.push(user_bookmarks[user_bookmarks.len() - 1 - i]) }
         return news_filter(rows, [], "all", false, query)
     }
-    news_filter(app_feed_rows, user_interests, category, page == "tracking", query)
+    news_filter(app_feed_rows, [], category, false, query)
 }
+
 fn empty_text(){
     if query != "" { return "没有匹配的新闻，试试其他关键词。" }
     if page == "saved" { return "收藏新闻后可在这里重看；清理新闻缓存不会删除收藏。" }
@@ -167,7 +166,6 @@ fn render_feed_now(){
     })
 }
 fn render_prepared_feed(){
-    if page == "feed" { display_rows = prioritize_feed_rows(display_rows) }
     if feed_reset_scroll_pending {
         feed_reset_scroll_pending = false
         ui.list_container.render()
@@ -341,6 +339,7 @@ fn schedule_save_draft(){
         ui.schedule_editor.render() return
     }
     analysis_check_message = ""
+    tracking_schedule_check()
     notice("日程已保存")
     schedule_edit_id = result.item.schedule_id schedule_edit_version = result.item.version
     schedule_saved_view = true schedule_original = result.item.to_json().parse_json()
@@ -349,7 +348,7 @@ fn schedule_save_draft(){
 fn schedule_change_status(id, version, status){
     let error = schedule_set_status(id, version, status)
     if error != "" { notice(error) }
-    else { analysis_check_message = "" notice("日程状态已更新") }
+    else { analysis_check_message = "" notice("日程状态已更新") tracking_schedule_check() }
     if schedule_edit_id == id { schedule_saved_view = true }
     ui.schedule_list.render() ui.schedule_editor.render()
 }
@@ -435,6 +434,7 @@ fn refresh_sources(ids){
         rebuild_feed(|| {
             records_check_tracking(app_feed_rows, user_interests, time_now(), || generation == feed_generation, fn(error){
                 busy = false
+                tracking_schedule_check()
                 if error != "" { notice(error) }
                 render_feed()
                 if detail_kind == "settings" { ui.source_list.render() }
@@ -444,34 +444,30 @@ fn refresh_sources(ids){
     sync_status()
 }
 fn analysis_has_focus(){
+    for item in topic_records.topics { if item.status == "active" { return true } }
     for interest in user_interests { if interest.enabled { return true } }
     for schedule in user_schedules { if schedule_active(schedule) { return true } }
     false
 }
-fn suggestion_attention_count(){
-    let count = 0
-    for item in suggestion_history { if item.state == "pending" || item.state == "needs_review" { count = count + 1 } }
-    count
-}
+
+fn suggestion_attention_count(){ tracking_active_reminders().len() }
+
 fn render_analysis_controls(){
     let count = suggestion_attention_count()
     ui.menu_badge.set_visible(count > 0)
     ui.suggestions_button.set_text("分析与建议")
     if count > 0 { ui.suggestions_button.set_text("分析与建议 · " + count + " 待处理") }
     ui.pending_suggestions.set_visible(count > 0 && page == "feed" && detail_kind == "")
-    ui.pending_suggestions.set_text("" + count + " 项建议待查看 ›")
+    ui.pending_suggestions.set_text("" + count + " 项日程影响待关注 ›")
     ui.manage_tracking_button.set_visible(analysis_has_focus())
     if page == "tracking" { ui.tracking_analysis_actions.render() }
 }
 fn analysis_check_status(){
-    if analysis_needs_reopen { return "分析尚未停止，请重新打开应用后再检查。" }
-    if analysis_busy && analysis_terminal { return "正在停止分析，请稍候…" }
-    if analysis_batch_busy { return "正在检查相关新闻对你关注的事和日程的影响…" }
-    if analysis_busy { return "正在分析新闻，完成后可查看依据与建议。" }
-    if !analysis_has_focus() { return "添加关注，让助手知道你想了解什么。" }
-    if analysis_check_message != "" { return analysis_check_message }
-    "检查相关新闻是否影响你关注的事和已有日程。"
+    if analysis_needs_reopen { return "中断未确认，请重新打开应用" }
+    if analysis_busy && analysis_terminal { return "正在等待中断确认…" }
+    tracking_message
 }
+
 fn analysis_error_hint(){
     if analysis_needs_reopen { return "分析尚未停止，请重新打开应用后再试。" }
     if analysis_error_category == "service_unavailable" { return "分析服务不可用，请检查 Rinx 中的助手配置。" }
@@ -480,82 +476,13 @@ fn analysis_error_hint(){
     if analysis_error_category == "timeout" { return "分析等待超时，请稍后重试。" }
     "本次分析未能完成，可查看具体原因后重试。"
 }
-fn analysis_batch_result_message(){
-    if analysis_batch_failed > 0 && analysis_batch_done == 0 { return "本次分析未能完成，查看提示后可重试。" }
-    if analysis_batch_failed > 0 { return "部分新闻未能完成分析，可以重试；已完成的结果仍可查看。" }
-    let pending = 0
-    for item in suggestion_history { if item.state == "pending" { pending = pending + 1 } }
-    if pending > 0 { return "检查完成，有 " + pending + " 条建议待你确认。" }
-    if analysis_batch_insufficient > 0 { return "检查完成，部分新闻证据不足，尚不能确定如何调整。" }
-    if analysis_batch_no_change == analysis_batch_done { return "本次分析未发现调整建议。" }
-    "检查完成，分析结果已保存。"
-}
 fn analysis_status_for_news(id){
-    if analysis_active_row_id == id {
-        if analysis_busy && !analysis_terminal { return "正在分析…可取消或继续浏览。" }
-        if analysis_busy { return "正在等待中断确认…" }
-        if analysis_state == "failed" || analysis_state == "cancelled" { return analysis_error }
-    }
-    let latest = history_latest_analysis(id)
-    if latest == nil { return "尚未分析" }
-    if latest["session_unsaved"] == true { return "分析已返回，尚未完整保存。" }
-    "已保存最近的分析结果。"
+    if analysis_busy { return "助手请求正在进行，可继续浏览或取消" }
+    if tracking_current_values()[id] != nil { return "本条追踪结果已保存" }
+    if tracking_status == "failed" || tracking_status == "stale" { return tracking_message }
+    "尚无当前有效的追踪结果"
 }
-fn analysis_row_relevant(row){
-    if interest_matches(row, user_interests).len() > 0 { return true }
-    for schedule in user_schedules {
-        if schedule_active(schedule) {
-            let matcher = regex(literal_pattern(schedule.title), "i")
-            if matcher.test(row.title) || matcher.test(row.summary) { return true }
-        }
-    }
-    false
-}
-fn analyze_changes(){
-    if analysis_batch_busy { analysis_cancel() return }
-    if analysis_busy || octos_testing || analysis_needs_reopen { analysis_check_message = "请等待当前分析结束，或重新打开应用后再检查。" render_analysis_controls() return }
-    if !analysis_has_focus() { analysis_check_message = "先添加关注或日程，再检查相关更新。" render_analysis_controls() return }
-    if busy { analysis_check_message = "新闻正在更新，请稍后再检查。" render_analysis_controls() return }
-    analysis_batch_rows = [] analysis_batch_done = 0 analysis_batch_failed = 0 analysis_batch_skipped = 0
-    analysis_batch_no_change = 0 analysis_batch_insufficient = 0 analysis_check_message = ""
-    analysis_batch_busy = true analysis_batch_index = 0
-    analysis_batch_generation = analysis_batch_generation + 1
-    let work = {generation: analysis_batch_generation index: 0 rows: app_feed_rows}
-    render_analysis_controls()
-    start_timeout(0.01, || analysis_batch_select(work))
-}
-fn analysis_batch_select(work){
-    if !analysis_batch_busy || work.generation != analysis_batch_generation { return }
-    let count = 0
-    while work.index < work.rows.len() && count < 5 {
-        let row = work.rows[work.index] work.index = work.index + 1 count = count + 1
-        if analysis_batch_rows.len() >= 8 || !analysis_row_relevant(row) { analysis_batch_skipped = analysis_batch_skipped + 1 continue }
-        if history_changed_rows([row]).len() > 0 { analysis_batch_rows.push(row) }
-        else { analysis_batch_skipped = analysis_batch_skipped + 1 }
-    }
-    if work.index < work.rows.len() { start_timeout(0.01, || analysis_batch_select(work)) return }
-    if analysis_batch_rows.len() == 0 {
-        analysis_batch_busy = false analysis_check_message = "暂无需要分析的关注更新，本次未调用助手。" render_analysis_controls() return
-    }
-    analysis_batch_next_if(work.generation)
-}
-fn analysis_batch_next_if(generation){
-    if generation == analysis_batch_generation { analysis_batch_next() }
-}
-fn analysis_batch_next(){
-    if !analysis_batch_busy { return }
-    if analysis_batch_index >= analysis_batch_rows.len() {
-        analysis_batch_busy = false analysis_check_message = analysis_batch_result_message() render_analysis_controls() return
-    }
-    if analysis_busy || octos_testing || analysis_needs_reopen {
-        analysis_batch_skipped = analysis_batch_skipped + analysis_batch_rows.len() - analysis_batch_index
-        analysis_batch_busy = false analysis_check_message = "检查已停止，已完成的结果仍可查看。" render_analysis_controls() return
-    }
-    let row = analysis_batch_rows[analysis_batch_index]
-    analysis_batch_index = analysis_batch_index + 1
-    render_analysis_controls()
-    analysis_start(row)
-}
+fn analyze_changes(){ tracking_start(nil) }
 fn show_analysis_results(){ results_pending_offset = 0 results_show_error_detail = false schedule_confirmation_id = nil notice("") render_analysis_controls() show_detail("results", "分析与建议") }
 fn retry_analysis_save(){
     let error = history_retry_save()
@@ -589,6 +516,7 @@ fn toggle_follow(row){
     render_feed()
     if detail_kind == "story" { ui.story_content.render() }
     render_analysis_controls()
+    tracking_schedule_check()
 }
 fn toggle_save(row){
     let existed = records_is_bookmarked(row.news_id)
@@ -607,6 +535,8 @@ fn render_detail(){
     ui.tracking_panel.set_visible(detail_kind == "tracking")
     ui.results_panel.set_visible(detail_kind == "results")
     ui.weather_panel.set_visible(detail_kind == "weather")
+    ui.intent_panel.set_visible(detail_kind == "intent")
+    if detail_kind == "intent" { ui.intent_content.render() }
     if detail_kind == "results" { ui.results_content.render() }
     if detail_kind == "weather" { ui.weather_content.render() }
 }
@@ -641,6 +571,7 @@ fn update_suggestion_state(id, state){
     render_analysis_controls()
 }
 fn close_detail(){
+    if detail_kind == "intent" && intent_open { intent_cancel() return }
     close_menu()
     detail_kind = ""
     reading = nil
@@ -663,12 +594,13 @@ fn add_keyword(){
     if error == "" { keyword_draft = "" ui.keyword_input.set_text("") }
     render_detail()
     render_feed()
+    tracking_schedule_check()
 }
-fn remove_interest(id){ analysis_check_message = "" notice(records_remove_interest(id)) render_detail() render_feed() }
+fn remove_interest(id){ analysis_check_message = "" notice(records_remove_interest(id)) render_detail() render_feed() tracking_schedule_check() }
 fn toggle_topic(id){
     analysis_check_message = ""
     if records_has_interest("category", id) { remove_interest("category:" + id) }
-    else { notice(records_add_interest("category", id)) render_detail() render_feed() }
+    else { notice(records_add_interest("category", id)) render_detail() render_feed() tracking_schedule_check() }
 }
 fn toggle_source(id){
     analysis_check_message = ""

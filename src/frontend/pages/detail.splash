@@ -6,6 +6,55 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
             if reading["demo_data"] == true { Small{text: "演示缓存 · 非实时新闻" draw_text.color: accent} }
             if reading.evidence_kind == "hn_submission" { Small{text: "HN 提交记录；提交时间不等于原文发布时间"} }
             else { Small{text: "真实 RSS / Atom 摘要，非文章全文"} }
+            Divider{}
+            Section{text: "追踪关系与日程提醒"}
+            let tracked = tracking_latest_item(reading)
+            if tracked == nil {
+                Small{text: "尚无当前有效的 Agent 追踪结果；旧结果可能已过期。"}
+            let latest = history_latest_analysis(reading.news_id)
+            if latest != nil {
+                Small{text: "最近分析：" + history_outcome_label(latest.outcome) + " · " + age_label(latest.created_at)}
+                Text{text: latest.explanation}
+                if latest["session_unsaved"] == true { Small{text: "本次结果尚未完整保存，请到建议页重试保存。" draw_text.color: accent} }
+            }
+                let rule = tracking_rule_hint(reading)
+                if rule != "" { Small{text: rule} }
+            } else {
+                Text{text: tracked.item.why_related}
+                let relevance_label = "关系尚不确定"
+                if tracked.item.relevance == "related" { relevance_label = "关注相关" }
+                if tracked.item.relevance == "unrelated" { relevance_label = "与关注无关" }
+                Small{text: relevance_label + " · 检查于 " + age_label(tracked.run.checked_at)}
+                Text{text: tracked.run.result.explanation}
+                for uncertainty in tracked.item.uncertainties { Small{text: "不确定性：" + uncertainty} }
+                for reminder in tracking_item_reminders(tracked) {
+                    let schedule = schedule_find(reminder.schedule_id)
+                    Section{text: "可能影响日程「" + schedule.title + "」" draw_text.color: accent}
+                    Text{text: reminder.impact_summary}
+                    Small{text: "时段依据：" + reminder.overlap_reason}
+                    Small{text: schedule_display_time(schedule.start, schedule.timezone) + " → " + schedule_display_time(schedule.end, schedule.timezone)}
+                    for uncertainty in reminder.uncertainties { Small{text: "不确定性：" + uncertainty} }
+                    if reminder.material_change != "" { Small{text: "变化：" + reminder.material_change} }
+                    View{width: Fill height: Fit flow: Right spacing: 8
+                        SecondaryButton{text: "忽略提醒" on_click: || tracking_dismiss(reminder.reminder_id)}
+                        SecondaryButton{text: "关注这类信息" on_click: || intent_follow_reminder(reminder.reminder_id)}
+                    }
+                }
+                for impact in tracked.item.schedule_impacts {
+                    let reminder = tracking_reminder(tracked.item, impact, tracked.run)
+                    if tracking_reminder_suppressed(reminder) { Small{text: "已记录决定：相同证据不重复提醒"} }
+                }
+                Small{text: "未覆盖目标 " + tracked.run.snapshot.omitted_targets + " · 候选 " + tracked.run.snapshot.omitted_candidates}
+                Section{text: "判断所用依据（标题 / 摘要）"}
+                for id in tracked.item.evidence_ids {
+                    let evidence = tracking_find(tracked.run.snapshot.evidence, "news_id", id)
+                    Small{text: evidence.title}
+                    Small{text: evidence.source_url}
+                    if evidence.published_at == nil { Small{text: "发布日期未知"} }
+                    if evidence.summary_truncated { Small{text: "摘要已缩减；未读取全文"} }
+                }
+            }
+            Divider{}
             if reading.summary == "" { Text{text: "来源未提供摘要，请通过条目链接查看。" draw_text.color: secondary} }
             else { Text{text: reading.summary} }
             Small{text: "抓取于 " + age_label(reading.retrieved_at)}
@@ -26,15 +75,9 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
                 for reason in reasons { Text{text: reason} }
             }
             Divider{}
-            Section{text: "Agent 影响分析"}
-            Small{text: "分析仅使用此条新闻的标题和摘要；日程变更须经用户确认。"}
+            Section{text: "历史分析 / 新检查"}
+            Small{text: "本轮检查关注关系及已有日程影响；提醒不修改日程。"}
             agent_status := Small{text: analysis_status_for_news(reading.news_id)}
-            let latest = history_latest_analysis(reading.news_id)
-            if latest != nil {
-                Small{text: "最近分析：" + history_outcome_label(latest.outcome) + " · " + age_label(latest.created_at)}
-                Text{text: latest.explanation}
-                if latest["session_unsaved"] == true { Small{text: "本次结果尚未完整保存，请到建议页重试保存。" draw_text.color: accent} }
-            }
             let saved_suggestions = history_suggestions_for_news(reading.news_id)
             if saved_suggestions.len() > 0 {
                 Divider{}

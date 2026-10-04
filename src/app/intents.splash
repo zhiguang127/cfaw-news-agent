@@ -1,0 +1,119 @@
+// Draft edits never overwrite a confirmed topic. Parsing cannot save a topic.
+let intent_open = false
+let intent_draft = nil
+let intent_error = ""
+let intent_save_timer = nil
+let intent_parse_pending = false
+fn intent_render(){ if detail_kind == "intent" { ui.intent_content.render() } }
+fn intent_begin(topic_id){
+    tracking_recall_generation = tracking_recall_generation + 1
+    notice("")
+    intent_open = true intent_error = ""
+    if topic_id == nil && topic_records.draft != nil { intent_draft = topic_records.draft.to_json().parse_json() }
+    else { intent_draft = topic_new_draft(topic_id) }
+    show_detail("intent", "表达关注")
+}
+fn intent_changed(value, supplement){
+    if value.to_chars().len() > tracking_config.max_input_chars { intent_error = "输入最多1000字符；超出内容未保存" return }
+    if supplement { intent_draft.supplement = value } else { intent_draft.original_input = value }
+    intent_draft.version = intent_draft.version + 1 intent_draft.state = "editing" intent_draft.understanding = nil
+    if intent_save_timer != nil { stop_timer(intent_save_timer) }
+    let version = intent_draft.version
+    intent_save_timer = start_timeout(0.4, || {
+        intent_save_timer = nil
+        if intent_draft != nil { if version == intent_draft.version { intent_error = topic_save_draft(intent_draft) if intent_error != "" { intent_render() } } }
+    })
+}
+fn intent_save_local(){
+    if intent_save_timer != nil { stop_timer(intent_save_timer) intent_save_timer = nil }
+    if intent_draft == nil { return "" }
+    topic_save_draft(intent_draft)
+}
+fn intent_submit(){
+    if intent_draft == nil { return }
+    intent_error = ""
+    if intent_draft.original_input.trim() == "" { intent_error = "请写下想持续了解的内容" intent_render() return }
+    let error = intent_save_local()
+    if error != "" { intent_error = error intent_render() return }
+    // User input takes priority; wait for the host's interrupt acknowledgment.
+    if analysis_busy {
+        if agent_task != nil {
+            if agent_task.kind == "tracking_update" { intent_parse_pending = true analysis_cancel() intent_error = "正在停止新闻检查，确认中断后整理输入" intent_render() return }
+        }
+        intent_error = "已有输入正在整理，请先取消或等待" intent_render() return
+    }
+    let draft = intent_draft.to_json().parse_json()
+    let key = draft.to_json()
+    let current_topic = topic_find(draft.target_topic_id)
+    let snapshot = {original_input: draft.original_input supplement: draft.supplement current_topic: current_topic
+        previous_question: draft.question prompt_revision: tracking_prompt_revision}
+    intent_error = "正在整理你的关注…"
+    error = agent_task_start("parse_intent", snapshot, intent_prompt + snapshot.to_json(), || {
+        if intent_draft == nil { return false }
+        if !intent_open || intent_draft.to_json() != key { return false }
+        if draft.target_topic_id != nil {
+            let target = topic_find(draft.target_topic_id)
+            if target == nil { return false }
+            if target.version != draft.target_version { return false }
+        }
+        true
+    }, fn(reply){
+        if !reply.success { intent_error = reply.error }
+        else {
+            let next = draft.to_json().parse_json()
+            next.state = reply.result.status next.question = reply.result.question next.understanding = reply.result.understanding
+            next.version = next.version + 1
+            let error = topic_save_draft(next)
+            if error == "" { intent_draft = next intent_error = "" } else { intent_error = error }
+        }
+        intent_render()
+    })
+    if error != "" { intent_error = error }
+    intent_render()
+}
+fn intent_after_interrupt(){
+    if !intent_parse_pending { return }
+    intent_parse_pending = false
+    if intent_open && !analysis_needs_reopen { start_timeout(0.01, || intent_submit()) }
+}
+fn intent_confirm(){
+    let error = topic_confirm(intent_draft)
+    if error != "" { intent_error = error intent_render() return }
+    intent_draft = nil intent_open = false
+    close_detail() notice("关注已确认并保存") tracking_schedule_check()
+}
+fn intent_cancel(){
+    intent_parse_pending = false
+    if agent_task != nil { if analysis_busy && agent_task.kind == "parse_intent" { analysis_cancel() } }
+    let error = intent_save_local()
+    if error != "" { intent_error = error intent_render() return }
+    intent_open = false close_detail() notice("草稿已保留，可以继续补充")
+    if tracking_check_pending { tracking_schedule_check() }
+}
+fn intent_discard(){
+    let next = topic_records.to_json().parse_json() next.draft = nil
+    let error = topics_commit(next)
+    if error != "" { intent_error = error intent_render() return }
+    intent_parse_pending = false
+    if agent_task != nil { if analysis_busy && agent_task.kind == "parse_intent" { analysis_cancel() } }
+    intent_draft = nil intent_open = false close_detail()
+}
+fn intent_follow_reminder(id){
+    let reminder = tracking_find_reminder(id)
+    if reminder == nil { notice("提醒已过期，请重新检查") return }
+    let error = tracking_check_reminder(reminder)
+    if error != "" { notice(error) return }
+    let item = schedule_find(reminder.schedule_id)
+    intent_draft = topic_new_draft(nil)
+    intent_draft.original_input = "关注与日程「" + item.title + "」有关的信息：" + reminder.impact_summary
+    if record_string(item["location"]) && item["location"] != "" { intent_draft.original_input = intent_draft.original_input + "；地点：" + item["location"] }
+    intent_draft.origin_reminder_id = id
+    notice("")
+    intent_open = true intent_error = ""
+    show_detail("intent", "关注这类信息")
+}
+fn topic_toggle_pause(id, version, status){
+    let error = topic_set_status(id, version, status)
+    if error != "" { notice(error) } else { notice("关注状态已保存") tracking_schedule_check() }
+    tracking_ui_update()
+}

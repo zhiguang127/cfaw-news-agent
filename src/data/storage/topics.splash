@@ -1,0 +1,136 @@
+// User records and decisions are one transactional document; disposable runs
+// live separately. The pinned host has no rename: retain a validated backup.
+let topic_records = {schema_version: 2 revision: 0 topics: [] draft: nil decisions: []}
+let tracking_cache = {schema_version: 1 revision: 0 runs: []}
+let topic_file = {path: "topics_v2.json" writable: true recovered: false revision: 0}
+let tracking_cache_file = {path: "tracking_results_v1.json" writable: true recovered: false revision: 0}
+let topic_warning = ""
+let tracking_storage_write = |path, text| fs.write(path, text)
+fn topic_document_valid(value){
+    if !record_object(value) || value["schema_version"] != 2 || !record_number(value["revision"]) { return false }
+    if !record_array(value["topics"]) || value["topics"].len() > tracking_config.max_topics || !topic_draft_valid(value["draft"]) { return false }
+    if !record_array(value["decisions"]) || value["decisions"].len() > tracking_config.max_decisions { return false }
+    let ids = {}
+    for item in value["topics"] { if !topic_valid(item) || ids[item.topic_id] == true { return false } ids[item.topic_id] = true }
+    for item in value["decisions"] {
+        if !record_object(item) || !tracking_text(item["reminder_id"], 400) || !tracking_text(item["goal_key"], 120) || !tracking_text(item["schedule_id"], 200) { return false }
+        if item["state"] != "dismissed" && item["state"] != "followed" { return false }
+        if !record_number(item["schedule_version"]) || !record_number(item["decided_at"]) || !record_array(item["evidence"]) { return false }
+        if item["evidence"].len() == 0 || item["evidence"].len() > tracking_config.max_candidates { return false }
+        for evidence in item["evidence"] {
+            if !record_object(evidence) || !tracking_text(evidence["news_id"], 4000) || !tracking_text(evidence["key"], 16000) { return false }
+        }
+    }
+    true
+}
+fn tracking_cache_valid(value){
+    if !record_object(value) || value["schema_version"] != 1 || !record_number(value["revision"]) || !record_array(value["runs"]) { return false }
+    if value["runs"].len() > tracking_config.max_runs { return false }
+    for run in value["runs"] {
+        if !record_object(run) || !record_string(run["task_id"]) || !record_number(run["checked_at"]) || !record_string(run["input_key"]) || !record_object(run["snapshot"]) { return false }
+        let checked = tracking_validate(run["result"], run["snapshot"])
+        if !checked.valid { return false }
+    }
+    true
+}
+fn tracking_store_read(file, valid){
+    file.writable = true file.recovered = false
+    let value = nil let exists = false
+    try { exists = fs.exists(file.path) if exists { value = fs.read(file.path).parse_json() } }
+    { file.writable = false topic_warning = topic_warning + file.path + "：读取失败；" }
+    if valid(value) { file.revision = value.revision return value }
+    if exists { file.writable = false topic_warning = topic_warning + file.path + "：坏文件或未知版本已保留；" }
+    let backup = nil
+    try { if fs.exists(file.path + ".backup") { backup = fs.read(file.path + ".backup").parse_json() } }
+    { topic_warning = topic_warning + file.path + "：备份读取失败；" }
+    if valid(backup) { file.recovered = true file.revision = backup.revision topic_warning = topic_warning + "已从备份恢复，继续写入备份；" return backup }
+    file.revision = 0
+    nil
+}
+fn topics_load(){
+    topic_warning = ""
+    topic_records = {schema_version: 2 revision: 0 topics: [] draft: nil decisions: []}
+    tracking_cache = {schema_version: 1 revision: 0 runs: []}
+    let document = tracking_store_read(topic_file, topic_document_valid)
+    if document != nil { topic_records = document }
+    let cache = tracking_store_read(tracking_cache_file, tracking_cache_valid)
+    if cache != nil { tracking_cache = cache }
+    // v1 rules/bookmarks/schedules/suggestions retain their existing readers;
+    // no destructive migration, and legacy rules also participate in recall.
+}
+fn tracking_store_write(file, value, valid){
+    if !valid(value) { return "记录未通过校验，未保存" }
+    if !file.writable && !file.recovered { return "原文件已保留，存储只读；请恢复有效备份后重开" }
+    let path = file.path
+    if file.recovered { path = path + ".backup" }
+    let error = ""
+    try {
+        if fs.exists(path) {
+            let previous = fs.read(path).parse_json()
+            if !valid(previous) { error = "磁盘记录已损坏，原文件已保留" file.writable = false file.recovered = false }
+            else if previous.revision != file.revision { error = "磁盘记录版本已变化，请重开后再保存" }
+            else if !file.recovered { tracking_storage_write(path + ".backup", previous.to_json()) }
+        } else if file.revision != 0 { error = "磁盘记录已移除，请重开后恢复" }
+        if error == "" {
+            tracking_storage_write(path, value.to_json())
+            let stored = fs.read(path).parse_json()
+            if !valid(stored) || stored.to_json() != value.to_json() { error = "写入核验失败，已有备份可恢复" }
+        }
+    } { error = "本地写入失败，未保存；已有记录和备份保留，可重试" }
+    if error == "" { file.revision = value.revision }
+    error
+}
+fn topics_commit(next){
+    next.revision = topic_records.revision + 1
+    let error = tracking_store_write(topic_file, next, topic_document_valid)
+    if error == "" { topic_records = next }
+    error
+}
+fn topic_find(id){ for item in topic_records.topics { if item.topic_id == id { return item } } nil }
+fn topic_new_draft(id){
+    let draft = {draft_id: "draft-" + time_now() version: 1 target_topic_id: nil target_version: nil
+        original_input: "" supplement: "" understanding: nil state: "editing" question: "" origin_reminder_id: nil}
+    let topic = topic_find(id)
+    if topic != nil {
+        draft.target_topic_id = topic.topic_id draft.target_version = topic.version
+        draft.original_input = topic.original_input draft.supplement = topic.supplement
+        draft.understanding = topic.to_json().parse_json()
+    }
+    draft
+}
+fn topic_save_draft(draft){
+    let next = topic_records.to_json().parse_json() next.draft = draft.to_json().parse_json()
+    topics_commit(next)
+}
+fn topic_set_status(id, version, status){
+    let current = topic_find(id)
+    if current == nil { return "关注已不存在" }
+    if current.version != version { return "关注版本已变化，请重新查看" }
+    let next = topic_records.to_json().parse_json()
+    for item in next.topics { if item.topic_id == id { item.status = status item.version = item.version + 1 item.updated_at = time_now() } }
+    topics_commit(next)
+}
+fn topic_confirm(draft){
+    if draft.state != "ready" || !topic_understanding_valid(draft.understanding) { return "请先取得待确认的理解结果" }
+    let current = topic_find(draft.target_topic_id)
+    if draft.target_topic_id != nil {
+        if current == nil { return "原关注已不存在，请重新打开" }
+        if current.version != draft.target_version { return "原关注版本已变化，请重新打开修改" }
+    } else if topic_records.topics.len() >= tracking_config.max_topics { return "已达到20个专题上限，原关注保留" }
+    let next = topic_records.to_json().parse_json()
+    let topic = draft.understanding.to_json().parse_json()
+    topic.topic_id = "topic-" + draft.draft_id topic.version = 1
+    topic.original_input = draft.original_input topic.supplement = draft.supplement
+    topic.created_at = time_now() topic.updated_at = time_now() topic.status = "active"
+    if current != nil { topic.topic_id = current.topic_id topic.version = current.version + 1 topic.created_at = current.created_at }
+    next.topics.retain(|item| item.topic_id != topic.topic_id) next.topics.push(topic) next.draft = nil
+    if draft.origin_reminder_id != nil {
+        let reminder = tracking_find_reminder(draft.origin_reminder_id)
+        if reminder == nil { return "提醒已过期，请重新查看依据" }
+        let error = tracking_check_reminder(reminder)
+        if error != "" { return error }
+        if next.decisions.len() >= tracking_config.max_decisions { return "决定记录已达上限，未保存" }
+        next.decisions.push(tracking_decision(reminder, "followed"))
+    }
+    topics_commit(next)
+}
