@@ -302,6 +302,8 @@ Matrix 的 `m.secret_storage.default_key` / `moments.preferences` 账户数据 4
 
 `python3 scripts/test_runtime.py --live-minimax` 读取 `MINIMAX_API_KEY`、`--minimax-key-file` 指定的私有文件或已保存的 Rinx MiniMax 密钥；均没有时使用隐藏输入。默认启动固定 Rinx，支持桌面和移动导航，自动填写本项目 bundle 的绝对地址及模型配置、执行 Review / Run，再请求测试意图。`--rinx-data-dir` 指定已有 Matrix 登录的数据目录；`--rinx-remote-port` 可复用正在运行的 Rinx 本机 remote 端口。脚本不自动登录、不绕过账户准入，也不确认保存测试关注；成功后丢弃测试草稿，已有非空用户草稿保留并注明未测试业务。
 
+默认自动测试在结束（含超时）后请求退出自己启动的 Rinx，会明确输出清理提示。不要同时手动输入；使用 `--live-minimax --minimax-manual` 只自动配置并启动，之后由你操作，关闭窗口才结束命令。手动模式不会自动填写、提交或清理草稿，也不等待意图控件。复用已有 remote 实例时不关闭该宿主。自动点击等待连续快照中的控件位置一致；失败报告包含阶段、控件类型/ID/位置和宿主退出原因，不包含控件文本、密钥或草稿。
+
 默认 `MiniMax-M3` 使用模型自带思考；`reasoning_effort` 的分档控制仅对 Flash Preview 生效。本次账号的 Flash Preview 返回 unknown model；显式选择该模型时失败会如实报告，不偷偷切换模型。Flash 配置通过固定 Octos 支持的 `primary.reasoning_effort=max` 和 `model_hints.reasoning_style=effort_max_only` 发送 max；通用 effort 方言会降为 high，因此不能直接用于本例。每次配置仍写入 Rinx 自己的 profile，不给应用 turn 参数增加未实现字段。
 
 Linux 桌面 GPU 抓图不稳定时，可用已安装的 Xvfb/软件 OpenGL 运行原生测试：`xvfb-run -a env -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 python3 scripts/test_runtime.py --suites tracking --inspect-ui --timeout-seconds 120`。截图失败与模型验证分别记录；截图失败不代表模型成功，固定输入通过也不代表真实模型成功。

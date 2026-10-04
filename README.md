@@ -64,6 +64,8 @@ python scripts/package.py
 
 ```bash
 python3 scripts/test_runtime.py --live-minimax
+# 自动配置后由你操作；窗口保持打开，关闭 Rinx 才结束命令
+python3 scripts/test_runtime.py --live-minimax --minimax-manual
 # 首次可从私有文件读取，或设置 MINIMAX_API_KEY；不要把密钥放在命令参数中。
 python3 scripts/test_runtime.py --live-minimax --minimax-key-file /path/to/private-key-file
 # 验证真实日程理解预览（不确认保存测试日程）
@@ -72,7 +74,7 @@ python3 scripts/test_runtime.py --live-minimax --minimax-intent schedule
 python3 scripts/test_runtime.py --live-minimax --minimax-api-only
 ```
 
-入口自动填写 bundle 地址、提供方、模型、Base URL 和密钥，执行 Use this device / Review / Run，再验证真实意图回复能通过应用校验；不会确认保存测试关注或日程。已有非空用户草稿保留，跳过意图测试并在报告中说明。密钥只保存在宿主私有配置，报告和日志脱敏。M3.1 Flash Preview 可用 `--minimax-model MiniMax-M3.1-Flash-Preview` 明确选择；本次密钥实测 M3 可用，Flash Preview 返回 unknown model。该模式与固定输入 suites 分开，报告在 `.test-state/live-minimax-*/report.json`。
+入口自动填写 bundle 地址、提供方、模型、Base URL 和密钥，执行 Use this device / Review / Run，再验证真实意图回复能通过应用校验；不会确认保存测试关注或日程。**默认自动测试会控制界面，并在成功或失败后关闭自己启动的 Rinx。手动体验请加 `--minimax-manual`**：只配置和启动，不填写、提交或丢弃草稿，窗口保持打开；关闭 Rinx 或 Ctrl+C 结束命令。已有非空用户草稿保留，自动模式跳过意图测试并在报告中说明。报告记录失败阶段、缺失控件、原生退出码以及是否由测试清理关闭；控件诊断不记录文本。密钥只保存在宿主私有配置，报告和日志脱敏。M3.1 Flash Preview 可用 `--minimax-model MiniMax-M3.1-Flash-Preview` 明确选择；本次密钥实测 M3 可用，Flash Preview 返回 unknown model。该模式与固定输入 suites 分开，报告在 `.test-state/live-minimax-*/report.json`。
 
 可用 `--suites` 只检查受改动影响的数据模块；feed 与 tracking 场景使用实际应用 UI，分别单独运行；tracking 执行实际 BM25、校验、存储和请求状态代码，只有宿主/模型回复替换为明确标记的固定输入。`--restart` 启动全新原生进程，核对关注、草稿、决定和旧记录恢复。原生测试使用独立 `.test-state/` 和固定输入，不调用真实模型，也不在应用启动时运行；通过这些检查不代表真实账户导入、实时模型或 App Hub 发布通过。软件渲染较慢时可明确使用 `--timeout-seconds 120`。当前实现、已知问题、最近验证和人工验收清单统一见 [验收记录](docs/acceptance.md)。
 

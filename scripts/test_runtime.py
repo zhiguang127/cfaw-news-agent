@@ -493,6 +493,8 @@ def run():
             parser.error('--live-minimax is a separate real-service test; omit fixture suite flags')
         try:
             run_live(args)
+        except KeyboardInterrupt:
+            raise SystemExit(130) from None
         except (OSError, ValueError, RuntimeError) as error:
             raise SystemExit(str(error)) from None
         return
