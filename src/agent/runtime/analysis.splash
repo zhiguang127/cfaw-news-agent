@@ -46,6 +46,7 @@ fn analysis_finish(state, message, category){
         start_timeout(0.01, || analysis_batch_next_if(generation))
     }
     render_analysis_controls()
+    render_feed()
 }
 
 fn analysis_stop(state, message, category){
