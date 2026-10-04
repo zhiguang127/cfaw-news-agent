@@ -56,7 +56,7 @@ fn analysis_make_snapshot(row){
     let active = []
     let selected = []
     // Prefer explicit title matches, then upcoming plans in start-time order.
-    for item in user_schedules { if schedule_active(item) { active.push(item) } }
+    for item in user_schedules { if schedule_is_user_record(item) && schedule_active(item) { active.push(item) } }
     for item in active {
         let matcher = regex(literal_pattern(item.title), "i")
         if selected.len() < 8 && (matcher.test(row.title) || matcher.test(row.summary)) { selected.push(item) }

@@ -6,7 +6,7 @@ let TrackingHeader = View{visible: false width: Fill height: Fit flow: Down padd
     tracking_analysis_actions := View{width: Fill height: Fit flow: Down spacing: 6 on_render: || {
         Small{text: analysis_check_status() max_lines: 2}
         View{width: Fill height: Fit flow: Right spacing: 8
-            if !analysis_has_focus() { SecondaryButton{text: "添加关注" on_click: || manage_tracking()} }
+            if !analysis_has_focus() { SecondaryButton{text: "添加关注" on_click: || intent_begin(nil)} }
             else if analysis_busy { SecondaryButton{text: "停止检查" on_click: || analysis_cancel()} }
             else { SecondaryButton{text: "检查关注更新" on_click: || analyze_changes()} }
             QuietButton{text: "查看分析与建议" on_click: || show_analysis_results()}
@@ -16,30 +16,18 @@ let TrackingHeader = View{visible: false width: Fill height: Fit flow: Down padd
 let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
     ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 12
         Heading{text: "关注你想持续了解的变化"}
-        Small{text: "添加主题、关键词或来源，相关新闻会在首页优先展示。"}
+        Small{text: "用自己的话说明目的、范围和偏好。确认理解后，新闻围绕你的意图展开。"}
         Primary{text: "表达关注 / 继续草稿" on_click: || intent_begin(nil)}
-        Section{text: "添加关键词（规则匹配）"}
-        keyword_input := Search{empty_text: "例如：端侧 AI、NVIDIA（每次添加一个）" on_change: |text| {keyword_draft = text}}
-        Primary{text: "添加关注" on_click: || add_keyword()}
-        Section{text: "关注主题"}
-        topic_list := View{width: Fill height: Fit flow: Down spacing: 4 on_render: || {
-            for item in category_filters {
-                if item.id != "all" {
-                    View{width: Fill height: 34 flow: Right align: Align{y: 0.5}
-                        Text{text: category_label(item.id)}
-                        if records_has_interest("category", item.id) { LinkButton{text: "已关注" on_click: || toggle_topic(item.id)} }
-                        else { QuietButton{text: "关注" on_click: || toggle_topic(item.id)} }
-                    }
-                }
-            }
-        }}
-        Divider{}
         Section{text: "我的关注"}
         interest_list := View{width: Fill height: Fit flow: Down spacing: 4 on_render: || {
-            if user_interests.len() == 0 && topic_records.topics.len() == 0 { Small{text: "尚未添加关注。也可在新闻条目上关注来源。"} }
+            let has_topics = false
+            for topic in topic_records.topics { if topic_is_user_record(topic) { has_topics = true } }
+            if user_interests.len() == 0 && !has_topics { Small{text: "尚未添加关注。也可在新闻条目上关注来源。"} }
             for topic in topic_records.topics {
-                View{width: Fill height: Fit flow: Down spacing: 4
-                    Text{text: topic.title}
+                if !topic_is_user_record(topic) { continue }
+                Box{
+                    Section{text: topic.title draw_text.color: accent}
+                    if topic.purpose != "" { Text{text: topic.purpose} }
                     Small{text: topic.original_input}
                     let status_label = "关注中" if topic.status == "paused" { status_label = "已暂停" }
                     Small{text: "版本 " + topic.version + " · " + status_label}
@@ -57,7 +45,7 @@ let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
                     View{width: Fill height: Fit flow: Down spacing: 2
                         if item.kind == "category" { Text{text: category_label(item.value)} }
                         else { Text{text: item.value} }
-                        if item.kind == "keyword" { Small{text: "标题 / 摘要关键词 · 忽略英文大小写"} }
+                        if item.kind == "keyword" { Small{text: "已保存的关注词"} }
                         if item.kind == "source" { Small{text: "新闻发布方"} }
                         if item.kind == "category" { Small{text: "新闻源所属主题"} }
                     }

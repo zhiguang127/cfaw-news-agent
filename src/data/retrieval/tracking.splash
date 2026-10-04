@@ -1,6 +1,6 @@
 // Lexical recall, not semantic indexing. Stable feed order, unique article IDs.
 fn topic_rule_matches(row, topic){
-    if topic.status != "active" { return [] }
+    if topic.status != "active" || !topic_is_user_record(topic) { return [] }
     let rules = []
     for i rule in topic.recall_rules { rules.push({interest_id: topic.topic_id + ":" + i kind: rule.kind value: rule.value enabled: true}) }
     interest_matches(row, rules)
@@ -30,12 +30,12 @@ fn tracking_target_checked(kind, id, version){
 fn tracking_targets(){
     let units = []
     for item in user_schedules {
-        if schedule_active(item) && schedule_instant(item.end) >= time_now() {
+        if schedule_is_user_record(item) && schedule_active(item) && schedule_instant(item.end) >= time_now() {
             units.push({kind: "schedule" item: item checked_at: tracking_target_checked("schedule", item.schedule_id, item.version)})
         }
     }
     for item in topic_records.topics {
-        if item.status == "active" { units.push({kind: "topic" item: item checked_at: tracking_target_checked("topic", item.topic_id, item.version)}) }
+        if topic_is_user_record(item) && item.status == "active" { units.push({kind: "topic" item: item checked_at: tracking_target_checked("topic", item.topic_id, item.version)}) }
     }
     let legacy = [] for item in user_interests { if item.enabled { legacy.push(item) } }
     if legacy.len() > 0 { units.push({kind: "legacy" item: legacy checked_at: tracking_target_checked("legacy", legacy[0].interest_id, 1)}) }

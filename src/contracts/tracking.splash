@@ -43,3 +43,8 @@ fn tracking_evidence_key(row){
     {news_id: row.news_id title: row.title summary: row.summary source_url: row.source_url
         published_at: row.published_at timestamp_kind: row.timestamp_kind evidence_kind: row.evidence_kind references: row.references}.to_json()
 }
+
+// Compatibility for saved starter records. Never delete user files. An edited
+// starter (version > 1) is user-owned and remains visible and usable.
+fn topic_is_user_record(item){ item.topic_id != "preset-agent-development-v1" || item.version > 1 }
+fn schedule_is_user_record(item){ item.schedule_id != "preset-shanghai-trip-v1" || item.version > 1 }

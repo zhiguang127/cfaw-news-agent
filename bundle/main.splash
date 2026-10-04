@@ -95,6 +95,11 @@ fn tracking_evidence_key(row){
     {news_id: row.news_id title: row.title summary: row.summary source_url: row.source_url
         published_at: row.published_at timestamp_kind: row.timestamp_kind evidence_kind: row.evidence_kind references: row.references}.to_json()
 }
+
+// Compatibility for saved starter records. Never delete user files. An edited
+// starter (version > 1) is user-owned and remains visible and usable.
+fn topic_is_user_record(item){ item.topic_id != "preset-agent-development-v1" || item.version > 1 }
+fn schedule_is_user_record(item){ item.schedule_id != "preset-shanghai-trip-v1" || item.version > 1 }
 // END src/contracts/tracking.splash
 
 // BEGIN src/contracts/weather.splash
@@ -1385,7 +1390,7 @@ fn news_filter(rows, interests, category, followed_only, query){
 // BEGIN src/data/retrieval/tracking.splash
 // Lexical recall, not semantic indexing. Stable feed order, unique article IDs.
 fn topic_rule_matches(row, topic){
-    if topic.status != "active" { return [] }
+    if topic.status != "active" || !topic_is_user_record(topic) { return [] }
     let rules = []
     for i rule in topic.recall_rules { rules.push({interest_id: topic.topic_id + ":" + i kind: rule.kind value: rule.value enabled: true}) }
     interest_matches(row, rules)
@@ -1415,12 +1420,12 @@ fn tracking_target_checked(kind, id, version){
 fn tracking_targets(){
     let units = []
     for item in user_schedules {
-        if schedule_active(item) && schedule_instant(item.end) >= time_now() {
+        if schedule_is_user_record(item) && schedule_active(item) && schedule_instant(item.end) >= time_now() {
             units.push({kind: "schedule" item: item checked_at: tracking_target_checked("schedule", item.schedule_id, item.version)})
         }
     }
     for item in topic_records.topics {
-        if item.status == "active" { units.push({kind: "topic" item: item checked_at: tracking_target_checked("topic", item.topic_id, item.version)}) }
+        if topic_is_user_record(item) && item.status == "active" { units.push({kind: "topic" item: item checked_at: tracking_target_checked("topic", item.topic_id, item.version)}) }
     }
     let legacy = [] for item in user_interests { if item.enabled { legacy.push(item) } }
     if legacy.len() > 0 { units.push({kind: "legacy" item: legacy checked_at: tracking_target_checked("legacy", legacy[0].interest_id, 1)}) }
@@ -2797,7 +2802,7 @@ fn analysis_make_snapshot(row){
     let active = []
     let selected = []
     // Prefer explicit title matches, then upcoming plans in start-time order.
-    for item in user_schedules { if schedule_active(item) { active.push(item) } }
+    for item in user_schedules { if schedule_is_user_record(item) && schedule_active(item) { active.push(item) } }
     for item in active {
         let matcher = regex(literal_pattern(item.title), "i")
         if selected.len() < 8 && (matcher.test(row.title) || matcher.test(row.summary)) { selected.push(item) }
@@ -3714,7 +3719,6 @@ let suggestion_focus_id = nil
 let page = "feed"
 let category = "all"
 let query = ""
-let keyword_draft = ""
 let page_filters = {feed: {category: "all" query: ""} tracking: {category: "all" query: ""} saved: {category: "all" query: ""}}
 let reading = nil
 let detail_kind = ""
@@ -3914,6 +3918,7 @@ fn render_main_now(){
     ui.feed_tab_active.set_visible(page != "schedule")
     ui.schedule_tab_active.set_visible(page == "schedule")
     ui.feed_filters.set_visible(page == "feed")
+    ui.intent_workbench.set_visible(page == "feed")
     ui.tracking_header.set_visible(page == "tracking")
     ui.bookmarks_header.set_visible(page == "saved")
     ui.search_box.set_visible(page != "schedule")
@@ -4155,9 +4160,9 @@ fn refresh_sources(ids){
     sync_status()
 }
 fn analysis_has_focus(){
-    for item in topic_records.topics { if item.status == "active" { return true } }
+    for item in topic_records.topics { if topic_is_user_record(item) && item.status == "active" { return true } }
     for interest in user_interests { if interest.enabled { return true } }
-    for schedule in user_schedules { if schedule_active(schedule) { return true } }
+    for schedule in user_schedules { if schedule_is_user_record(schedule) && schedule_active(schedule) { return true } }
     false
 }
 
@@ -4171,6 +4176,7 @@ fn render_analysis_controls(){
     ui.pending_suggestions.set_visible(count > 0 && page == "feed" && detail_kind == "")
     ui.pending_suggestions.set_text("" + count + " 项日程影响待关注 ›")
     ui.manage_tracking_button.set_visible(analysis_has_focus())
+    if page == "feed" && detail_kind == "" { ui.intent_workbench_content.render() }
     if page == "tracking" { ui.tracking_analysis_actions.render() }
 }
 fn analysis_check_status(){
@@ -4243,7 +4249,7 @@ fn toggle_save(row){
 fn render_detail(){
     if detail_kind == "story" { ui.story_content.render() }
     if detail_kind == "settings" { ui.source_list.render() }
-    if detail_kind == "tracking" { ui.interest_list.render() ui.topic_list.render() }
+    if detail_kind == "tracking" { ui.interest_list.render() }
     ui.story_panel.set_visible(detail_kind == "story")
     ui.settings_panel.set_visible(detail_kind == "settings")
     ui.tracking_panel.set_visible(detail_kind == "tracking")
@@ -4305,21 +4311,7 @@ fn show_settings(){ notice("") settings_show_diagnostics = false ui.diagnostics_
 fn close_menu(){ menu_open = false ui.menu_panel.set_visible(false) }
 fn toggle_menu(){ menu_open = !menu_open ui.menu_panel.set_visible(menu_open) }
 fn manage_tracking(){ notice("") show_detail("tracking", "管理关注") }
-fn add_keyword(){
-    analysis_check_message = ""
-    let error = records_add_interest("keyword", keyword_draft)
-    notice(error)
-    if error == "" { keyword_draft = "" ui.keyword_input.set_text("") }
-    render_detail()
-    render_feed()
-    tracking_schedule_check()
-}
 fn remove_interest(id){ analysis_check_message = "" notice(records_remove_interest(id)) render_detail() render_feed() tracking_schedule_check() }
-fn toggle_topic(id){
-    analysis_check_message = ""
-    if records_has_interest("category", id) { remove_interest("category:" + id) }
-    else { notice(records_add_interest("category", id)) render_detail() render_feed() tracking_schedule_check() }
-}
 fn toggle_source(id){
     analysis_check_message = ""
     if busy { feed_cancel() busy = false }
@@ -4333,7 +4325,7 @@ fn toggle_source(id){
 // Application owns result publication, reminder decisions and version checks.
 let tracking_recall_generation = 0
 let tracking_status = "idle"
-let tracking_message = "尚未检查；未分析的条目只显示规则匹配"
+let tracking_message = "确认你的意图后，检查相关变化与日程影响"
 let tracking_auto_timer = nil
 let tracking_check_pending = false
 let tracking_pending_run = nil
@@ -4554,7 +4546,7 @@ fn tracking_start(row){
     tracking_recall_generation = tracking_recall_generation + 1
     let generation = tracking_recall_generation
     let context_key = tracking_context_key()
-    tracking_status = "recalling" tracking_message = "BM25 正在筛选候选新闻…"
+    tracking_status = "recalling" tracking_message = "正在寻找与你意图有关的新消息…"
     bm25_recall(rows, targets, || generation == tracking_recall_generation && context_key == tracking_context_key() && !intent_open, fn(candidates){
         tracking_start_candidates(candidates, targets)
     })
@@ -4615,7 +4607,7 @@ fn tracking_ui_update(){
     render_feed() render_analysis_controls()
     if detail_kind == "story" { ui.story_content.render() }
     if detail_kind == "results" { ui.results_content.render() }
-    if detail_kind == "tracking" { ui.interest_list.render() ui.topic_list.render() }
+    if detail_kind == "tracking" { ui.interest_list.render() }
     if detail_kind == "intent" { ui.intent_content.render() }
 }
 // END src/app/tracking.splash
@@ -4741,56 +4733,6 @@ fn topic_toggle_pause(id, version, status){
     tracking_ui_update()
 }
 // END src/app/intents.splash
-
-// BEGIN src/app/presets.splash
-// User-requested starter records, not fixture news or Agent conclusions.
-// A separate receipt prevents restart, cancellation or removal from reseeding.
-let presets_file = {path: "app_presets_v1.json" writable: true recovered: false revision: 0}
-fn presets_valid(value){
-    record_object(value) && value["schema_version"] == 1 && record_number(value["revision"])
-        && value["applied"] == true && record_number(value["initialized_at"])
-}
-fn app_presets_initialize(){
-    let receipt = tracking_store_read(presets_file, presets_valid)
-    if receipt != nil { return "" }
-    if !presets_file.writable && !presets_file.recovered { return "预设状态文件不可读，原文件已保留；未添加预设" }
-    let initialized_at = time_now()
-    let topic_id = "preset-agent-development-v1"
-    let existing = topic_find(topic_id)
-    if existing == nil {
-        if topic_records.topics.len() >= tracking_config.max_topics { return "关注已达上限，未添加 Agent 预设" }
-        let next = topic_records.to_json().parse_json()
-        let topic = {topic_id: topic_id version: 1 original_input: "关注 Agent 领域发展" supplement: ""
-            title: "Agent 领域发展（预设）" purpose: "" preferences: []
-            recall_rules: [{kind: "keyword" value: "Agent"} {kind: "keyword" value: "智能体"}
-                {kind: "keyword" value: "agentic"} {kind: "keyword" value: "智能代理"}]
-            status: "active" created_at: initialized_at updated_at: initialized_at}
-        topic["scope"] = ["Agent 框架与工具" "智能体能力和应用" "Agent 生态发展"]
-        next.topics.push(topic)
-        let error = topics_commit(next)
-        if error != "" { return "Agent 预设未保存：" + error }
-    } else { initialized_at = existing.created_at }
-    let error = schedule_refresh()
-    if error != "" { return "上海出差预设未保存：" + error }
-    if schedule_find("preset-shanghai-trip-v1") == nil {
-        if user_schedules.len() >= 128 { return "日程已达上限，未添加上海出差预设" }
-        // Shanghai calendar date, fourteen days after the first installation.
-        let date = schedule_date_at(initialized_at + (14 * 86400) + (8 * 3600))
-        let next_date = schedule_date_at(schedule_instant(date + "T00:00:00Z") + 86400)
-        let item = {schedule_id: "preset-shanghai-trip-v1" version: 1 title: "上海出差（预设）"
-            content: "两周后去上海出差。具体起止时间、班次和返程待补充；当前全天范围仅用于当天相关新闻筛选。"
-            location: "上海" start: date + "T00:00:00+08:00" end: next_date + "T00:00:00+08:00"
-            timezone: "Asia/Shanghai" status: "active" allow_reschedule: false time_precision: "day"}
-        let previous = user_schedules.to_json()
-        user_schedules.push(item)
-        error = schedule_write()
-        if error != "" { user_schedules = previous.parse_json() return "上海出差预设未保存：" + error }
-    }
-    error = tracking_store_write(presets_file, {schema_version: 1 revision: 1 applied: true initialized_at: initialized_at}, presets_valid)
-    if error != "" { return "预设已写入，但初始化状态未保存：" + error }
-    ""
-}
-// END src/app/presets.splash
 
 // BEGIN src/app/feed_presentation.splash
 // Prepare relevance before drawing. The feed stays a single stable news list.
@@ -5051,9 +4993,9 @@ fn weather_update_selected(){
 // BEGIN src/frontend/styles.splash
 let ink = #x202126
 let secondary = #x666873
-let accent = #x515db4
+let accent = #x6655d8
 let line = #xeaeaf0
-let soft = #xf6f6f9
+let soft = #xf2f1fa
 let white = #xffffff
 let Text = Label{width: Fill padding: 0 draw_text.color: ink draw_text.text_style.font_size: 14 draw_text.text_style.line_spacing: 1.15}
 let Small = Text{draw_text.color: secondary draw_text.text_style.font_size: 11}
@@ -5093,6 +5035,19 @@ let FilterActive = Filter{
 }
 let Box = RoundedView{width: Fill height: Fit flow: Down padding: 16 spacing: 10
     show_bg: true draw_bg.color: soft draw_bg.border_radius: 12.0}
+let IntentSurface = RoundedView{width: Fill height: Fit flow: Down padding: 16 spacing: 9
+    show_bg: true draw_bg +: {
+        border_radius: 16.0
+        pixel: fn(){
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, 16.0)
+            sdf.fill(mix(#x202447, #x6655ad, self.pos.x * 0.65 + self.pos.y * 0.35))
+            return sdf.result
+        }
+    }
+}
+let IntentAction = Primary{height: 34 draw_bg +: {color: #xffd99a color_hover: #xffe6b9 color_down: #xf4ca85}
+    draw_text +: {color: #x302746 color_hover: #x302746 color_down: #x302746}}
 let Search = TextInput{width: Fill height: 32 empty_text: "搜索新闻"
     draw_bg +: {color: soft color_hover: soft color_focus: soft color_empty: soft
         border_color: #x00000000 border_color_hover: #x00000000 border_color_focus: #x00000000 border_color_empty: #x00000000 border_radius: 8.0}
@@ -5103,7 +5058,6 @@ let Search = TextInput{width: Fill height: 32 empty_text: "搜索新闻"
 // BEGIN src/frontend/components/news_list.splash
 let NewsList = ScrollYView{width: Fill height: Fill flow: Down on_render: || {
     for i row in display_rows {
-        let hint = row_match_hint(row)
         let agent_hint = row_agent_hint(row)
         let cache_note = row_cache_note(row)
         GestureView{width: Fill height: Fit flow: Down on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
@@ -5117,11 +5071,7 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down on_render: || {
                         Text{text: row.title max_lines: 3 draw_text.text_style.font_size: 14}
                     }
                     if agent_hint != nil {
-                        GestureView{width: Fill height: Fit on_tap: |x, y| open_feed_hint(row)
-                            Small{text: agent_hint.text + " ›" max_lines: 1 draw_text.color: accent}
-                        }
-                    } else if hint != "" {
-                        Small{text: hint max_lines: 1 draw_text.color: accent}
+                        HintButton{height: 24 text: agent_hint.text + " ›" on_click: || open_feed_hint(row)}
                     }
                     if cache_note != "" { Small{text: cache_note} }
                     View{width: Fill height: 28 flow: Right spacing: 10
@@ -5258,7 +5208,11 @@ let MenuPanel = View{visible: false width: Fill height: Fit flow: Down padding: 
 // BEGIN src/frontend/components/intent_panel.splash
 let IntentPanel = View{visible: false width: Fill height: Fill flow: Down
     intent_content := ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 10 on_render: || {
-        Heading{text: "让新闻围绕你的关注"}
+        IntentSurface{
+            Small{text: "01 意图  →  02 理解  →  03 持续关注" draw_text.color: #xd4cef2}
+            Heading{text: "把你的想法，变成关注" draw_text.color: white}
+            Small{text: "Agent 整理你的目的与偏好，由你确认后保存。" draw_text.color: #xe0dcf2}
+        }
         Small{text: "说明想了解什么、为什么关注，以及希望多看或少看的内容。一般兴趣也可以没有目的。"}
         if intent_draft != nil {
             Section{text: "你的原话"}
@@ -5303,6 +5257,34 @@ let IntentPanel = View{visible: false width: Fill height: Fill flow: Down
 // END src/frontend/components/intent_panel.splash
 
 // BEGIN src/frontend/pages/feed.splash
+let IntentWorkbench = View{width: Fill height: Fit flow: Down padding: Inset{left: 14 right: 14 top: 5 bottom: 8}
+    intent_workbench_content := View{width: Fill height: Fit flow: Down on_render: || {
+        let active = []
+        for topic in topic_records.topics { if topic_is_user_record(topic) && topic.status == "active" { active.push(topic) } }
+        IntentSurface{
+            View{width: Fill height: Fit flow: Right align: Align{y: 0.5}
+                Small{width: Fill text: "INTENT → INSIGHT → ACTION" draw_text.color: #xd4cef2 draw_text.text_style.font_size: 10}
+                Small{width: Fit text: "✦ 意图工作台" draw_text.color: #xffd99a}
+            }
+            Heading{text: "你的意图，就是新闻的方向" draw_text.color: white draw_text.text_style.font_size: 19}
+            Small{text: "告诉我你在做什么，让新信息连接下一步。" draw_text.color: #xe0dcf2}
+            View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
+                if topic_records.draft != nil { IntentAction{text: "继续我的意图  ↗" on_click: || intent_begin(nil)} }
+                else { IntentAction{text: "表达我的意图  ↗" on_click: || intent_begin(nil)} }
+                QuietButton{text: "我的关注" draw_text +: {color: white color_hover: white color_down: white} on_click: || manage_tracking()}
+                QuietButton{text: "变化" draw_text +: {color: #xffd99a color_hover: white color_down: white} on_click: || show_analysis_results()}
+            }
+            if active.len() > 0 {
+                Small{text: "正在关注 · " + active[0].title + "（" + active.len() + " 项意图）" max_lines: 1 draw_text.color: #xd4f2e6}
+            } else { Small{text: "01 表达意图   ·   02 确认理解   ·   03 查看变化" draw_text.color: #xd4cef2} }
+        }
+        View{width: Fill height: Fit flow: Right padding: Inset{left: 4 right: 4 top: 7} spacing: 8 align: Align{y: 0.5}
+            Small{width: Fill text: analysis_check_status() max_lines: 1}
+            if analysis_busy { LinkButton{text: "停止" on_click: || analysis_cancel()} }
+            else if analysis_has_focus() { LinkButton{text: "检查变化 ↻" on_click: || analyze_changes()} }
+        }
+    }}
+}
 let FeedFilters = View{width: Fill height: Fit flow: Down
     categories := View{width: Fill height: 32 flow: Right padding: Inset{left: 12 right: 12} spacing: 2 on_render: || {
         for item in category_filters {
@@ -5322,7 +5304,7 @@ let TrackingHeader = View{visible: false width: Fill height: Fit flow: Down padd
     tracking_analysis_actions := View{width: Fill height: Fit flow: Down spacing: 6 on_render: || {
         Small{text: analysis_check_status() max_lines: 2}
         View{width: Fill height: Fit flow: Right spacing: 8
-            if !analysis_has_focus() { SecondaryButton{text: "添加关注" on_click: || manage_tracking()} }
+            if !analysis_has_focus() { SecondaryButton{text: "添加关注" on_click: || intent_begin(nil)} }
             else if analysis_busy { SecondaryButton{text: "停止检查" on_click: || analysis_cancel()} }
             else { SecondaryButton{text: "检查关注更新" on_click: || analyze_changes()} }
             QuietButton{text: "查看分析与建议" on_click: || show_analysis_results()}
@@ -5332,30 +5314,18 @@ let TrackingHeader = View{visible: false width: Fill height: Fit flow: Down padd
 let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
     ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 12
         Heading{text: "关注你想持续了解的变化"}
-        Small{text: "添加主题、关键词或来源，相关新闻会在首页优先展示。"}
+        Small{text: "用自己的话说明目的、范围和偏好。确认理解后，新闻围绕你的意图展开。"}
         Primary{text: "表达关注 / 继续草稿" on_click: || intent_begin(nil)}
-        Section{text: "添加关键词（规则匹配）"}
-        keyword_input := Search{empty_text: "例如：端侧 AI、NVIDIA（每次添加一个）" on_change: |text| {keyword_draft = text}}
-        Primary{text: "添加关注" on_click: || add_keyword()}
-        Section{text: "关注主题"}
-        topic_list := View{width: Fill height: Fit flow: Down spacing: 4 on_render: || {
-            for item in category_filters {
-                if item.id != "all" {
-                    View{width: Fill height: 34 flow: Right align: Align{y: 0.5}
-                        Text{text: category_label(item.id)}
-                        if records_has_interest("category", item.id) { LinkButton{text: "已关注" on_click: || toggle_topic(item.id)} }
-                        else { QuietButton{text: "关注" on_click: || toggle_topic(item.id)} }
-                    }
-                }
-            }
-        }}
-        Divider{}
         Section{text: "我的关注"}
         interest_list := View{width: Fill height: Fit flow: Down spacing: 4 on_render: || {
-            if user_interests.len() == 0 && topic_records.topics.len() == 0 { Small{text: "尚未添加关注。也可在新闻条目上关注来源。"} }
+            let has_topics = false
+            for topic in topic_records.topics { if topic_is_user_record(topic) { has_topics = true } }
+            if user_interests.len() == 0 && !has_topics { Small{text: "尚未添加关注。也可在新闻条目上关注来源。"} }
             for topic in topic_records.topics {
-                View{width: Fill height: Fit flow: Down spacing: 4
-                    Text{text: topic.title}
+                if !topic_is_user_record(topic) { continue }
+                Box{
+                    Section{text: topic.title draw_text.color: accent}
+                    if topic.purpose != "" { Text{text: topic.purpose} }
                     Small{text: topic.original_input}
                     let status_label = "关注中" if topic.status == "paused" { status_label = "已暂停" }
                     Small{text: "版本 " + topic.version + " · " + status_label}
@@ -5373,7 +5343,7 @@ let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
                     View{width: Fill height: Fit flow: Down spacing: 2
                         if item.kind == "category" { Text{text: category_label(item.value)} }
                         else { Text{text: item.value} }
-                        if item.kind == "keyword" { Small{text: "标题 / 摘要关键词 · 忽略英文大小写"} }
+                        if item.kind == "keyword" { Small{text: "已保存的关注词"} }
                         if item.kind == "source" { Small{text: "新闻发布方"} }
                         if item.kind == "category" { Small{text: "新闻源所属主题"} }
                     }
@@ -5397,14 +5367,17 @@ let SchedulePage = View{visible: false width: Fill height: Fill flow: Down
         Small{text: "应用内日程；时间采用 24 小时制。"}
         if schedule_warning != "" { Small{text: schedule_warning draw_text.color: accent} }
         schedule_list := View{width: Fill height: Fit flow: Down spacing: 8 on_render: || {
-            if user_schedules.len() == 0 { Small{text: "暂无日程。添加安排后，Agent 可结合内容与地点分析影响。"} }
+            let has_schedules = false
+            for item in user_schedules { if schedule_is_user_record(item) { has_schedules = true } }
+            if !has_schedules { Small{text: "暂无日程。添加安排后，Agent 可结合内容与地点分析影响。"} }
             for item in user_schedules {
+                if !schedule_is_user_record(item) { continue }
                 View{width: Fill height: Fit flow: Down spacing: 3
                     Text{text: item.title}
                     if record_string(item["content"]) && item.content != "" { Small{text: item.content} }
                     if record_string(item["location"]) && item.location != "" { Small{text: "地点：" + item.location} }
                     if item["time_precision"] == "day" {
-                        Small{text: schedule_entry_parts(item.start, item.timezone).date + " · 具体时间待补充（按全天预设）"}
+                        Small{text: schedule_entry_parts(item.start, item.timezone).date + " · 具体时间待补充"}
                     } else { Small{text: schedule_display_time(item.start, item.timezone) + " → " + schedule_display_time(item.end, item.timezone)} }
                     Small{text: schedule_zone_label(item.timezone) + " · 24 小时制"}
                     Small{text: schedule_status_label(item)}
@@ -5831,10 +5804,13 @@ let WeatherPage = View{visible: false width: Fill height: Fill flow: Down
 // BEGIN src/frontend/app_view.splash
 HostedView{width: Fill height: Fill
     full: View{width: Fill height: Fill flow: Down show_bg: true draw_bg.color: white
-        View{width: Fill height: 70 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 14} spacing: 8
+        View{width: Fill height: 62 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 14} spacing: 8
             menu_button := MenuToggle{}
             menu_badge := Small{visible: false width: Fit text: "•" draw_text.color: accent}
-            Label{width: Fill text: "cfaw-news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18} max_lines: 1}
+            View{width: Fill height: Fit flow: Down spacing: 2
+                Label{text: "cfaw-news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18} max_lines: 1}
+                Small{text: "NEWS THAT MOVES YOU" draw_text.color: accent draw_text.text_style.font_size: 8}
+            }
             weather_widget := WeatherHeaderWidget{}
         }
         Divider{}
@@ -5850,6 +5826,7 @@ HostedView{width: Fill height: Fill
                     schedule_tab := Nav{height: 40 text: "日程" draw_text +: {color: ink color_focus: ink} on_click: || select_page("schedule")}
                 }
             }
+            intent_workbench := IntentWorkbench{}
             pending_suggestions := HintButton{visible: false height: 28 margin: Inset{left: 18 right: 18} text: "" on_click: || show_analysis_results()}
             feed_filters := FeedFilters{}
             tracking_header := TrackingHeader{}
@@ -5909,13 +5886,7 @@ fn boot(){
     schedules_load()
     history_load()
     topics_load()
-    // Seed on a fresh event so loading existing records and writing the
-    // starter records do not share the host's bounded execution slice.
-    start_timeout(0.01, || {
-        let error = app_presets_initialize()
-        if error != "" { topic_warning = topic_warning + " " + error }
-        boot_loaded()
-    })
+    start_timeout(0.01, || boot_loaded())
 }
 fn boot_loaded(){
     feed_initialize()

@@ -1,6 +1,5 @@
 let NewsList = ScrollYView{width: Fill height: Fill flow: Down on_render: || {
     for i row in display_rows {
-        let hint = row_match_hint(row)
         let agent_hint = row_agent_hint(row)
         let cache_note = row_cache_note(row)
         GestureView{width: Fill height: Fit flow: Down on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
@@ -14,11 +13,7 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down on_render: || {
                         Text{text: row.title max_lines: 3 draw_text.text_style.font_size: 14}
                     }
                     if agent_hint != nil {
-                        GestureView{width: Fill height: Fit on_tap: |x, y| open_feed_hint(row)
-                            Small{text: agent_hint.text + " ›" max_lines: 1 draw_text.color: accent}
-                        }
-                    } else if hint != "" {
-                        Small{text: hint max_lines: 1 draw_text.color: accent}
+                        HintButton{height: 24 text: agent_hint.text + " ›" on_click: || open_feed_hint(row)}
                     }
                     if cache_note != "" { Small{text: cache_note} }
                     View{width: Fill height: 28 flow: Right spacing: 10

@@ -217,7 +217,7 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
     if len(titles) < 3 or not any(w.get('t') == '240 条新闻' for w in widgets):
         raise SystemExit('Full-capacity native list is not visible')
     first = min(titles, key=lambda w: w['r'][1])
-    inline = next((w for w in widgets if w.get('ty') == 'Label' and w.get('t', '').startswith('Agent · 可能影响日程「Synthetic evaluation」')), None)
+    inline = next((w for w in widgets if w.get('ty') == 'Button' and w.get('t', '').startswith('Agent · 可能影响日程「Synthetic evaluation」')), None)
     if inline is None:
         raise SystemExit('Validated schedule impact is missing from its prioritized news row')
     click(inline)
@@ -240,7 +240,7 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
         raise SystemExit('Feed cannot be scrolled after repeated refreshes')
     click(next(w for w in scrolled if w.get('t') == '↑' and w.get('ty') != 'Label'))
     time.sleep(.3)
-    top = snapshot('feed-returned-top')
+    top = snapshot('feed-returned-top', lambda ws: any(w.get('t') == first['t'] and abs(w['r'][1] - first['r'][1]) < 1 for w in ws))
     if not any(w.get('t') == first['t'] and abs(w['r'][1] - first['r'][1]) < 1 for w in top):
         raise SystemExit('Return-to-top stopped working after repeated refreshes')
     click(next(w for w in top if w.get('t') == '收藏' and w.get('ty') != 'Label' and 180 < w['r'][1] < 650))
@@ -253,24 +253,20 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
         raise SystemExit('Deferred rendering lost the saved news row')
     click(next(w for w in bookmarks if w.get('t') == '首页' and w.get('ty') == 'Button'))
     menu_action('管理关注')
-    widgets = json.loads(get('/snap'))['s']
-    click(next(w for w in widgets if w.get('i') == 'keyword_input' and w.get('ty') == 'TextInput'))
-    get('/t', t='/1')
-    widgets = json.loads(get('/snap'))['s']
-    click(next(w for w in widgets if w.get('t') == '添加关注' and w.get('ty') == 'Button'))
-    widgets = json.loads(get('/snap'))['s']
-    click(next(w for w in widgets if w.get('t') == '‹ 返回' and w.get('ty') == 'Button'))
-    priority = snapshot('feed-priority', lambda ws: any(w.get('t') == '规则匹配 · 匹配关键词：/1' for w in ws))
-    ranked = sorted((w for w in priority if w.get('ty') == 'Label' and w.get('t', '').startswith('Synthetic capacity news')), key=lambda w: w['r'][1])
-    if not ranked or '/1' not in ranked[0]['t'] or ranked[0]['t'] == first['t']:
-        raise SystemExit('Followed news did not move to the top of the same feed')
-    if not any(w.get('t') == '规则匹配 · 匹配关键词：/1' for w in priority):
-        raise SystemExit('Prioritized rule match has no honest relevance explanation')
-    if any(w.get('ty') == 'Label' and w.get('t', '').startswith('Agent · 可能影响日程') for w in priority):
-        raise SystemExit('Context change left an old Agent impact in the feed')
+    managed = snapshot('feed-managed-interests')
+    if any(w.get('i') == 'keyword_input' or '规则匹配' in w.get('t', '') or '（预设）' in w.get('t', '') for w in managed if w.get('ty') != 'Splash'):
+        raise SystemExit('Removed rule editor or starter records remain visible')
+    if not any(w.get('t') == '表达关注 / 继续草稿' and w.get('ty') == 'Button' for w in managed):
+        raise SystemExit('Interest management lost the intent entry')
+    click(next(w for w in managed if w.get('t') == '‹ 返回' and w.get('ty') == 'Button'))
+    widgets = snapshot('feed-managed-returned')
+    click(next(w for w in widgets if w.get('t') == '关注来源' and w.get('ty') == 'Button'))
+    priority = snapshot('feed-priority', lambda ws: any(w.get('t') == '已跟踪' for w in ws))
+    if any('规则匹配' in w.get('t', '') for w in priority if w.get('ty') in ('Label', 'Button')):
+        raise SystemExit('Lexical recall leaked into product relevance hints')
     stored = json.loads((work / 'data/dev.cfaw.runtime-tests/interests_v1.json').read_text(encoding='utf-8'))
-    if not any(i.get('kind') == 'keyword' and i.get('value') == '/1' for i in stored['items']):
-        raise SystemExit('Interest management did not persist its rule')
+    if not any(i.get('kind') == 'source' for i in stored['items']):
+        raise SystemExit('Following a source did not persist')
     menu_action('关注动态')
     followed = snapshot('feed-followed')
     if not any('我的关注' in w.get('t', '') for w in followed):
@@ -363,7 +359,7 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
     titles = [w for w in home if w.get('ty') == 'Label' and w.get('t', '').startswith('固定测试：')]
     if len(titles) < 3:
         raise SystemExit('Tracking home no longer has a compact multi-item feed')
-    hint = next(w for w in home if w.get('ty') == 'Label' and w.get('t', '').startswith('Agent · 可能影响日程'))
+    hint = next(w for w in home if w.get('ty') == 'Button' and w.get('t', '').startswith('Agent · 可能影响日程'))
     click(hint)
     detail = snapshot('tracking-detail')
     if not any('2026-10-09' in w.get('t', '') for w in detail if w.get('ty') == 'Label'):
@@ -387,7 +383,7 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
     if len(record['topics']) != 2 or not any(d['state'] == 'followed' for d in record['decisions']):
         raise SystemExit('Confirmed follow did not persist topic and decision together')
     checks.append('confirmed scope persists topic and shared decision')
-    if any(w.get('ty') == 'Label' and w.get('t', '').startswith('Agent · 可能影响日程') for w in returned):
+    if any(w.get('ty') == 'Button' and w.get('t', '').startswith('Agent · 可能影响日程') for w in returned):
         raise SystemExit('Handled reminder still visible after confirmation')
     checks.append('home reminder updates after decision')
     # Menu -> draft input -> submit -> ready -> cancel -> resume existing draft.

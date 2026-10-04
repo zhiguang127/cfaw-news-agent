@@ -4,14 +4,17 @@ let SchedulePage = View{visible: false width: Fill height: Fill flow: Down
         Small{text: "应用内日程；时间采用 24 小时制。"}
         if schedule_warning != "" { Small{text: schedule_warning draw_text.color: accent} }
         schedule_list := View{width: Fill height: Fit flow: Down spacing: 8 on_render: || {
-            if user_schedules.len() == 0 { Small{text: "暂无日程。添加安排后，Agent 可结合内容与地点分析影响。"} }
+            let has_schedules = false
+            for item in user_schedules { if schedule_is_user_record(item) { has_schedules = true } }
+            if !has_schedules { Small{text: "暂无日程。添加安排后，Agent 可结合内容与地点分析影响。"} }
             for item in user_schedules {
+                if !schedule_is_user_record(item) { continue }
                 View{width: Fill height: Fit flow: Down spacing: 3
                     Text{text: item.title}
                     if record_string(item["content"]) && item.content != "" { Small{text: item.content} }
                     if record_string(item["location"]) && item.location != "" { Small{text: "地点：" + item.location} }
                     if item["time_precision"] == "day" {
-                        Small{text: schedule_entry_parts(item.start, item.timezone).date + " · 具体时间待补充（按全天预设）"}
+                        Small{text: schedule_entry_parts(item.start, item.timezone).date + " · 具体时间待补充"}
                     } else { Small{text: schedule_display_time(item.start, item.timezone) + " → " + schedule_display_time(item.end, item.timezone)} }
                     Small{text: schedule_zone_label(item.timezone) + " · 24 小时制"}
                     Small{text: schedule_status_label(item)}

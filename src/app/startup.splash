@@ -3,13 +3,7 @@ fn boot(){
     schedules_load()
     history_load()
     topics_load()
-    // Seed on a fresh event so loading existing records and writing the
-    // starter records do not share the host's bounded execution slice.
-    start_timeout(0.01, || {
-        let error = app_presets_initialize()
-        if error != "" { topic_warning = topic_warning + " " + error }
-        boot_loaded()
-    })
+    start_timeout(0.01, || boot_loaded())
 }
 fn boot_loaded(){
     feed_initialize()

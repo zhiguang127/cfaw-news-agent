@@ -1,7 +1,7 @@
 // Application owns result publication, reminder decisions and version checks.
 let tracking_recall_generation = 0
 let tracking_status = "idle"
-let tracking_message = "尚未检查；未分析的条目只显示规则匹配"
+let tracking_message = "确认你的意图后，检查相关变化与日程影响"
 let tracking_auto_timer = nil
 let tracking_check_pending = false
 let tracking_pending_run = nil
@@ -222,7 +222,7 @@ fn tracking_start(row){
     tracking_recall_generation = tracking_recall_generation + 1
     let generation = tracking_recall_generation
     let context_key = tracking_context_key()
-    tracking_status = "recalling" tracking_message = "BM25 正在筛选候选新闻…"
+    tracking_status = "recalling" tracking_message = "正在寻找与你意图有关的新消息…"
     bm25_recall(rows, targets, || generation == tracking_recall_generation && context_key == tracking_context_key() && !intent_open, fn(candidates){
         tracking_start_candidates(candidates, targets)
     })
@@ -283,6 +283,6 @@ fn tracking_ui_update(){
     render_feed() render_analysis_controls()
     if detail_kind == "story" { ui.story_content.render() }
     if detail_kind == "results" { ui.results_content.render() }
-    if detail_kind == "tracking" { ui.interest_list.render() ui.topic_list.render() }
+    if detail_kind == "tracking" { ui.interest_list.render() }
     if detail_kind == "intent" { ui.intent_content.render() }
 }

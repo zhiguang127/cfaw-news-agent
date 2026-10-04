@@ -1,9 +1,12 @@
 HostedView{width: Fill height: Fill
     full: View{width: Fill height: Fill flow: Down show_bg: true draw_bg.color: white
-        View{width: Fill height: 70 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 14} spacing: 8
+        View{width: Fill height: 62 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 14} spacing: 8
             menu_button := MenuToggle{}
             menu_badge := Small{visible: false width: Fit text: "•" draw_text.color: accent}
-            Label{width: Fill text: "cfaw-news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18} max_lines: 1}
+            View{width: Fill height: Fit flow: Down spacing: 2
+                Label{text: "cfaw-news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18} max_lines: 1}
+                Small{text: "NEWS THAT MOVES YOU" draw_text.color: accent draw_text.text_style.font_size: 8}
+            }
             weather_widget := WeatherHeaderWidget{}
         }
         Divider{}
@@ -19,6 +22,7 @@ HostedView{width: Fill height: Fill
                     schedule_tab := Nav{height: 40 text: "日程" draw_text +: {color: ink color_focus: ink} on_click: || select_page("schedule")}
                 }
             }
+            intent_workbench := IntentWorkbench{}
             pending_suggestions := HintButton{visible: false height: 28 margin: Inset{left: 18 right: 18} text: "" on_click: || show_analysis_results()}
             feed_filters := FeedFilters{}
             tracking_header := TrackingHeader{}

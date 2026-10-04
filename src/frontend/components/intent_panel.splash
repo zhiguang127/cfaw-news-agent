@@ -1,6 +1,10 @@
 let IntentPanel = View{visible: false width: Fill height: Fill flow: Down
     intent_content := ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 10 on_render: || {
-        Heading{text: "让新闻围绕你的关注"}
+        IntentSurface{
+            Small{text: "01 意图  →  02 理解  →  03 持续关注" draw_text.color: #xd4cef2}
+            Heading{text: "把你的想法，变成关注" draw_text.color: white}
+            Small{text: "Agent 整理你的目的与偏好，由你确认后保存。" draw_text.color: #xe0dcf2}
+        }
         Small{text: "说明想了解什么、为什么关注，以及希望多看或少看的内容。一般兴趣也可以没有目的。"}
         if intent_draft != nil {
             Section{text: "你的原话"}

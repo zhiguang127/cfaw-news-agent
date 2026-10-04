@@ -4,7 +4,6 @@ let suggestion_focus_id = nil
 let page = "feed"
 let category = "all"
 let query = ""
-let keyword_draft = ""
 let page_filters = {feed: {category: "all" query: ""} tracking: {category: "all" query: ""} saved: {category: "all" query: ""}}
 let reading = nil
 let detail_kind = ""
@@ -204,6 +203,7 @@ fn render_main_now(){
     ui.feed_tab_active.set_visible(page != "schedule")
     ui.schedule_tab_active.set_visible(page == "schedule")
     ui.feed_filters.set_visible(page == "feed")
+    ui.intent_workbench.set_visible(page == "feed")
     ui.tracking_header.set_visible(page == "tracking")
     ui.bookmarks_header.set_visible(page == "saved")
     ui.search_box.set_visible(page != "schedule")
@@ -445,9 +445,9 @@ fn refresh_sources(ids){
     sync_status()
 }
 fn analysis_has_focus(){
-    for item in topic_records.topics { if item.status == "active" { return true } }
+    for item in topic_records.topics { if topic_is_user_record(item) && item.status == "active" { return true } }
     for interest in user_interests { if interest.enabled { return true } }
-    for schedule in user_schedules { if schedule_active(schedule) { return true } }
+    for schedule in user_schedules { if schedule_is_user_record(schedule) && schedule_active(schedule) { return true } }
     false
 }
 
@@ -461,6 +461,7 @@ fn render_analysis_controls(){
     ui.pending_suggestions.set_visible(count > 0 && page == "feed" && detail_kind == "")
     ui.pending_suggestions.set_text("" + count + " 项日程影响待关注 ›")
     ui.manage_tracking_button.set_visible(analysis_has_focus())
+    if page == "feed" && detail_kind == "" { ui.intent_workbench_content.render() }
     if page == "tracking" { ui.tracking_analysis_actions.render() }
 }
 fn analysis_check_status(){
@@ -533,7 +534,7 @@ fn toggle_save(row){
 fn render_detail(){
     if detail_kind == "story" { ui.story_content.render() }
     if detail_kind == "settings" { ui.source_list.render() }
-    if detail_kind == "tracking" { ui.interest_list.render() ui.topic_list.render() }
+    if detail_kind == "tracking" { ui.interest_list.render() }
     ui.story_panel.set_visible(detail_kind == "story")
     ui.settings_panel.set_visible(detail_kind == "settings")
     ui.tracking_panel.set_visible(detail_kind == "tracking")
@@ -595,21 +596,7 @@ fn show_settings(){ notice("") settings_show_diagnostics = false ui.diagnostics_
 fn close_menu(){ menu_open = false ui.menu_panel.set_visible(false) }
 fn toggle_menu(){ menu_open = !menu_open ui.menu_panel.set_visible(menu_open) }
 fn manage_tracking(){ notice("") show_detail("tracking", "管理关注") }
-fn add_keyword(){
-    analysis_check_message = ""
-    let error = records_add_interest("keyword", keyword_draft)
-    notice(error)
-    if error == "" { keyword_draft = "" ui.keyword_input.set_text("") }
-    render_detail()
-    render_feed()
-    tracking_schedule_check()
-}
 fn remove_interest(id){ analysis_check_message = "" notice(records_remove_interest(id)) render_detail() render_feed() tracking_schedule_check() }
-fn toggle_topic(id){
-    analysis_check_message = ""
-    if records_has_interest("category", id) { remove_interest("category:" + id) }
-    else { notice(records_add_interest("category", id)) render_detail() render_feed() tracking_schedule_check() }
-}
 fn toggle_source(id){
     analysis_check_message = ""
     if busy { feed_cancel() busy = false }
