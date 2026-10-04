@@ -4,12 +4,12 @@
 
 ## 依赖与版本
 
-2026-10-03 核对官方 main 后更新。开发依赖放在本项目隔离目录 `.dev/vendor/`，完整提交、配套内核和实际二进制摘要见 [依赖锁](../dev-dependencies.lock.json)。旧的相邻 `../demo-workspace/vendor/` 保留，启动默认路径已切换。
+2026-10-04 再次核对官方 main 后更新。开发依赖放在本项目隔离目录 `.dev/vendor/`，完整提交、配套内核和平台构建记录见 [依赖锁](../dev-dependencies.lock.json)。本次更新面向 Linux，Windows 新版本尚未重新构建/验收；之前的 Windows 二进制与结果归入 `previous_windows_build`。旧的相邻 `../demo-workspace/vendor/` 保留。
 
 | 目录 | 当前提交 |
 | --- | --- |
-| Rinx | `3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9` |
-| OctoSense-App-Hub | `2bcb8985bc1d2c8856f2a61e65baa7ed443ae817` |
+| Rinx | `f18869e4674fb8ffb666b424879ab820d114e432` |
+| OctoSense-App-Hub | `e014fa9c596cdbd95de5cf9fb2a6b4fc2b781d17` |
 | makepad | `c155f61d0e1600d2ec474209374444a38a09a470` |
 | octoscript-makepad | `2cc5ef37d7d6a3d2992673389ce74488f7bb2d87` |
 | octoscript | `f67cb843dddb045a75a13b7d166994fc13acd17c` |
@@ -30,7 +30,7 @@ python scripts/prepare_dev_dependencies.py
 powershell -ExecutionPolicy Bypass -File scripts/build_windows_tools.ps1
 ```
 
-准备脚本只创建锁中不存在的检出，遇到已有不同提交或修改会停止并保留它。构建脚本核对五个提交、加载 Visual Studio 环境，使用私有 Cargo cache 和临时短盘符，依次构建固定 Rinx、打包配套 Octos、构建 hub/card-host 并复制资源。Windows Rinx 构建先应用下述 D3D11 本地补丁，必要时清理该依赖的编译产物，防止 Cargo 复用未修补的 Git 依赖库。日志在 `build/dependency-update/`。可用 `-Mode Rinx` 或 `-Mode Preview` 只构建对应工具。
+准备脚本创建锁中不存在的检出，并应用锁中精确记录的 App Hub Cargo.lock 补丁（三项依赖关系，无版本升级）；已有不同提交或其他修改会停止并保留。构建脚本核对五个提交、加载 Visual Studio 环境，使用私有 Cargo cache 和临时短盘符，依次构建固定 Rinx、打包配套 Octos、构建 hub/card-host 并复制资源。Windows Rinx 构建先应用下述 D3D11 本地补丁，必要时清理该依赖的编译产物，防止 Cargo 复用未修补的 Git 依赖库。日志在 `build/dependency-update/`。可用 `-Mode Rinx` 或 `-Mode Preview` 只构建对应工具。
 
 Rinx 的 `tools/package-octos.py` 同时验证 Cargo.lock 与 packaging/octos.lock.json；配套 `octos.exe --version` 应包含 `fe08d8e`，版本号仍为 `2.0.3-rc.13`。不能仅凭相同版本号复用旧内核。本项目不安装全局 Octos，也不复制模型配置。
 

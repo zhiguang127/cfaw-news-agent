@@ -247,7 +247,7 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
     if not any(w.get('t') == '已收藏' for w in saved):
         raise SystemExit('Bookmark callback failed after repeated refreshes')
     menu_action('我的收藏')
-    bookmarks = snapshot('feed-bookmarks-page')
+    bookmarks = snapshot('feed-bookmarks-page', lambda ws: any(w.get('t') == '1 条收藏' for w in ws))
     if not any(w.get('t') == '1 条收藏' for w in bookmarks) or not any(w.get('t') == first['t'] for w in bookmarks):
         raise SystemExit('Deferred rendering lost the saved news row')
     click(next(w for w in bookmarks if w.get('t') == '首页' and w.get('ty') == 'Button'))
@@ -305,7 +305,7 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
         if not any(w.get('ty') == 'Label' and expected in w.get('t', '') for w in widgets):
             raise SystemExit('Page missing after rapid navigation: ' + name)
     menu_action('我的收藏')
-    if not any(w.get('t') == '1 条收藏' for w in snapshot('navigation-bookmarks')):
+    if not any(w.get('t') == '1 条收藏' for w in snapshot('navigation-bookmarks', lambda ws: any(w.get('t') == '1 条收藏' for w in ws))):
         raise SystemExit('Bookmarks missing from the menu after rapid navigation')
     click(navigation['首页'])
     errors = (work / 'host.log').read_text(encoding='utf-8', errors='replace')
@@ -320,6 +320,7 @@ def run():
     parser.add_argument('--agent-only', action='store_true', help='Run isolated agent validation tests')
     parser.add_argument('--inspect-ui', action='store_true', help='Capture and exercise the fixture UI (agent-only or --suites feed)')
     parser.add_argument('--ui-size', choices=('360x860', '430x860'), default='430x860', help='Feed UI inspection viewport')
+    parser.add_argument('--timeout-seconds', type=int, help='Report deadline for slower native/software-rendered hosts (1..600)')
     parser.add_argument('--rinx-render-probe', action='store_true', help='Use pinned Windows Rinx App/Modal with isolated fixtures; no login or admission')
     parser.add_argument('--navigation-rounds', type=int, default=1000, help='Rinx render-probe rounds, four queued page clicks each (1..2000)')
     parser.add_argument('--suites', nargs='+', choices=('news', 'weather', 'holiday', 'fx', 'feed'), help='Run selected suites; feed exercises application refresh (default: data suites)')
@@ -335,6 +336,8 @@ def run():
         parser.error('The pinned Rinx render probe has a fixed 430x860 window')
     if not 1 <= args.navigation_rounds <= 2000:
         parser.error('--navigation-rounds must be 1..2000')
+    if args.timeout_seconds is not None and not 1 <= args.timeout_seconds <= 600:
+        parser.error('--timeout-seconds must be 1..600')
     lock = json.loads((ROOT / 'dev-dependencies.lock.json').read_text())
     checkout = ROOT / next(r['relative_checkout'] for r in lock['repositories'] if r['name'] == 'OctoSense-App-Hub')
     host = (args.host or checkout / 'target/release' / ('card-host.exe' if os.name == 'nt' else 'card-host')).resolve()
@@ -432,7 +435,7 @@ start_timeout(0.05, || agent_test_validation(|| {
             command += ['--upload-limit-test']
         process = subprocess.Popen(command, cwd=host.parent if args.rinx_render_probe else host.parents[2], stdout=log, stderr=log, startupinfo=startup, env=host_environment)
         try:
-            deadline = time.monotonic() + (45 if 'feed' in suites else 20)
+            deadline = time.monotonic() + (args.timeout_seconds or (45 if 'feed' in suites else 20))
             while time.monotonic() < deadline and process.poll() is None:
                 if all(path.exists() for path in report_paths.values()):
                     break

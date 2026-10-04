@@ -2,6 +2,8 @@
 
 产品入口见 [README](../README.md)，Windows 构建与资源准备见 [Windows 开发说明](windows-development.md)，当前能力和验证只在 [验收记录](acceptance.md) 维护。
 
+当天任务与负责人只看[两人一天开发交接](agent-integration-plan.md)；本文是按需查阅的运行资料。
+
 ## 目录结构
 
 目录用于稳定的职责分组，具体功能用文件区分。已实现的 OctoScript 文件由组装器按固定顺序拼接，在同一脚本作用域执行；Markdown 契约、提示词与分析 fixtures 不会自动加载为运行代码。
@@ -14,28 +16,25 @@ cfaw-news-agent/
 ├── LICENSE / NOTICE
 ├── .gitignore
 ├── docs/
-│   ├── TEAM_GUIDE.md              # 队友上手、目录分工与联调
-│   ├── README.md                  # 文档索引与维护职责
 │   ├── development.md             # 架构、宿主接入与运行
 │   ├── acceptance.md              # 当前能力、缺口与验证
-│   ├── agent-integration-plan.md  # 尚未完成的工作
+│   ├── agent-integration-plan.md  # 唯一开发交接：两人任务、接口与验收
 │   ├── windows-development.md    # Windows 本地环境与已验证的运行边界
 │   ├── fixture-expectations.md    # 固定样例 expected 字段契约
-│   ├── agent-a-interface.md       # Agent A runtime 接口交接
 │   ├── frontend-signal-api.md     # 天气、节假日与汇率调用速查
 │   ├── splash-runtime-notes.md    # 实测语言约束
 │   └── archive/                   # 旧计划与日期报告
 ├── src/
 │   ├── app/                       # 启动、导航、三层连接
 │   ├── contracts/                 # 三层共享的数据结构与接口
-│   ├── frontend/                  # 前端：1 人；样式文件直接放本层
+│   ├── frontend/                  # 视图与交互；样式文件直接放本层
 │   │   ├── pages/                 # 动态、详情、跟踪、日程、收藏
 │   │   └── components/            # 新闻条目、Agent 提示、建议卡片
-│   ├── agent/                     # 单 Agent：2 人共同开发
+│   ├── agent/                     # 单 Agent：宿主适配、提示词与校验
 │   │   ├── runtime/               # Octos 宿主适配、任务生命周期
 │   │   ├── prompts/               # 新闻分析与日程建议提示词
 │   │   └── results/               # 结果解析、证据核验、变化识别
-│   └── data/                      # 数据与检索：1 人
+│   └── data/                      # 数据接入、检索与存储
 │       ├── ingestion/             # 新闻源、天气、节假日、汇率请求与解析
 │       ├── retrieval/             # 查询、关键词/语义召回、融合排序
 │       └── storage/               # 新闻、关注、日程、城市选择及历史存储
@@ -48,6 +47,8 @@ cfaw-news-agent/
 │   ├── assemble.py                # 分层源码组装及源行映射
 │   ├── test_runtime.py            # 隔离存储下执行实际数据与 Agent 模块检查
 │   ├── package.py                 # 组装、摘要刷新与 ZIP 打包
+│   ├── prepare_dev_dependencies.py # 准备固定源码与有记录的锁文件补丁
+│   ├── run_linux.py               # Linux 构建、配套内核打包和启动
 │   ├── stage_windows_resources.ps1 # 将宿主资源放到二进制旁
 │   └── run_windows.ps1            # 启动已准备的 Windows 参考宿主或 Rinx
 ├── tests/
@@ -87,10 +88,7 @@ cfaw-news-agent/
 测试域标注，不要求所有 fixture 为了对齐而添加；没有模型输出的 fixture
 仍须遵守文档中对 `usable` 和 `outcome` 三态语义的说明。
 
-Agent A 的 runtime 适配边界、Octos 调用顺序、状态机、超时取消和失败映射
-见 [Agent A runtime interface](agent-a-interface.md)。
-
-Agent 的两个开发者可以分别侧重流程与宿主适配、提示词与结果核验，具体分工按任务确定，不拆成两个运行时 Agent。
+适配器由 `agent/runtime/` 管理调用与请求生命周期，结果校验放在 `agent/results/`；具体人员任务统一见开发交接，不按开发者人数拆运行时 Agent。
 
 ## Octos 接入边界
 
@@ -98,7 +96,7 @@ Agent 的两个开发者可以分别侧重流程与宿主适配、提示词与�
 
 - **应用负责**关注、新闻证据、日程、提示词、结果核验和用户决策记录；Octos 承担 Agent 推理执行。
 - **宿主负责**模型配置、凭据、服务连接、运行时生命周期与工具审批。独立 Rinx 使用配套 Octos 可执行文件；OctoSense 模块模式使用 Shell 注入的 app-peer 服务，不给每个应用另起内核。
-- **版本成套固定**：Rinx `3bedeadf`、`octosense-app-peers` `98666deb`、Octos `fe08d8e6`。完整提交与来源见 `dev-dependencies.lock.json` 的 `host_runtime_dependencies`；这些是宿主依赖，不是打入新闻应用 ZIP 的依赖。
+- **版本成套固定**：Rinx `f18869e`、`octosense-app-peers` `98666deb`、Octos `fe08d8e6`，应用契约 1.2.0（宿主内含的本地补丁版本）。完整提交与来源见 `dev-dependencies.lock.json` 的 `host_runtime_dependencies`；这些是宿主依赖，不是打入新闻应用 ZIP 的依赖。
 
 当前固定 Rinx 的接口如下（已核对宿主源码；开发者已反馈本应用的连通性测试成功，history 和超时中断仍未完成实测）：
 
@@ -113,7 +111,16 @@ Agent 的两个开发者可以分别侧重流程与宿主适配、提示词与�
 
 当前 manifest 已声明连接测试和业务分析使用的 `octos.session.open`、`octos.turn.start`、`octos.turn.interrupt` 权限；未申请 history 权限。该版本 Rinx 拒绝 bundle 的 `agent` 配置，不应通过增加 Agent 描述文件绕过宿主服务。`session.history` 也不能替代应用自己的日程与决策存储。
 
-落地顺序：真实宿主调用与取消 → 新闻证据分析及核验 → 用户确认日程建议 → 验证后台触发与通知支持。App Hub 安装路径仍需在实际 Shell 上单独验证，Rinx 本地成功不代表上架后的服务已可用。
+### 请求生命周期约束
+
+- 请求携带应用生成的 ID、任务类型、目标版本与输入指纹；模型返回的 ID/版本不能替代这些元数据。
+- 状态为 idle/running/succeeded/failed/cancelled，最多一次终态回调。成功回复还须通过 JSON/业务校验及当前版本检查。
+- 同时只有一个推理请求。取消或超时先禁止成功回写，再请求中断并等待确认；确认失败明确要求重开，不允许迟到结果覆盖新任务。
+- 新闻内容作为不可信证据，不执行其中的指令。输入超限缩减完整记录或明确失败，不能截断 JSON；按目标运行时可用方法遵守宿主字节上限。
+- 当前执行提示词在 `agent/runtime/analysis.splash` 内联，revision 为 `agent/context.splash` 中的 `news-impact-v2`；Markdown 提示词不会自动执行。新任务的提示词须纳入组装并记录实际 revision。
+- 业务结果、证据引用、日期/版本校验按[分析契约](../src/contracts/analysis.md)；新意图/专题结果使用各自结构，不硬套旧新闻建议的字段要求。日志仅保留操作、任务 ID、耗时和错误类别，不记录密钥、全文或私人日程。
+
+本节是实现要求，不代表每项已经验收。实际通过范围见验收记录。App Hub 安装路径仍需在实际 Shell 上单独验证，Rinx 本地成功不代表上架后的服务已可用。
 
 
 ## 运行与导入
@@ -123,9 +130,9 @@ Agent 的两个开发者可以分别侧重流程与宿主适配、提示词与�
 
 ### 1. 准备官方 Rinx
 
-目标宿主已改为[官方 hagency-org/Rinx](https://github.com/hagency-org/Rinx)，固定提交 `3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9`。当前干净检出位于 `.dev/vendor/Rinx`，原共享目录保留不动。完整宿主、参考工具、配套内核和实际构建摘要见依赖锁。
+目标宿主为[官方 hagency-org/Rinx](https://github.com/hagency-org/Rinx)，固定提交 `f18869e4674fb8ffb666b424879ab820d114e432`。检出位于 `.dev/vendor/Rinx`，原共享目录保留不动。完整宿主、参考工具、配套内核和平台构建记录见依赖锁。
 
-`dev-dependencies.lock.json` 固定本次官方 main 的提交。执行 `python scripts/prepare_dev_dependencies.py` 创建缺失检出，Windows 编译使用 `scripts/build_windows_tools.ps1`；已有不同提交或修改不会自动切换。Rinx 与参考 App Hub 各自的运行时依赖分别核对，最新 Rinx 的实际 UI 重启验收本轮未执行。
+`dev-dependencies.lock.json` 固定 2026-10-04 核对的官方 main。执行 `python3 scripts/prepare_dev_dependencies.py` 创建缺失检出；已有不同提交或用户修改不会自动切换。App Hub `e014fa9` 的 Cargo.lock 缺少固定 sibling 源码的三项依赖关系，准备脚本应用有摘要记录的 [最小补丁](../scripts/patches/app-hub-cargo-lock.patch)，不改变包版本。再次准备只接受该补丁的精确内容，其他修改仍保留并报错。上游锁文件补齐后移除此兼容补丁。Windows 编译使用 `scripts/build_windows_tools.ps1`，新版本 Windows 需重新构建；历史二进制摘要归入 `previous_windows_build`，不能视为当前版本的验证。
 
 若已经安装官方 Rinx，可以直接启动，但应核对版本。若使用上述源码检出，从本项目根目录在单独终端执行：
 
@@ -134,20 +141,54 @@ cd .dev/vendor/Rinx
 cargo run --locked --release --features agent_chat
 ```
 
-该命令按照[固定版本的官方 README](https://github.com/hagency-org/Rinx/blob/3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9/README.md#build-and-run)的构建方式启动，增加 `--release` 用于演示；首次运行会编译和下载依赖。构建并打包配套内核后可直接运行 `./target/release/rinx`；Windows 建议使用项目启动脚本以启用临时 SDF 保护。Rust 工具链由宿主的 `rust-toolchain.toml` 固定为 `1.98.0`。
+该命令按照[固定版本的官方 README](https://github.com/hagency-org/Rinx/blob/f18869e4674fb8ffb666b424879ab820d114e432/README.md#build-and-run)的构建方式启动，增加 `--release` 用于演示；首次运行会编译和下载依赖。构建并打包配套内核后可直接运行 `./target/release/rinx`；建议使用项目启动脚本以同时准备应用包。Rust 工具链由宿主的 `rust-toolchain.toml` 固定为 `1.98.0`。
 
-Linux 需要图形会话和原生构建依赖。Debian/Ubuntu 可按照[固定版本的 Linux 构建说明](https://github.com/hagency-org/Rinx/blob/3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9/docs/robrix-upstream-readme.md#building--running-robrix-on-desktop)准备：
+### Linux 本地运行
+
+Linux 需要图形会话和原生构建依赖。Debian/Ubuntu 可按照[固定版本的 Linux 构建说明](https://github.com/hagency-org/Rinx/blob/f18869e4674fb8ffb666b424879ab820d114e432/docs/robrix-upstream-readme.md#building--running-robrix-on-desktop)准备（另外安装 Git、Python、C/C++ 编译器与 OpenGL/EGL 开发包）：
 
 ```bash
 sudo apt-get update
-sudo apt-get install libssl-dev cmake llvm clang libclang-dev libsqlite3-dev pkg-config binfmt-support libxcursor-dev libx11-dev libasound2-dev libpulse-dev libwayland-dev libxkbcommon-dev
+sudo apt-get install git python3 build-essential libssl-dev cmake llvm clang libclang-dev libsqlite3-dev pkg-config binfmt-support libxcursor-dev libx11-dev libasound2-dev libpulse-dev libwayland-dev libxkbcommon-dev libgl1-mesa-dev libegl1-mesa-dev
 ```
 
-其他机器可从官方仓库克隆并检出上述提交，再使用同样的构建命令；检出位置不同时替换相对路径。`agent_chat` 是官方构建示例启用的宿主功能，本新闻应用不依赖其协作服务；新闻浏览无需模型配置，新闻分析和连接测试需要配置可用的模型。
+已安装 rustup 的机器，在本项目根目录执行：
+
+```bash
+rustup toolchain install 1.98.0 --profile minimal
+python3 scripts/run_linux.py --build
+```
+
+入口依次准备固定源码、构建 `hub` 和 Rinx、调用宿主脚本构建并安装配套 Octos、刷新未签名 bundle 与 ZIP，再启动 Rinx。默认并发编译 4 项，可用 `CARGO_BUILD_JOBS` 覆盖；首次编译需要下载依赖。后续运行或只构建：
+
+```bash
+python3 scripts/run_linux.py
+python3 scripts/run_linux.py --build-only
+```
+
+Rinx 默认数据目录为本项目 `.local-state/rinx/`，已设置 `RINX_DATA_DIR` 或 `ROBRIX_DATA_DIR` 时沿用该配置。脚本不清理或迁移账户。Linux 源码构建使用编译时记录的资源位置，保留 `.dev/vendor/` 与 Cargo cache；不需要 Windows SDF/D3D11 修补，也不使用 Windows 的资源 staging 标志。
+
+仅预览新闻界面，无需登录 Matrix：
+
+```bash
+python3 scripts/run_linux.py --mode Preview --build
+# 后续
+python3 scripts/run_linux.py --mode Preview
+```
+
+预览使用独立 `.local-state/linux-preview/` 和 430×860 窗口。参考 card-host 没有 Octos 服务，不能用于真实助手验收。正式 Rinx 中仍需登录并按下方步骤导入 `bundle/`。`agent_chat` 是官方构建示例启用的宿主功能，本新闻应用不依赖其协作服务；新闻浏览无需模型配置，新闻分析和连接测试需要配置可用的模型。
+
+固定输入检查可在图形会话中直接运行 `python3 scripts/test_runtime.py`。无桌面测试环境可安装 `xvfb`、`xauth` 后使用 `xvfb-run -a env -u WAYLAND_DISPLAY python3 scripts/test_runtime.py`。Xvfb 软件渲染较慢，满容量页面检查可显式延长报告等待时间：
+
+```bash
+xvfb-run -a env -u WAYLAND_DISPLAY python3 scripts/test_runtime.py --suites feed --inspect-ui --timeout-seconds 120
+```
+
+此参数只调整测试运行器等待报告的上限，不改变应用超时、业务断言或模型行为。
 
 ### 准备独立 Rinx 的 Octos
 
-当前新闻浏览无需模型配置。要准备独立 Rinx 的本地 Agent 运行环境，在 Rinx 检出目录执行以下命令（参考其 [Octos 打包说明](https://github.com/hagency-org/Rinx/blob/3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9/packaging/README-octos.md)）：
+Linux 入口的 `--build` 已执行本步骤。单独准备独立 Rinx 的本地 Agent 运行环境时，在 Rinx 检出目录执行以下命令（参考其 [Octos 打包说明](https://github.com/hagency-org/Rinx/blob/f18869e4674fb8ffb666b424879ab820d114e432/packaging/README-octos.md)）：
 
 ```bash
 cargo build --locked --release --features agent_chat
