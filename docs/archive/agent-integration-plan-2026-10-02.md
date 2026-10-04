@@ -62,7 +62,7 @@ flowchart TD
 | 4：应用内日程闭环 | 用户日程录入、编辑、冲突检查；新增和改期建议的确认 | 只有用户确认才能写入；确认时重新校验版本和冲突；重复确认和写入失败可恢复、可诊断 |
 | 5：天气联合分析 | 天气接入与结构化契约；地点和时段匹配；活动风险规则 | 仅影响相关活动；缺失、过期和预报范围外的数据不产生确定改期；预报变化可更新或撤回待确认建议 |
 
-原始阶段 1 提出的加载说明与改期场景问题已有更新：[Agent A 接口文档](../agent-a-interface.md) 已说明实际组装流程；[改期 fixture](../../tests/fixtures/analysis-reschedule.json) 已改成 9:00–11:00 发布会与研究安排重叠、建议移到 14:00–16:00。不过该 fixture 的 `proposed_action` 尚缺验证器要求的 `schedule_id/schedule_version`，输入日程也未声明 `allow_reschedule: true`，与 `expected.valid: true` 不一致；当前 Agent 测试入口未加载此 JSON fixture，91 项通过不能代表该输出通过校验。
+原始阶段 1 提出的加载说明与改期场景问题已有更新：[宿主与运行说明](../development.md) 已说明实际组装流程；[改期 fixture](../../tests/fixtures/analysis-reschedule.json) 已改成 9:00–11:00 发布会与研究安排重叠、建议移到 14:00–16:00。不过该 fixture 的 `proposed_action` 尚缺验证器要求的 `schedule_id/schedule_version`，输入日程也未声明 `allow_reschedule: true`，与 `expected.valid: true` 不一致；当前 Agent 测试入口未加载此 JSON fixture，91 项通过不能代表该输出通过校验。
 
 **新闻到分析输入的映射。** 复用现有 [分析契约](../../src/contracts/analysis.md)，先对齐字段语义，不让模型承担数据转换。
 
@@ -197,4 +197,4 @@ python scripts/assemble.py --check
 
 **仍待实施阶段确定的选择。** 当前已有上下文/历史容量上限、北京/纽约时区和默认关闭的改期许可；天气提供方与授权方式、活动类型和具体风险规则、进一步的保留策略、可调整时间窗口及其他时区支持仍待确定。向量/混合检索、后台触发、系统日历、通知和跨设备同步不作为第一轮依赖；只有在实际宿主和分发路径支持并通过验收后，才作为新能力开放。
 
-配套材料：[团队指南](../TEAM_GUIDE.md)、[数据来源与存储](../data-sources.md)、[分析契约](../../src/contracts/analysis.md)、[运行接口](../agent-a-interface.md)、[结果校验规则](../../src/agent/results/validation-rules.md)、[变化检测约定](../../src/agent/results/change-detection.md)、[fixture 预期规则](../fixture-expectations.md)、[Windows 开发说明](../windows-development.md)。
+配套材料：[当前开发交接](../agent-integration-plan.md)、[数据来源与存储](../data-sources.md)、[分析契约](../../src/contracts/analysis.md)、[宿主与运行说明](../development.md)、[结果校验规则](../../src/agent/results/validation-rules.md)、[变化检测约定](../../src/agent/results/change-detection.md)、[fixture 预期规则](../fixture-expectations.md)、[Windows 开发说明](../windows-development.md)。
