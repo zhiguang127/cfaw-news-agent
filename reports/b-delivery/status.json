@@ -1,0 +1,228 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-05",
+  "scope": "new.2 B01-B08",
+  "application_source": "D:\\Hackathon_agenticapp\\workspace\\cfaw-news-agent-new.2",
+  "package": "D:\\Hackathon_agenticapp\\workspace\\cfaw-news-agent-new.2\\build\\cfaw-news.zip",
+  "package_sha256": "804687985b4585fa89ae9bb9f0d3b3063f2a57c40bf8ada4be90b024ad36839f",
+  "unsigned": true,
+  "published": false,
+  "assembly_tests": {
+    "passed": 5,
+    "failed": 0
+  },
+  "insights_tests": {
+    "passed": 33,
+    "failed": 0
+  },
+  "tracking_compatibility_tests": {
+    "passed": 84,
+    "failed": 0
+  },
+  "runtime_host": "D:\\Hackathon_agenticapp\\octosense-ws\\OctoSense-App-Hub\\target\\release\\card-host.exe",
+  "runtime_host_sha256": "58ee73231826bbddd8cbde250b88f79309497c0ccc03b19104a6d3d4638e5b00",
+  "native_viewport": [
+    412,
+    892
+  ],
+  "native_rinx_build": "passed_release_all_windows_tools",
+  "gesture_native_execution": "not_run",
+  "live_model_benchmark": "not_run",
+  "local_300ms_measurement": "not_run",
+  "median_20_percent_improvement": "not_measured",
+  "reschedule_proposals_default": false,
+  "closed_app_scheduler": "host_unsupported",
+  "dependencies": {
+    "schema": 1,
+    "repositories": [
+      {
+        "name": "Rinx",
+        "commit": "f18869e4674fb8ffb666b424879ab820d114e432",
+        "origin": "https://github.com/hagency-org/Rinx.git",
+        "dirty": true,
+        "purpose": "target host",
+        "relative_checkout": ".dev/vendor/Rinx",
+        "local_modifications_note": "Recorded Windows bundle-digest source patch; Rinx bundle files retain exact HEAD bytes despite Windows newline/index status."
+      },
+      {
+        "name": "OctoSense-App-Hub",
+        "commit": "e014fa9c596cdbd95de5cf9fb2a6b4fc2b781d17",
+        "origin": "https://github.com/OctoSense-org/OctoSense-App-Hub.git",
+        "dirty": true,
+        "purpose": "bundle tooling and reference runtime",
+        "relative_checkout": ".dev/vendor/OctoSense-App-Hub",
+        "cargo_lock_patch": {
+          "path": "scripts/patches/app-hub-cargo-lock.patch",
+          "patched_sha256_normalized": "b523c2a4949bf472a3be2020b9d2aef4450f130ff65ab06778ed2a176b9c6580",
+          "reason": "Upstream lock misses rustls/webpki-roots edges for the pinned Makepad sibling and serde for OctoScript L0; no package versions changed. Remove when upstream lock supports these siblings.",
+          "patch_sha256_normalized": "918accf0babdcc9a2235342ca388274dac46a6513daa5d0aae7a6369c3b53ed4"
+        },
+        "local_modifications_note": "Recorded Windows bundle-digest source patch; Rinx bundle files retain exact HEAD bytes despite Windows newline/index status."
+      },
+      {
+        "name": "makepad",
+        "commit": "c155f61d0e1600d2ec474209374444a38a09a470",
+        "origin": "https://github.com/OctoSense-org/makepad.git",
+        "dirty": false,
+        "purpose": "App Hub sibling runtime dependency",
+        "relative_checkout": ".dev/vendor/makepad"
+      },
+      {
+        "name": "octoscript-makepad",
+        "commit": "2cc5ef37d7d6a3d2992673389ce74488f7bb2d87",
+        "origin": "https://github.com/OctoSense-org/Octoscript-Makepad.git",
+        "dirty": false,
+        "purpose": "App Hub sibling runtime dependency",
+        "relative_checkout": ".dev/vendor/octoscript-makepad"
+      },
+      {
+        "name": "octoscript",
+        "commit": "f67cb843dddb045a75a13b7d166994fc13acd17c",
+        "origin": "https://github.com/OctoSense-org/Octoscript.git",
+        "dirty": false,
+        "purpose": "App Hub sibling runtime dependency",
+        "relative_checkout": ".dev/vendor/octoscript"
+      }
+    ],
+    "note": "Checked official main branches on 2026-10-04. Isolated project checkouts; shared vendor trees remain unchanged. Build with each upstream Cargo.lock, never cargo update all transitive crates independently.",
+    "target_pins": {
+      "makepad": "1f3b1dedfbb81424eb8dbf69e5e2c634fa73dc54",
+      "octoscript_makepad": "cb66de073469063abeb2a5ab2a2bbf3cdb365745",
+      "octoscript": "dbd48cfb799551c11e30970c393777d29644a605",
+      "app_contract": "1.2.0"
+    },
+    "toolchain": {
+      "rinx_rust_channel": "1.98.0",
+      "python_tested_linux": "Python 3.14.4",
+      "rustc_tested_linux": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+    },
+    "target_worktree_note": "Current source pins target Linux verification. The previous Windows binaries were built at the former Rinx/App Hub pins and are historical evidence, not binaries for the updated host. The Windows D3D11 patch still targets the unchanged private Makepad revision; rebuild Windows before acceptance.",
+    "application_source": {
+      "repository": "https://github.com/OctoSense-org/OctoSense.git",
+      "commit": "d1596d739e187c689ada4b59093ca8086c23bbbe",
+      "path": "apps/news/bundle/main.splash",
+      "sha256": "cfbe681dd2c0cf24c738e941ff4f916ac161a7333f33029f37e5f1aeaa0503c7",
+      "adaptation": "Rinx callbacks/timeouts, empty states, feed-summary reader; official Makepad layout retained"
+    },
+    "host_runtime_dependencies": {
+      "managed_by": "Rinx",
+      "app_peers": {
+        "package": "octosense-app-peers",
+        "origin": "https://github.com/OctoSense-org/OctoSense.git",
+        "commit": "98666debcf466a6322ba2f1cc5150ad7ffe5890c",
+        "verified_against": [
+          "Cargo.toml",
+          "Cargo.lock"
+        ]
+      },
+      "octos": {
+        "package": "octos-cli",
+        "version": "2.0.3-rc.13",
+        "origin": "https://github.com/octos-org/octos.git",
+        "commit": "fe08d8e6b3b32e672b0f956a2b692c3c8205b167",
+        "default_features": false,
+        "features": [
+          "api",
+          "git",
+          "ast"
+        ],
+        "verified_against": [
+          "Cargo.lock",
+          "packaging/octos.lock.json"
+        ],
+        "desktop_packaging_script": "tools/package-octos.py"
+      },
+      "note": "Standalone Rinx runtime pins are derived from its Cargo.lock and packaging/octos.lock.json, and move together. Latest App Hub uses a separate reference-runtime graph; neither graph overrides the other."
+    },
+    "reference_pins": {
+      "makepad": "c155f61d0e1600d2ec474209374444a38a09a470",
+      "octoscript-makepad": "2cc5ef37d7d6a3d2992673389ce74488f7bb2d87",
+      "octoscript": "f67cb843dddb045a75a13b7d166994fc13acd17c"
+    },
+    "upstream_check": {
+      "checked_on": "2026-10-04",
+      "branch": "main",
+      "OctoSense": "127ae4bd5a5476f0b813179868e61f80748a044e",
+      "octoscript_makepad_runtime_requirement": "5991dfae9344589e732b2605b530f788e8bbcd11",
+      "note": "The current Octoscript main only repins Makepad since the required L0 revision; the reference graph resolves it to the latest sibling checkout. application_source records historical attribution, not a live executable dependency."
+    },
+    "local_windows_render_patch": {
+      "path": "scripts/patches/makepad-d3d11-buffer-accounting.patch",
+      "applies_to": "Rinx private Cargo cache / platform/src/os/windows/d3d11.rs",
+      "makepad_revision": "1f3b1dedfbb81424eb8dbf69e5e2c634fa73dc54",
+      "patch_sha256": "54a6d523c622fb56449ac3a7ab14650d29947efa20088551594977921f84439c",
+      "source_sha256_normalized": "b99c6f07a3db1a087317f2250287a24aa999f6b24fd23199a9d1dfd5070a0400",
+      "rinx_library_sha256": "c13d9248ed8653322a1178fbdc760a23dce75862844e50ef70e300e77baf8bac",
+      "platform_library_sha256": "f31df6e6ee095b9cb1e909a390143d2b04a23036fc6363de727350cece038f84",
+      "runtime_marker": "CFAW D3D11 buffer accounting v3",
+      "reason": "Refresh real GPU completion, reuse immediate buffer accounting leases, bound retirement scans and preserve visible uploads.",
+      "last_verified_rinx_commit": "f18869e4674fb8ffb666b424879ab820d114e432"
+    },
+    "previous_windows_build": {
+      "built_on": "2026-10-04",
+      "repositories": {
+        "Rinx": "3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9",
+        "OctoSense-App-Hub": "2bcb8985bc1d2c8856f2a61e65baa7ed443ae817",
+        "makepad": "c155f61d0e1600d2ec474209374444a38a09a470",
+        "octoscript-makepad": "2cc5ef37d7d6a3d2992673389ce74488f7bb2d87",
+        "octoscript": "f67cb843dddb045a75a13b7d166994fc13acd17c"
+      },
+      "binary_sha256": {
+        "rinx": "d1fd9c45b77016604232a573b196a5ec6858e03deaeae341f49f7674ab22bf94",
+        "octos": "f82d1b5defc10527ca67d49cd4dbbb1f40ee9dcd9ff731627f9dd5d4c2caad0b",
+        "hub": "57fe2033f8960dfef3f16fac2f3673896565560b17726268c7e584d0dde5b7ad",
+        "card_host": "a54cf2cd1dd9c5bf3db8e60324995dc6409b33fb3dc5efd630ffdba54f8eb61e",
+        "rinx_sdf": "cdc3ae45a8fe47f4066d1787360420c46ac2d6934f81c64477f21eab0b01d474"
+      },
+      "python_tested": "Python 3.12.8",
+      "rustc_tested": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+    },
+    "linux_build": {
+      "built_on": "2026-10-04",
+      "target": "x86_64-unknown-linux-gnu",
+      "profile": "release",
+      "rinx_features": [
+        "agent_chat"
+      ],
+      "binary_sha256": {
+        "rinx": "32c5f0bd2981b3b6239d8ebe5ae7ae10ad0c28b6218696e1fd9417132bf2f51d",
+        "octos": "58643fa70399798e35eeb18ceea8971ae4d13e972422ec04bf3065d40266b8dd",
+        "hub": "3311ae1778fcfe942e6b7fde841157994445195a30993ec6afba265621770d49",
+        "card_host": "4ef78aa39b6b95cab1ff970faa970476f8f4dd0a2345b67aaea1f413275cbf2e"
+      },
+      "note": "Built with Rust 1.98.0. App Hub uses only the recorded Cargo.lock dependency-edge correction. Linux does not apply the Windows SDF/D3D11 workaround. Host startup, fixture/UI checks and actual account/import/model acceptance are separate; see docs/acceptance.md."
+    },
+    "windows_build": {
+      "built_on": "2026-10-05",
+      "target": "x86_64-pc-windows-msvc",
+      "profile": "release",
+      "rinx_features": [
+        "agent_chat"
+      ],
+      "binary_sha256": {
+        "rinx": "e37a649cbc1bf4d2bb3c5a5abf7dd12a11a43b1427d273d731a6a4bdc17b169d",
+        "octos": "d22ad2e1a5e342384cee19a0e497043456619f9680e7bbc6793bf8711c1aa721",
+        "hub": "d3b2c5a75861c15133172a536f3f1e1b95669f869fc0eec803ccb1c83e134f29",
+        "card_host": "e52f73bda0b57c58ade4a5919fdf1fffa69355eb0dbb82ed5dbe2878cab78bbe",
+        "rinx_sdf": "acbb3ab25203d431877aa743011f9cc21c0e0e2756f1987b326769a055e16fd8"
+      },
+      "octos_version": "octos 2.0.3-rc.13 (fe08d8e )",
+      "render_patch_artifacts_match": true,
+      "gesture_patch_artifacts_match": true,
+      "log_directory": "build/dependency-update",
+      "note": "Locked source build completed. Rinx SDF login screen responds and paints text. Application import, 430/360 drag and live model acceptance remain separate."
+    },
+    "local_windows_bundle_digest_patch": {
+      "script": "scripts/patch_windows_bundle_digest.py",
+      "original_source_sha256_normalized": "09a8df2cf5b5208194757b20016169f8bbfa35fc62eeb66f8749c798d4c44f81",
+      "patched_source_sha256_normalized": "557a8a07ddeea9ba0a87be53bc5a71646291ce5d58f1436cdb293acf6af94d3a",
+      "applies_to": [
+        "Rinx/vendor/octosense-app-contract/src/bundle.rs",
+        "OctoSense-App-Hub/crates/app-contract/src/bundle.rs"
+      ],
+      "reason": "Canonical slash paths preserve the original cross-platform bundle digest."
+    }
+  },
+  "native_rinx_startup": "passed_sdf_login_screen_responsive_and_visually_verified",
+  "windows_followup": "reports/b-delivery/windows-build-run.json"
+}

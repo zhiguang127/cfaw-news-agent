@@ -36,6 +36,8 @@ foreach ($taskResource in $taskRequiredResources) {
     }
 }
 if ($Mode -eq 'Rinx') {
+    & python (Join-Path $PSScriptRoot 'patch_gesture_host.py') --dev-root $taskDevRoot --check-artifacts
+    if ($LASTEXITCODE -ne 0) { throw 'Build the long-press host fix first: scripts/build_windows_tools.ps1 -Mode Rinx' }
     & python (Join-Path $PSScriptRoot 'patch_windows_render_host.py') --dev-root $taskDevRoot --check-artifacts
     if ($LASTEXITCODE -ne 0) { throw 'Build the recorded D3D11 host fix first: scripts/build_windows_tools.ps1 -Mode Rinx' }
 }

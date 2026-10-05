@@ -11,6 +11,7 @@ fn intent_mode(){
 }
 fn intent_render(){ if detail_kind == "intent" && intent_scene_ready { ui.intent_content.render() } }
 fn intent_begin(topic_id){
+    if tracking_status == "recalling" || tracking_status == "enriching" { analysis_cancel() }
     tracking_recall_generation = tracking_recall_generation + 1
     notice("")
     intent_error = ""
@@ -64,6 +65,11 @@ fn intent_submit(){
     let draft = intent_draft.to_json().parse_json()
     let key = draft.to_json()
     let current_topic = topic_find(draft.target_topic_id)
+    if current_topic != nil {
+        current_topic = current_topic.to_json().parse_json()
+        current_topic.original_input = nil current_topic.supplement = nil
+        current_topic.created_at = nil current_topic.updated_at = nil current_topic.recall_rules = nil
+    }
     let snapshot = {intent_kind: intent_mode() original_input: draft.original_input supplement: draft.supplement current_topic: current_topic
         previous_question: draft.question prompt_revision: tracking_prompt_revision}
     let kind = "parse_intent" let prompt = intent_prompt

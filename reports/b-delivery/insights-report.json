@@ -1,0 +1,13 @@
+{
+  "passed": 33,
+  "failed": 0,
+  "stage": "complete",
+  "stages": {
+    "insights": {
+      "passed": 33,
+      "failed": 0,
+      "failures": [],
+      "stage": "complete"
+    }
+  }
+}

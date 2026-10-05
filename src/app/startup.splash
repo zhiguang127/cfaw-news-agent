@@ -3,12 +3,19 @@ fn boot(){
     schedules_load()
     history_load()
     topics_load()
+    agent_preferences_load()
+    schedule_actions_load()
+    check_states_load()
+    agent_metrics_load()
+    agent_progress_handler = agent_progress
+    foreground_tracking_arm()
     start_timeout(0.01, || boot_loaded())
 }
 fn boot_loaded(){
     presets_initialize(time_now())
     feed_initialize()
     render_main()
+    start_timeout(0.01, || orb_load())
     start_timeout(0.01, || weather_app_boot())
     if records_warning != "" || schedule_warning != "" || analysis_history_warning != "" || topic_warning != "" { notice(records_warning + " " + schedule_warning + " " + analysis_history_warning + " " + topic_warning) }
     // records_load/history_load/render_main already spent most of this 64ms

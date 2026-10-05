@@ -12,6 +12,7 @@ from pathlib import Path
 import shutil
 import subprocess
 from patch_windows_render_host import artifacts_match
+from patch_gesture_host import artifacts_match as gesture_artifacts_match
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -54,6 +55,8 @@ def link_rinx_entry(dev_root, source, executable, rust_channel, crate_name):
 def build(dev_root, force=False):
     if os.name != 'nt':
         raise SystemExit('The SDF host workaround is only verified on Windows.')
+    if not gesture_artifacts_match(dev_root.resolve()):
+        raise SystemExit('Build the recorded gesture host fix first: scripts/build_windows_tools.ps1 -Mode Rinx')
     lock = json.loads((ROOT / 'dev-dependencies.lock.json').read_text(encoding='utf-8'))
     pinned = next(repo for repo in lock['repositories'] if repo['name'] == 'Rinx')
     checkout = dev_root.resolve() / pinned['name']

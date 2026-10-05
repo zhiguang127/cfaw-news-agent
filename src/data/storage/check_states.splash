@@ -1,0 +1,40 @@
+let check_states = {schema_version: 1 revision: 0 items: []}
+let check_states_file = {path: "target_checks_v1.json" revision: 0 writable: true recovered: false}
+let check_states_flush_timer = nil
+fn check_states_valid(v){
+    if !record_object(v) || v["schema_version"] != 1 || !record_number(v["revision"]) || !record_array(v["items"]) || v.items.len() > 28 { return false }
+    for item in v.items {
+        if !record_contains(["topic" "schedule"], item["target_type"]) || !record_string(item["target_id"]) || !record_number(item["target_version"]) || !record_number(item["watermark"]) || !record_number(item["attempt_at"]) || !record_string(item["status"]) || !record_string(item["category"]) { return false }
+    }
+    true
+}
+fn check_states_load(){
+    if !fs.exists(check_states_file.path) { return }
+    try {
+        let v = fs.read(check_states_file.path).parse_json()
+        if check_states_valid(v) { check_states = v check_states_file.revision = v.revision }
+        else { check_states_file.writable = false notice("检查水位文件损坏，原文件保留") }
+    } { check_states_file.writable = false notice("检查水位读取失败，原文件保留") }
+}
+fn check_state_find(kind, id, version){ for item in check_states.items { if item.target_type == kind && item.target_id == id && item.target_version == version { return item } } nil }
+fn check_states_record(targets, status, category, checked){
+    let next = check_states.to_json().parse_json()
+    for target in insight_targets(targets) {
+        let old = check_state_find(target.target_type, target.target_id, target.target_version)
+        let watermark = 0 if old != nil { watermark = old.watermark }
+        if checked { watermark = time_now() }
+        next.items.retain(|v| v.target_type != target.target_type || v.target_id != target.target_id)
+        next.items.push({target_type: target.target_type target_id: target.target_id target_version: target.target_version
+            watermark: watermark attempt_at: time_now() status: status category: category})
+    }
+    while next.items.len() > 28 { next.items.remove(0) }
+    next.revision = check_states.revision + 1
+    check_states = next
+    if check_states_flush_timer == nil {
+        check_states_flush_timer = start_timeout(0.01, || {
+            check_states_flush_timer = nil
+            let error = tracking_store_write(check_states_file, check_states, check_states_valid)
+            if error != "" { notice("检查状态未保存：" + error) }
+        })
+    }
+}

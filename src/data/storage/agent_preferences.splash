@@ -1,0 +1,21 @@
+let agent_preferences = {schema_version: 1 revision: 0 paused: false important_only: false interval_seconds: 900 orb_x: 1.0 orb_y: 0.86}
+let agent_preferences_file = {path: "agent_preferences_v1.json" revision: 0 writable: true recovered: false}
+fn agent_preferences_valid(v){
+    if !record_object(v) || v["schema_version"] != 1 || !record_number(v["revision"]) { return false }
+    if (v["paused"] != true && v["paused"] != false) || (v["important_only"] != true && v["important_only"] != false) || !record_contains([300 900 3600], v["interval_seconds"]) { return false }
+    record_number(v["orb_x"]) && record_number(v["orb_y"]) && v.orb_x >= 0 && v.orb_x <= 1 && v.orb_y >= 0 && v.orb_y <= 1
+}
+fn agent_preferences_load(){
+    if !fs.exists(agent_preferences_file.path) { return }
+    try {
+        let value = fs.read(agent_preferences_file.path).parse_json()
+        if agent_preferences_valid(value) { agent_preferences = value agent_preferences_file.revision = value.revision }
+        else { agent_preferences_file.writable = false notice("检查偏好损坏，原文件保留") }
+    } { agent_preferences_file.writable = false notice("检查偏好读取失败，原文件保留") }
+}
+fn agent_preferences_commit(next){
+    next.revision = agent_preferences.revision + 1
+    let error = tracking_store_write(agent_preferences_file, next, agent_preferences_valid)
+    if error == "" { agent_preferences = next }
+    error
+}

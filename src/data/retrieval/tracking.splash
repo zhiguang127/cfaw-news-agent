@@ -29,6 +29,7 @@ fn tracking_schedule_rules(){
 fn tracking_schedule_decisions(){
     let handled = {}
     for decision in topic_records.decisions {
+        if decision["kind"] == "insight" { continue }
         for evidence in decision.evidence {
             let key = decision.schedule_id + ":" + decision.schedule_version + ":" + evidence.news_id
             let keys = handled[key]
@@ -54,13 +55,15 @@ fn tracking_schedule_candidate(row, rules, handled){
 }
 fn tracking_target_checked(kind, id, version){
     let checked_at = 0
+    let state = check_state_find(kind, id, version)
+    if state != nil { checked_at = state.watermark }
     for run in tracking_cache.runs {
         let values = run.snapshot.topics let field = "topic_id"
         if kind == "schedule" { values = run.snapshot.schedules field = "schedule_id" }
         if kind == "legacy" { values = run.snapshot.legacy_interests field = "interest_id" }
         for item in values {
             if item[field] == id {
-                if kind == "legacy" || item["version"] == version { checked_at = run.checked_at }
+                if kind == "legacy" || item["version"] == version { checked_at = max(checked_at, run.checked_at) }
             }
         }
     }
@@ -70,7 +73,9 @@ fn tracking_targets(){
     let units = []
     for item in user_schedules {
         if schedule_is_user_record(item) && schedule_active(item) && schedule_instant(item.end) >= time_now() {
-            units.push({kind: "schedule" item: item checked_at: tracking_target_checked("schedule", item.schedule_id, item.version)})
+            let checked = tracking_target_checked("schedule", item.schedule_id, item.version)
+            if schedule_instant(item.start) - time_now() <= 7 * 86400 { checked = checked - agent_preferences.interval_seconds }
+            units.push({kind: "schedule" item: item checked_at: checked})
         }
     }
     for item in topic_records.topics {
@@ -108,21 +113,31 @@ fn tracking_snapshot(rows, targets){
             content_key: tracking_evidence_key(row)})
     }
     let previous = nil
-    if tracking_cache.runs.len() > 0 { previous = tracking_cache.runs[tracking_cache.runs.len() - 1].result }
+    // Old per-item context is restricted to exactly the same target set/version.
+    for i in tracking_cache.runs.len() {
+        let old = tracking_cache.runs[tracking_cache.runs.len() - 1 - i]
+        if old.snapshot.topics.to_json() == targets.topics.to_json() && old.snapshot.schedules.to_json() == targets.schedules.to_json() && old.snapshot.legacy_interests.to_json() == targets.legacy_interests.to_json() { previous = old.result break }
+    }
     let decisions = []
     for item in topic_records.decisions {
         let relevant = false
-        for schedule in targets.schedules { if schedule.schedule_id == item.schedule_id { relevant = true } }
+        if item["kind"] == "insight" {
+            for topic in targets.topics { if item.target_type == "topic" && item.target_id == topic.topic_id && item.target_version == topic.version { relevant = true } }
+            for schedule in targets.schedules { if item.target_type == "schedule" && item.target_id == schedule.schedule_id && item.target_version == schedule.version { relevant = true } }
+        } else { for schedule in targets.schedules { if schedule.schedule_id == item.schedule_id { relevant = true } } }
         if relevant { decisions.push(item) }
     }
     let omitted_decisions = max(0, decisions.len() - 12)
     while decisions.len() > 12 { decisions.remove(0) }
-    {schema_version: 1 topics: targets.topics schedules: targets.schedules legacy_interests: targets.legacy_interests
+    let snapshot = {schema_version: 1 topics: targets.topics schedules: targets.schedules legacy_interests: targets.legacy_interests
         evidence: evidence previous_result: previous decisions: decisions omitted_targets: targets.omitted_targets
-        omitted_candidates: 0 omitted_decisions: omitted_decisions context_key: tracking_context_key() prompt_revision: tracking_prompt_revision}
+        omitted_candidates: 0 omitted_decisions: omitted_decisions context_key: tracking_context_key() prompt_revision: tracking_prompt_revision previous_by_target: []}
+    snapshot.previous_by_target = insight_previous_for(snapshot)
+    evidence_attach(snapshot, rows)
+    snapshot
 }
 fn tracking_input_key(snapshot){
-    let evidence = [] for item in snapshot.evidence { evidence.push({news_id: item.news_id content_key: item.content_key}) }
+    let evidence = [] for item in snapshot.evidence { evidence.push({news_id: item.news_id content_key: item.content_key body_key: item["body_key"]}) }
     {context: snapshot.context_key evidence: evidence decisions: snapshot.decisions
         topics: snapshot.topics schedules: snapshot.schedules omitted_targets: snapshot.omitted_targets omitted_candidates: snapshot.omitted_candidates revision: tracking_prompt_revision}.to_json()
 }

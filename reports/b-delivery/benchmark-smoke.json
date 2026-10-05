@@ -1,0 +1,38 @@
+[
+  {
+    "app": "after-parse_intent",
+    "native_ready": true,
+    "real_model_called": false,
+    "log_has_error": false
+  },
+  {
+    "app": "after-parse_schedule_intent",
+    "native_ready": true,
+    "real_model_called": false,
+    "log_has_error": false
+  },
+  {
+    "app": "after-tracking_update",
+    "native_ready": true,
+    "real_model_called": false,
+    "log_has_error": false
+  },
+  {
+    "app": "before-parse_intent",
+    "native_ready": true,
+    "real_model_called": false,
+    "log_has_error": false
+  },
+  {
+    "app": "before-parse_schedule_intent",
+    "native_ready": true,
+    "real_model_called": false,
+    "log_has_error": false
+  },
+  {
+    "app": "before-tracking_update",
+    "native_ready": true,
+    "real_model_called": false,
+    "log_has_error": false
+  }
+]

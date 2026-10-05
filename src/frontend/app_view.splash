@@ -66,13 +66,25 @@ HostedView{width: Fill height: Fill
             search := Search{height: 36 on_change: |text| set_query(text)}
         }
     }
-    floating_ai := View{width: Fill height: Fill align: Align{x: 1.0 y: 1.0} padding: Inset{right: 18 bottom: 100}
-        View{width: 72 height: Fit flow: Down align: Align{x: 0.5}
-            ai_orb := AIOrb{on_press: || intent_orb_press() on_click: || { if !intent_open { intent_begin(nil) } }}
+    floating_ai := View{width: Fill height: Fill flow: Overlay
+        if orb_native_supported { GestureView{width: Fill height: Fill on_viewport: |w,h| orb_viewport(w,h)} }
+        orb_position := View{width: Fill height: Fill on_render: || {
+        View{width: Fill height: Fill align: Align{x: orb_x y: orb_y} padding: Inset{left: 18 right: 18 top: 36 bottom: 100}
+            ai_orb := View{width: 72 height: 72
+            if orb_native_supported {
+                GestureView{width: 72 height: 72 long_press_seconds: 0.4 on_press: || intent_orb_press() on_tap: |x,y| orb_tap(x,y) on_long_press: |x,y| orb_long_press(x,y)
+                on_pan_viewport: |dx,dy,phase,w,h| orb_pan(dx,dy,phase,w,h) on_release: || orb_release()
+                AIOrb{enabled: false}
+                }
+            } else {
+                AIOrb{on_press: || intent_orb_press() on_click: || {if !intent_open { intent_begin(nil) }}}
+            }
+            }
         }
+        }}
     }
     intent_overlay := View{visible: false width: Fill height: Fill flow: Overlay
-        intent_wave := View{width: Fill height: Fill on_render: || { IntentReveal{draw_bg.progress: intent_reveal} }}
+        intent_wave := View{width: Fill height: Fill on_render: || { IntentReveal{draw_bg.progress: intent_reveal draw_bg.origin_x: orb_x draw_bg.origin_y: orb_y} }}
         intent_scene := IntentBackdrop{visible: false flow: Down
             View{width: Fill height: 64 flow: Right padding: Inset{left: 22 right: 18 top: 14 bottom: 10} align: Align{y: 0.5}
                 Section{width: Fill text: "✦ 意图空间" draw_text.color: #x455789 draw_text.text_style.font_size: 14}

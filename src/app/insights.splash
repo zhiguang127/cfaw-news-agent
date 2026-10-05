@@ -1,0 +1,66 @@
+// Application operations; decisions remain owned by topics_commit.
+let insight_evidence_view = nil
+fn insight_open_evidence(value, id){
+    let row = tracking_current_row(id)
+    if row == nil { notice("来源已离开当前列表，请重新检查") return }
+    insight_evidence_view = {value: value news_id: id}
+    open_story(row)
+}
+fn current_insights(){
+    let out = [] let covered = {}
+    for i in tracking_cache.runs.len() {
+        let run = tracking_cache.runs[tracking_cache.runs.len() - 1 - i]
+        if !record_array(run.result["insights"]) { continue }
+        for target in insight_targets(run.snapshot) {
+            let key = target.target_type + ":" + target.target_id
+            if covered[key] == true { continue } covered[key] = true
+            if !tracking_run_current(run) { continue }
+            for insight in run.result.insights {
+                if insight.target_type == target.target_type && insight.target_id == target.target_id {
+                    out.push({insight: insight run: run state: insight_state(insight, run) title: target.title})
+                }
+            }
+        }
+    }
+    out
+}
+fn insight_attention_count(){
+    let count = 0
+    for value in current_insights() {
+        if value.state == "pending" && (!agent_preferences.important_only || value.insight.decision_effect == "review") { count = count + 1 }
+    }
+    count
+}
+fn insight_decide(value, state){
+    if !record_contains(["watch" "handled" "dismissed"], state) { return false }
+    if !tracking_run_current(value.run) { notice("依据或目标已变化，请重新检查") return false }
+    let next = topic_records.to_json().parse_json()
+    if next.decisions.len() >= tracking_config.max_decisions { notice("决定记录已达上限，未保存") return false }
+    let insight = value.insight
+    next.decisions.push({kind: "insight" target_type: insight.target_type target_id: insight.target_id target_version: insight.target_version
+        issue_key: insight.issue_key state: state decided_at: time_now() evidence_facts: insight_facts(insight, value.run.snapshot)})
+    let error = topics_commit(next)
+    if error == "" { notice("已保存决定；实质新证据出现时重新提示") } else { notice(error) }
+    tracking_ui_update()
+    error == ""
+}
+fn insight_label(value){
+    let labels = {new: "新增" updated: "更新" withdrawn: "撤回" unchanged: "无变化" watch: "继续观察" handled: "已处理" dismissed: "已忽略" pending: "待关注"}
+    labels[value.insight.change_kind] + " · " + labels[value.state]
+}
+fn target_check_label(kind, id, version){
+    let state = check_state_find(kind, id, version)
+    if state != nil {
+        if state.status == "pending" { return "已排队检查 · 上次水位 " + age_label(state.watermark) }
+        if state.status == "failed" { return "上次检查失败：" + state.category + " · 上次成功水位 " + age_label(state.watermark) }
+        if state.status == "no_candidates" { return "上次检查没有新候选 · 来源与规则覆盖有限，未调用助手" }
+    }
+    let checked = tracking_target_checked(kind, id, version)
+    if checked == 0 { return "尚未完成检查 · 当前来源覆盖有限" }
+    "上次完成检查：" + age_label(checked) + " · 仅覆盖当时选中的来源与候选"
+}
+fn agent_progress(stage){
+    let labels = {session: "正在连接助手…" model: "助手正在判断，可继续阅读…" validation: "正在核对引用与版本…" publishing: "正在保存结果…"}
+    if labels[stage] != nil { tracking_message = labels[stage] if intent_open { intent_error = labels[stage] } }
+    tracking_ui_update()
+}

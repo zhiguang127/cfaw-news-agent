@@ -19,6 +19,9 @@ fn tracking_test_wait(condition, complete, deadline){
     start_timeout(0.02, complete)
 }
 fn tracking_test_host(){
+    // Preserve v1 historical contract coverage; v2 evidence/insights have their
+    // own suite rather than silently upgrading synthetic source claims.
+    tracking_prompt_revision = "tracking-v1.2"
     analysis_host_has = |name| true
     analysis_host_request = fn(name, data, callback){
         if name == "octos.session.open" { callback({is_ok: true}) }
@@ -180,7 +183,7 @@ fn tracking_test_order(){
         set_query("")
         let calls = tracking_test_calls
         tracking_start(nil)
-        tracking_test_wait(|| tracking_status != "recalling", || {
+        tracking_test_wait(|| tracking_status != "recalling" && tracking_status != "enriching", || {
             tracking_test_assert(tracking_test_calls == calls && tracking_status == "no_change", "unchanged successful input reuses result without LLM")
             tracking_test_decisions()
         }, time_now() + 5)
@@ -310,11 +313,11 @@ fn tracking_test_schedule_only(){
             tracking_test_assert(tracking_status == "insufficient_evidence" && tracking_active_reminders().len() == 0 && tracking_test_rows[3].published_at == nil, "insufficient contradictory evidence withdraws impact and preserves unknown date")
             app_feed_rows = [tracking_test_rows[0]]
             let calls = tracking_test_calls tracking_start(nil)
-            tracking_test_wait(|| tracking_status != "recalling", || {
+            tracking_test_wait(|| tracking_status != "recalling" && tracking_status != "enriching", || {
                 tracking_test_assert(tracking_status == "no_candidates" && tracking_test_calls == calls, "no candidates distinct from no change, no model request")
                 app_feed_rows = tracking_test_rows tracking_test_rows[3].retrieved_at = time_now() - 8000
                 tracking_start(nil)
-                tracking_test_wait(|| tracking_status != "recalling", || {
+                tracking_test_wait(|| tracking_status != "recalling" && tracking_status != "enriching", || {
                     tracking_test_assert(tracking_status == "stale", "expired-only evidence distinct from request failure")
                     tracking_test_rows[3].retrieved_at = time_now()
                     topic_records.topics = saved_topics topic_records.decisions = []
@@ -323,7 +326,7 @@ fn tracking_test_schedule_only(){
                     tracking_test_cache()
                     analysis_host_has = |name| false
                     tracking_start(nil)
-                    tracking_test_wait(|| tracking_status != "recalling", || {
+                    tracking_test_wait(|| tracking_status != "recalling" && tracking_status != "enriching", || {
                         tracking_test_assert(tracking_status == "failed" && agent_last_category == "service_unavailable", "AI unavailable remains real service failure with readable feed")
                         tracking_test_host()
                         tracking_cache.runs = []

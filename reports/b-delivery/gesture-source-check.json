@@ -1,0 +1,11 @@
+{
+  "pinned_source_hash_verified": true,
+  "patch_idempotent": true,
+  "unknown_source_rejected": true,
+  "rust_syntax_parsed": true,
+  "native_typecheck": true,
+  "native_execution": false,
+  "blocker": null,
+  "host_startup": true,
+  "pending": "430/360 app long-press drag and restart persistence acceptance"
+}

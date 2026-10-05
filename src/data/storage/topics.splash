@@ -13,6 +13,10 @@ fn topic_document_valid(value){
     let ids = {}
     for item in value["topics"] { if !topic_valid(item) || ids[item.topic_id] == true { return false } ids[item.topic_id] = true }
     for item in value["decisions"] {
+        if item["kind"] == "insight" {
+            if !record_contains(["topic" "schedule"], item["target_type"]) || !tracking_text(item["target_id"], 200) || !record_number(item["target_version"]) || !tracking_text(item["issue_key"], 120) || !record_contains(["watch" "handled" "dismissed"], item["state"]) || !record_number(item["decided_at"]) || !tracking_strings(item["evidence_facts"], 8, 16000) { return false }
+            continue
+        }
         if !record_object(item) || !tracking_text(item["reminder_id"], 400) || !tracking_text(item["goal_key"], 120) || !tracking_text(item["schedule_id"], 200) { return false }
         if item["state"] != "dismissed" && item["state"] != "followed" { return false }
         if !record_number(item["schedule_version"]) || !record_number(item["decided_at"]) || !record_array(item["evidence"]) { return false }

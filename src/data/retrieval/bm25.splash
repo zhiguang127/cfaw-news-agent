@@ -109,6 +109,14 @@ fn bm25_rank_step(work){
             }
         }
         if score <= 0 && !doc.gate { continue }
+        let source = news_source(doc.row.source_id)
+        if source != nil && source.category == "travel" && source.kind == "rss" && regex("[0-9]{4}[-/年]").test(doc.row.title + " " + doc.row.summary) {
+            for schedule in work.targets.schedules {
+                if record_string(schedule["location"]) && schedule.location.trim() != "" {
+                    if regex(literal_pattern(schedule.location)).test(doc.row.title + " " + doc.row.summary) { score = score + 2 break }
+                }
+            }
+        }
         work.matched = work.matched + 1
         if doc.row.retrieved_at <= 0 || time_now() - doc.row.retrieved_at > news_config.cache_stale_seconds { work.expired = work.expired + 1 continue }
         let next = [] let placed = false

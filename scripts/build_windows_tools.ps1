@@ -23,7 +23,9 @@ foreach ($taskRepo in $taskLock.repositories) {
         throw ('Expected pinned checkout for ' + $taskRepo.name + ' at ' + $taskRepo.commit)
     }
 }
-$taskVsRoot = & 'C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe' -latest -products '*' -property installationPath
+$taskVswhere = 'C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe'
+if (-not (Test-Path -LiteralPath $taskVswhere)) { throw 'Visual Studio C++ Build Tools are required to rebuild the pinned Rinx font/render and gesture fixes. Install Desktop development with C++ before running this build script.' }
+$taskVsRoot = & $taskVswhere -latest -products '*' -property installationPath
 if (-not $taskVsRoot) { throw 'Visual Studio C++ Build Tools were not found' }
 Import-Module (Join-Path $taskVsRoot 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
 Enter-VsDevShell -VsInstallPath $taskVsRoot -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
@@ -50,12 +52,16 @@ try {
     $env:CMAKE_GENERATOR = 'Ninja'
     $env:MAKEPAD_PACKAGE_DIR = '.'
     $env:CARGO_BUILD_JOBS = '4'
+    Invoke-ToolBuild 'python' @((Join-Path $PSScriptRoot 'patch_windows_bundle_digest.py'), '--dev-root', ($taskDrive + '/')) (Join-Path $taskLogRoot 'bundle-digest-patch.log')
     if ($Mode -ne 'Preview') {
         $taskRinx = $taskDrive + '/Rinx'
         Set-Location $taskRinx
         $env:CARGO_TARGET_DIR = $taskRinx + '/target'
+        Invoke-ToolBuild 'python' @((Join-Path $PSScriptRoot 'restore_system_bundle_bytes.py'), '--rinx-root', $taskRinx) (Join-Path $taskLogRoot 'rinx-system-bundles.log')
         Invoke-ToolBuild 'cargo' @('fetch', '--locked') (Join-Path $taskLogRoot 'rinx-fetch.log')
         Invoke-ToolBuild 'python' @((Join-Path $PSScriptRoot 'patch_windows_render_host.py'), '--dev-root', ($taskDrive + '/')) (Join-Path $taskLogRoot 'rinx-render-patch.log')
+        Invoke-ToolBuild 'python' @((Join-Path $PSScriptRoot 'patch_gesture_host.py'), '--dev-root', ($taskDrive + '/')) (Join-Path $taskLogRoot 'rinx-gesture-patch.log')
+        Invoke-ToolBuild 'cargo' @('clean', '--release', '-p', 'makepad-widgets') (Join-Path $taskLogRoot 'rinx-gesture-clean.log')
         & python (Join-Path $PSScriptRoot 'patch_windows_render_host.py') --dev-root ($taskDrive + '/') --check-artifacts
         if ($LASTEXITCODE -eq 1) {
             # Cargo treats Git sources as immutable; source edits alone can
@@ -65,6 +71,7 @@ try {
         Write-Output ('Building pinned Rinx; log: ' + (Join-Path $taskLogRoot 'rinx.log'))
         Invoke-ToolBuild 'cargo' @('build', '--locked', '--release', '--bin', 'rinx', '--features', 'agent_chat') (Join-Path $taskLogRoot 'rinx.log')
         Invoke-ToolBuild 'python' @((Join-Path $PSScriptRoot 'patch_windows_render_host.py'), '--dev-root', ($taskDrive + '/'), '--record') (Join-Path $taskLogRoot 'rinx-render-patch.log')
+        Invoke-ToolBuild 'python' @((Join-Path $PSScriptRoot 'patch_gesture_host.py'), '--dev-root', ($taskDrive + '/'), '--record') (Join-Path $taskLogRoot 'rinx-gesture-record.log')
         Write-Output ('Packaging matching Octos; log: ' + (Join-Path $taskLogRoot 'octos.log'))
         Invoke-ToolBuild 'python' @('tools/package-octos.py', 'desktop', '--app-binary', 'target/release/rinx.exe') (Join-Path $taskLogRoot 'octos.log')
         & ./target/release/octos.exe --version

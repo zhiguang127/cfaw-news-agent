@@ -53,7 +53,7 @@ fn schedule_intent_validate(value){
 }
 fn tracking_validate(value, snapshot){
     if !tracking_snapshot_valid(snapshot) { return tracking_invalid("invalid_schema", "追踪快照损坏或版本未知") }
-    if !record_object(value) || value["schema_version"] != 1 { return tracking_invalid("invalid_schema", "追踪结果版本或结构无效") }
+    if !record_object(value) || (value["schema_version"] != 1 && value["schema_version"] != 2) { return tracking_invalid("invalid_schema", "追踪结果版本或结构无效") }
     if value["outcome"] != "update" && value["outcome"] != "no_change" && value["outcome"] != "insufficient_evidence" { return tracking_invalid("invalid_schema", "追踪状态无效") }
     if !tracking_text(value["explanation"], 1200) || value["explanation"].trim() == "" || !record_array(value["items"]) { return tracking_invalid("invalid_schema", "追踪解释或条目缺失") }
     if value["items"].len() != snapshot.evidence.len() || value["items"].len() > tracking_config.max_candidates { return tracking_invalid("invalid_reference", "必须逐条返回候选结果") }
@@ -79,11 +79,22 @@ fn tracking_validate(value, snapshot){
             if schedule.version != impact["schedule_version"] || !schedule_active(schedule) { return tracking_invalid("stale_context", "日程版本已失效") }
             if !tracking_text(impact["impact_summary"], 400) || impact["impact_summary"].trim() == "" || !tracking_strings(impact["uncertainties"], 6, 300) || !tracking_text(impact["material_change"], 400) { return tracking_invalid("invalid_schema", "日程影响理由不完整") }
             if !tracking_refs(impact["evidence_ids"], snapshot.evidence, "news_id", false) || !record_contains(impact["evidence_ids"], item["news_id"]) { return tracking_invalid("invalid_reference", "日程影响缺少条目依据") }
+            if value.schema_version == 2 {
+                if !insight_refs_valid(impact["evidence_refs"], impact.evidence_ids, snapshot) || impact.evidence_refs.len() == 0 { return tracking_invalid("invalid_reference", "日程影响必须定位原文段落") }
+                if !tracking_text(impact["event_location"], 100) || !record_string(schedule["location"]) || impact.event_location != schedule.location || impact.event_location.trim() == "" { return tracking_invalid("invalid_reference", "事件与日程地点不明确") }
+                let supported = false
+                for ref in impact.evidence_refs {
+                    if regex(literal_pattern(impact.event_location)).test(ref.quote) && regex(literal_pattern(impact.event_start.split("T")[0])).test(ref.quote) { supported = true }
+                }
+                if !supported { return tracking_invalid("invalid_dates", "事件日期/地点未在引用段落中定位") }
+                if schedule["time_precision"] == "day" && impact.uncertainties.len() == 0 { return tracking_invalid("invalid_dates", "日期型行程必须说明具体时间/班次待核对") }
+            }
             let key = impact["schedule_id"] + ":" + impact["goal_key"]
             if impact_ids[key] == true { return tracking_invalid("invalid_reference", "重复日程影响") } impact_ids[key] = true
         }
         if item["proposed_action"] != nil { return tracking_invalid("invalid_schema", "本轮不接受日程写入动作") }
     }
+    if value.schema_version == 2 { return insights_validate(value, snapshot) }
     {valid: true error: "" message: "" result: value}
 }
 fn tracking_json_body(text){
@@ -97,11 +108,14 @@ fn tracking_json_body(text){
     clean
 }
 fn tracking_parse(text, kind, snapshot){
-    if !record_string(text) || text.len() > 16000 { return tracking_invalid("invalid_json", "模型回复为空或超限") }
+    if !record_string(text) || text.to_bytes().len() > 16384 { return tracking_invalid("invalid_json", "模型回复为空或超限") }
     let clean = tracking_json_body(text)
     if !regex("^[{]").test(clean) || !regex("[}]$").test(clean) { return tracking_invalid("invalid_json", "模型回复应为单个 JSON 对象") }
     let value = nil
     try { value = clean.parse_json() } { value = nil }
+    if kind == "tracking_update" && snapshot["prompt_revision"] == "tracking-v2.0" {
+        if value == nil || value["schema_version"] != 2 { return tracking_invalid("invalid_schema", "新版追踪须返回目标变化与段落引用契约；旧结果仅作历史兼容") }
+    }
     if !record_object(value) { return tracking_invalid("invalid_json", "模型回复无法解析为 JSON 对象") }
     if kind == "parse_schedule_intent" {
         let checked = schedule_intent_validate(value)

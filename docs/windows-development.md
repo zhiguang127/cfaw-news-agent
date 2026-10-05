@@ -4,7 +4,7 @@
 
 ## 依赖与版本
 
-2026-10-04 再次核对官方 main 后更新。开发依赖放在本项目隔离目录 `.dev/vendor/`，完整提交、配套内核和平台构建记录见 [依赖锁](../dev-dependencies.lock.json)。本次更新面向 Linux，Windows 新版本尚未重新构建/验收；之前的 Windows 二进制与结果归入 `previous_windows_build`。旧的相邻 `../demo-workspace/vendor/` 保留。
+2026-10-04 再次核对官方 main 后更新。开发依赖放在本项目隔离目录 `.dev/vendor/`，完整提交、配套内核和平台构建记录见 [依赖锁](../dev-dependencies.lock.json)。2026-10-05 已完成 Windows All 构建并启动 SDF Rinx，真实登录页文字与图标可见；当前产物记录在 `windows_build`，之前的 Windows 二进制与结果保留在 `previous_windows_build`。应用的拖动、真实模型及长期白屏回归仍须分别验收。旧的相邻 `../demo-workspace/vendor/` 保留。
 
 | 目录 | 当前提交 |
 | --- | --- |
@@ -20,6 +20,8 @@
 
 ## 准备和构建
 
+new.2 的应用长按移动还需要 `scripts/patch_gesture_host.py` 的原生 GestureView 补丁。构建脚本会核对固定源 hash，只改本项目 `.dev/vendor/cargo-home`，强制重建 widgets 后记录产物；启动脚本核对记录。未修补宿主仅保留普通点击。2026-10-05 已安装 VS C++ 工具，修复 Rust 1.98.0 MSVC 工具链，并成功构建 Rinx 与补丁；实际拖动产品验收见 [本次 B 交付](b-delivery.md)。
+
 安装 Git、Python 3、Rust、Visual Studio C++ Build Tools、Windows SDK、CMake/Ninja。当前检查使用 Python 3.12.8；宿主要求 Rust 1.98.0。项目没有需要安装的 Python 第三方运行依赖。
 
 在项目根目录执行：
@@ -33,6 +35,8 @@ powershell -ExecutionPolicy Bypass -File scripts/build_windows_tools.ps1
 准备脚本创建锁中不存在的检出，并应用锁中精确记录的 App Hub Cargo.lock 补丁（三项依赖关系，无版本升级）；已有不同提交或其他修改会停止并保留。构建脚本核对五个提交、加载 Visual Studio 环境，使用私有 Cargo cache 和临时短盘符，依次构建固定 Rinx、打包配套 Octos、构建 hub/card-host 并复制资源。Windows Rinx 构建先应用下述 D3D11 本地补丁，必要时清理该依赖的编译产物，防止 Cargo 复用未修补的 Git 依赖库。日志在 `build/dependency-update/`。可用 `-Mode Rinx` 或 `-Mode Preview` 只构建对应工具。
 
 Rinx 的 `tools/package-octos.py` 同时验证 Cargo.lock 与 packaging/octos.lock.json；配套 `octos.exe --version` 应包含 `fe08d8e`，版本号仍为 `2.0.3-rc.13`。不能仅凭相同版本号复用旧内核。本项目不安装全局 Octos，也不复制模型配置。
+
+2026-10-05 构建排障：Git 的系统级 `core.autocrlf=true` 会改变内置应用的字节；`restore_system_bundle_bytes.py` 仅允许恢复与 HEAD 相比只有 CRLF 转换的 bundle 文件，遇到实际编辑会拒绝覆盖。另一个上游问题是摘要直接使用 Windows 反斜杠路径；`patch_windows_bundle_digest.py` 对私有 Rinx/Hub 两份锁定 contract 源码统一用斜杠排序、计算摘要，并核对原始源码 hash。构建脚本自动执行这两项修复，保留原始 Palpo 清单摘要与完整性校验，不重新盖章内置应用。应将路径摘要问题反馈给上游；更新依赖后须重新核对补丁。旧 Windows Hub 生成的含子目录包需用本项目新 Hub 重新打包后导入。
 
 构建时 `MAKEPAD_PACKAGE_DIR=.` 使资源从可执行文件旁加载。`stage_windows_resources.ps1` 在短盘符仍存在时读取构建的 `.path` 并复制字体、主题和 Rinx 资源。构建结束取消映射，运行不需要该盘符。资源缺失时启动脚本报具体路径。
 

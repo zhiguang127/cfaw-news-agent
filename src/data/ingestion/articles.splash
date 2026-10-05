@@ -1,5 +1,5 @@
-// Read-only article reader. It never supplies extra evidence to the Agent:
-// analysis still cites the bounded feed snapshot it actually received.
+// Read-only reader; bounded paragraphs can also populate the separate evidence
+// cache. Each Agent run preserves exactly the paragraphs it actually received.
 let article_hosts = ["www.airchinagroup.com", "www.theverge.com", "arstechnica.com", "venturebeat.com", "news.mit.edu", "arxiv.org", "www.bbc.com", "www.bbc.co.uk", "www.theguardian.com", "www.cnbc.com", "techcrunch.com", "www.techmeme.com", "news.ycombinator.com"]
 let article_config = {max_paragraphs: 80 max_text_bytes: 24000}
 let article_state = {generation: 0 state: "idle" paragraphs: [] error: "" truncated: false}
@@ -23,8 +23,8 @@ fn article_extract(body){
     for value in values {
         if !record_string(value) || value.trim() == "" { continue }
         let text = value.trim()
-        if paragraphs.len() >= article_config.max_paragraphs || count + text.len() > article_config.max_text_bytes { truncated = true break }
-        paragraphs.push(text) count = count + text.len()
+        if paragraphs.len() >= article_config.max_paragraphs || count + text.to_bytes().len() > article_config.max_text_bytes { truncated = true break }
+        paragraphs.push(text) count = count + text.to_bytes().len()
     }
     {paragraphs: paragraphs truncated: truncated}
 }
@@ -47,6 +47,7 @@ fn article_load(row, complete){
             article_state.state = "unavailable" article_state.error = "来源网页未提供可读取的正文，以下保留来源摘要。"
         } else {
             article_state.state = "ready" article_state.paragraphs = result.paragraphs article_state.truncated = result.truncated
+            analysis_article_store(row, result, "")
         }
         complete()
     })

@@ -509,7 +509,7 @@ def run():
     parser.add_argument('--rinx-runtime', action='store_true', help='Linux pinned Rinx App/Modal, isolated fixtures, no login/admission/model lease')
     parser.add_argument('--rinx-render-probe', action='store_true', help='Use pinned Windows Rinx App/Modal with isolated fixtures; no login or admission')
     parser.add_argument('--navigation-rounds', type=int, default=1000, help='Rinx render-probe rounds, four queued page clicks each (1..2000)')
-    parser.add_argument('--suites', nargs='+', choices=('news', 'weather', 'holiday', 'fx', 'feed', 'tracking'), help='Run selected suites; feed exercises application refresh (default: data suites)')
+    parser.add_argument('--suites', nargs='+', choices=('news', 'weather', 'holiday', 'fx', 'feed', 'tracking', 'insights'), help='Run selected suites; feed exercises application refresh (default: data suites)')
     args = parser.parse_args()
     if args.live_minimax:
         if args.suites or args.agent_only or args.restart or args.rinx_runtime or args.rinx_render_probe or args.host:
@@ -530,8 +530,8 @@ def run():
         parser.error('feed uses the application UI; run it separately from data suites')
     if args.rinx_render_probe and (os.name != 'nt' or args.host or args.agent_only or suites != ['feed']):
         parser.error('--rinx-render-probe requires Windows and --suites feed, without --host/--agent-only')
-    if args.rinx_runtime and (os.name != 'posix' or args.host or args.agent_only or suites not in (['tracking'], ['feed'])):
-        parser.error('--rinx-runtime requires Linux and --suites tracking or feed')
+    if args.rinx_runtime and (os.name != 'posix' or args.host or args.agent_only or suites not in (['tracking'], ['feed'], ['insights'])):
+        parser.error('--rinx-runtime requires Linux and --suites tracking, insights or feed')
     if args.rinx_render_probe and args.ui_size != '430x860':
         parser.error('The pinned Rinx render probe has a fixed 430x860 window')
     if not 1 <= args.navigation_rounds <= 2000:
@@ -575,8 +575,10 @@ def run():
         host_data.mkdir()
         host_environment['RINX_DATA_DIR'] = str(host_data)
         host_environment['ROBRIX_DATA_DIR'] = str(host_data)
-    paths = ORDER[:-1] if args.agent_only or 'feed' in suites or 'tracking' in suites else ORDER[:ORDER.index('src/agent/runtime/connectivity.splash')]
+    paths = ORDER[:-1] if args.agent_only or 'feed' in suites or 'tracking' in suites or 'insights' in suites else ORDER[:ORDER.index('src/agent/runtime/connectivity.splash')]
     source, _ = assemble(paths=paths)
+    if any(name in suites for name in ('tracking', 'insights')) or args.agent_only:
+        source += '\nagent_metrics_origin = "fixture"\n'
     if 'feed' in suites:
         summary = 'Synthetic retained summary for bounded-memory refresh regression. ' * 24
         items, hits = [], []
@@ -619,8 +621,9 @@ start_timeout(0.05, || agent_test_validation(|| {
 
     else:
         for name in suites:
-            directory = 'scenarios' if name in ('feed', 'tracking') else 'unit'
-            source += (ROOT / f'tests/{directory}/{name}_runtime.splash').read_text(encoding='utf-8')
+            directory = 'scenarios' if name in ('feed', 'tracking', 'insights') else 'unit'
+            part = (ROOT / f'tests/{directory}/{name}_runtime.splash').read_text(encoding='utf-8')
+            source += part
     (bundle / 'main.splash').write_text(source, encoding='utf-8')
     manifest = json.loads((ROOT / 'bundle/manifest.json').read_text())
     manifest['id'] = 'dev.cfaw.runtime-tests'
@@ -675,6 +678,27 @@ start_timeout(0.05, || agent_test_validation(|| {
                 inspect_feed_ui(work, port, args.ui_size)
             elif args.inspect_ui and 'tracking' in suites:
                 inspect_tracking_ui(work, port, args.ui_size, args.rinx_runtime)
+            elif args.inspect_ui and 'insights' in suites:
+                with urlopen(f'http://127.0.0.1:{port}/snap', timeout=5) as response:
+                    snapshot = json.load(response)
+                (work / 'insights-ui.json').write_text(json.dumps(snapshot, ensure_ascii=False), encoding='utf-8')
+                for label in ('本轮目标变化', '观察', '已处理', '忽略', '查看来源与引用段落'):
+                    if not any(w.get('t') == label for w in snapshot['s']):
+                        raise SystemExit('Insight UI entry missing: ' + label)
+                pixels = {'verified': False}
+                try:
+                    with urlopen(f'http://127.0.0.1:{port}/g?raw=1', timeout=5) as response:
+                        png = response.read()
+                    (work / 'insights-ui.png').write_bytes(png)
+                    heading = next(w for w in snapshot['s'] if w.get('t') == '本轮目标变化')
+                    with urlopen(f'http://127.0.0.1:{port}/s', timeout=5) as response:
+                        size = json.load(response)['w'][0]['sz']
+                    pixels = {'verified': region_has_ink(png, heading['r'], size), 'logical_size': size}
+                except (OSError, ValueError, KeyError, StopIteration):
+                    pixels['reason'] = 'Native PNG unavailable; widget snapshot only'
+                (work / 'insights-pixels.json').write_text(json.dumps(pixels, indent=2), encoding='utf-8')
+                if not pixels['verified']:
+                    print('Insight widget structure checked; native pixels NOT verified')
             if args.inspect_ui and args.agent_only:
                 time.sleep(1)
                 with urlopen(f'http://127.0.0.1:{port}/snap', timeout=3) as response:

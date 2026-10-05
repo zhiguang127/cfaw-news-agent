@@ -5,9 +5,10 @@
       "name": "Rinx",
       "commit": "f18869e4674fb8ffb666b424879ab820d114e432",
       "origin": "https://github.com/hagency-org/Rinx.git",
-      "dirty": false,
+      "dirty": true,
       "purpose": "target host",
-      "relative_checkout": ".dev/vendor/Rinx"
+      "relative_checkout": ".dev/vendor/Rinx",
+      "local_modifications_note": "Recorded Windows bundle-digest source patch; Rinx bundle files retain exact HEAD bytes despite Windows newline/index status."
     },
     {
       "name": "OctoSense-App-Hub",
@@ -21,7 +22,8 @@
         "patched_sha256_normalized": "b523c2a4949bf472a3be2020b9d2aef4450f130ff65ab06778ed2a176b9c6580",
         "reason": "Upstream lock misses rustls/webpki-roots edges for the pinned Makepad sibling and serde for OctoScript L0; no package versions changed. Remove when upstream lock supports these siblings.",
         "patch_sha256_normalized": "918accf0babdcc9a2235342ca388274dac46a6513daa5d0aae7a6369c3b53ed4"
-      }
+      },
+      "local_modifications_note": "Recorded Windows bundle-digest source patch; Rinx bundle files retain exact HEAD bytes despite Windows newline/index status."
     },
     {
       "name": "makepad",
@@ -116,11 +118,11 @@
     "makepad_revision": "1f3b1dedfbb81424eb8dbf69e5e2c634fa73dc54",
     "patch_sha256": "54a6d523c622fb56449ac3a7ab14650d29947efa20088551594977921f84439c",
     "source_sha256_normalized": "b99c6f07a3db1a087317f2250287a24aa999f6b24fd23199a9d1dfd5070a0400",
-    "rinx_library_sha256": "bfcfcb87248a0322cd64b316e19c76885762d2310203de3fef07ff8bb61c9c1e",
-    "platform_library_sha256": "163165143735ff6f7dbdf5a32f506449e69ed9f923176e5433acaae40091c98d",
+    "rinx_library_sha256": "c13d9248ed8653322a1178fbdc760a23dce75862844e50ef70e300e77baf8bac",
+    "platform_library_sha256": "f31df6e6ee095b9cb1e909a390143d2b04a23036fc6363de727350cece038f84",
     "runtime_marker": "CFAW D3D11 buffer accounting v3",
     "reason": "Refresh real GPU completion, reuse immediate buffer accounting leases, bound retirement scans and preserve visible uploads.",
-    "last_verified_rinx_commit": "3bedeadfd5a6e42cd149b89ea0b8845ee6fe48f9"
+    "last_verified_rinx_commit": "f18869e4674fb8ffb666b424879ab820d114e432"
   },
   "previous_windows_build": {
     "built_on": "2026-10-04",
@@ -155,5 +157,35 @@
       "card_host": "4ef78aa39b6b95cab1ff970faa970476f8f4dd0a2345b67aaea1f413275cbf2e"
     },
     "note": "Built with Rust 1.98.0. App Hub uses only the recorded Cargo.lock dependency-edge correction. Linux does not apply the Windows SDF/D3D11 workaround. Host startup, fixture/UI checks and actual account/import/model acceptance are separate; see docs/acceptance.md."
+  },
+  "windows_build": {
+    "built_on": "2026-10-05",
+    "target": "x86_64-pc-windows-msvc",
+    "profile": "release",
+    "rinx_features": [
+      "agent_chat"
+    ],
+    "binary_sha256": {
+      "rinx": "e37a649cbc1bf4d2bb3c5a5abf7dd12a11a43b1427d273d731a6a4bdc17b169d",
+      "octos": "d22ad2e1a5e342384cee19a0e497043456619f9680e7bbc6793bf8711c1aa721",
+      "hub": "d3b2c5a75861c15133172a536f3f1e1b95669f869fc0eec803ccb1c83e134f29",
+      "card_host": "e52f73bda0b57c58ade4a5919fdf1fffa69355eb0dbb82ed5dbe2878cab78bbe",
+      "rinx_sdf": "acbb3ab25203d431877aa743011f9cc21c0e0e2756f1987b326769a055e16fd8"
+    },
+    "octos_version": "octos 2.0.3-rc.13 (fe08d8e )",
+    "render_patch_artifacts_match": true,
+    "gesture_patch_artifacts_match": true,
+    "log_directory": "build/dependency-update",
+    "note": "Locked source build completed. Rinx SDF login screen responds and paints text. Application import, 430/360 drag and live model acceptance remain separate."
+  },
+  "local_windows_bundle_digest_patch": {
+    "script": "scripts/patch_windows_bundle_digest.py",
+    "original_source_sha256_normalized": "09a8df2cf5b5208194757b20016169f8bbfa35fc62eeb66f8749c798d4c44f81",
+    "patched_source_sha256_normalized": "557a8a07ddeea9ba0a87be53bc5a71646291ce5d58f1436cdb293acf6af94d3a",
+    "applies_to": [
+      "Rinx/vendor/octosense-app-contract/src/bundle.rs",
+      "OctoSense-App-Hub/crates/app-contract/src/bundle.rs"
+    ],
+    "reason": "Canonical slash paths preserve the original cross-platform bundle digest."
   }
 }

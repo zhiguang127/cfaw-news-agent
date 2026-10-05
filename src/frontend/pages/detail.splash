@@ -8,13 +8,31 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
             else if article_state.state == "ready" { Small{text: "来源网页正文 · 阅读模式" draw_text.color: accent} }
             else { Small{text: "来源提供的新闻摘要"} }
             Divider{}
+            if insight_evidence_view != nil {
+                if insight_evidence_view.news_id == reading.news_id {
+                    let evidence = tracking_find(insight_evidence_view.value.run.snapshot.evidence, "news_id", reading.news_id)
+                    Section{text: "本次分析的引用定位"}
+                    Small{text: "以下保留当时使用的证据版本；网页更新后的阅读正文可能不同。"}
+                    for ref in insight_evidence_view.value.insight.evidence_refs {
+                        if ref.news_id == reading.news_id {
+                            let p = tracking_find(evidence.paragraphs, "paragraph_id", ref.paragraph_id)
+                            Text{text: ref.paragraph_id + " · " + p.text}
+                            Small{text: "引用原句：" + ref.quote draw_text.color: accent}
+                        }
+                    }
+                    if evidence.paragraphs.len() == 0 { Small{text: evidence.body_error} Text{text: evidence.summary} }
+                    Small{text: "证据抓取：" + age_label(evidence.retrieved_at)}
+                    Search{text: evidence.source_url}
+                    Divider{}
+                }
+            }
             if !story_show_analysis {
             if article_state.state == "loading" { Small{text: "正在读取来源网页正文…" draw_text.color: accent} }
             if article_state.error != "" { Small{text: article_state.error} }
             if article_state.state == "ready" {
                 for paragraph in article_state.paragraphs { Text{text: paragraph draw_text.text_style.font_size: 16 draw_text.text_style.line_spacing: 1.55} }
                 if article_state.truncated { Small{text: "正文过长，阅读模式仅展示部分段落。"} }
-                Small{text: "阅读模式可能省略原网页的图片、表格和其他内容。Agent 判断仍仅依据标题与摘要。"}
+                Small{text: "阅读模式可能省略原网页的图片、表格和其他内容。Agent 使用的证据以分析中的段落引用为准。"}
             } else {
             if reading.summary == "" { Text{text: "来源未提供摘要，请通过条目链接查看。" draw_text.color: secondary} }
             else { Text{text: reading.summary draw_text.text_style.font_size: 16 draw_text.text_style.line_spacing: 1.55} }
@@ -137,7 +155,7 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
                 }
             }
             View{width: Fill height: Fit flow: Right spacing: 10
-                if analysis_busy { SecondaryButton{text: "取消分析" on_click: || analysis_cancel()} }
+                if tracking_in_progress() { SecondaryButton{text: "取消分析" on_click: || analysis_cancel()} }
                 else { SecondaryButton{text: "分析影响" on_click: || analysis_start(reading)} }
             }
             }

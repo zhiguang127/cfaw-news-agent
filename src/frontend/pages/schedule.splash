@@ -19,6 +19,14 @@ let SchedulePage = View{visible: false width: Fill height: Fill flow: Down
                     } else { Small{text: schedule_display_time(item.start, item.timezone) + " → " + schedule_display_time(item.end, item.timezone)} }
                     Small{text: schedule_zone_label(item.timezone) + " · 24 小时制"}
                     Small{text: schedule_status_label(item)}
+                    Small{text: target_check_label("schedule", item.schedule_id, item.version)}
+                    QuietButton{text: "核对行程与消息覆盖" on_click: || trip_review_begin(item.schedule_id)}
+                    if trip_review_id == item.schedule_id {
+                        Small{text: trip_review_question(item)}
+                        Small{text: trip_review_coverage(item)}
+                        QuietButton{text: "编辑并确认补充" on_click: || schedule_begin_edit(item.schedule_id)}
+                        QuietButton{text: "检查相关消息" on_click: || tracking_start(nil)}
+                    }
                     QuietButton{text: "编辑" on_click: || schedule_begin_edit(item.schedule_id)}
                     if schedule_active(item) {
                         View{width: Fill height: Fit flow: Right spacing: 8

@@ -1,0 +1,100 @@
+fn insight_targets(snapshot){
+    let out = []
+    for topic in snapshot.topics { out.push({target_type: "topic" target_id: topic.topic_id target_version: topic.version title: topic.title mode: topic["intent_kind"]}) }
+    for schedule in snapshot.schedules { out.push({target_type: "schedule" target_id: schedule.schedule_id target_version: schedule.version title: schedule.title mode: "schedule"}) }
+    out
+}
+fn insight_target(snapshot, kind, id){
+    for target in insight_targets(snapshot) { if target.target_type == kind && target.target_id == id { return target } }
+    nil
+}
+fn insight_previous(target){
+    for i in tracking_cache.runs.len() {
+        let run = tracking_cache.runs[tracking_cache.runs.len() - 1 - i]
+        for old in insight_targets(run.snapshot) {
+            if old.target_type == target.target_type && old.target_id == target.target_id && old.target_version == target.target_version {
+                let insights = []
+                if record_array(run.result["insights"]) {
+                    for value in run.result.insights { if value.target_type == target.target_type && value.target_id == target.target_id { insights.push(value) } }
+                }
+                return {target_type: target.target_type target_id: target.target_id target_version: target.target_version
+                    run_id: run.task_id checked_at: run.checked_at insights: insights}
+            }
+        }
+    }
+    nil
+}
+fn insight_previous_for(snapshot){
+    let previous = []
+    for target in insight_targets(snapshot) { let old = insight_previous(target) if old != nil { previous.push(old) } }
+    previous
+}
+fn insight_refs_valid(refs, ids, snapshot){
+    if !record_array(refs) || refs.len() > 8 { return false }
+    for ref in refs {
+        if !record_object(ref) || !record_contains(ids, ref["news_id"]) { return false }
+        let evidence = tracking_find(snapshot.evidence, "news_id", ref.news_id)
+        if evidence == nil || !record_array(evidence["paragraphs"]) { return false }
+        let paragraph = tracking_find(evidence.paragraphs, "paragraph_id", ref["paragraph_id"])
+        if paragraph == nil || !tracking_text(ref["quote"], 400) || ref.quote.trim() == "" { return false }
+        if !regex(literal_pattern(ref.quote)).test(paragraph.text) { return false }
+    }
+    true
+}
+fn insights_validate(value, snapshot){
+    if !record_array(value["insights"]) || value.insights.len() > 6 { return tracking_invalid("invalid_schema", "每个目标最多3项变化") }
+    let counts = {} let seen = {}
+    for insight in value.insights {
+        if !record_object(insight) { return tracking_invalid("invalid_schema", "目标变化必须为对象") }
+        let target = insight_target(snapshot, insight["target_type"], insight["target_id"])
+        if target == nil || target.target_version != insight["target_version"] { return tracking_invalid("invalid_reference", "目标变化引用或版本失效") }
+        if !tracking_text(insight["issue_key"], 120) || insight.issue_key.trim() == "" || !tracking_text(insight["summary"], 600) || insight.summary.trim() == "" { return tracking_invalid("invalid_schema", "变化标识和摘要必填") }
+        if !record_contains(["new" "updated" "withdrawn" "unchanged"], insight["change_kind"]) || !record_contains(["none" "watch" "review" "unknown"], insight["decision_effect"]) { return tracking_invalid("invalid_schema", "变化或决策影响类别无效") }
+        if insight["next_step"] != nil { if !tracking_text(insight.next_step, 400) || insight.next_step.trim() == "" { return tracking_invalid("invalid_schema", "核实建议无效") } }
+        if !tracking_text(insight["material_change"], 400) || !tracking_strings(insight["uncertainties"], 6, 300) || !tracking_refs(insight["evidence_ids"], snapshot.evidence, "news_id", false) || !insight_refs_valid(insight["evidence_refs"], insight.evidence_ids, snapshot) { return tracking_invalid("invalid_reference", "变化证据/段落引用无效") }
+        if target.mode == "goal" && insight.decision_effect == "review" && insight["next_step"] == nil { return tracking_invalid("invalid_schema", "目标决策变化须给出具体核实项") }
+        if insight["proposed_action"] != nil { return tracking_invalid("invalid_schema", "目标变化不授权执行动作") }
+        if !reschedule_validate(insight["reschedule"], insight, snapshot) { return tracking_invalid("invalid_reference", "改期时间、权限或原句证据不足") }
+        if insight["reschedule"] != nil && !tracking_config.enable_reschedule_proposals { return tracking_invalid("invalid_schema", "改期阶段尚未启用，不能发布改期提案") }
+        let previous = nil
+        for old in snapshot.previous_by_target { if old.target_type == target.target_type && old.target_id == target.target_id { previous = old } }
+        if previous == nil {
+            if insight["compared_run_id"] != nil || insight.change_kind != "new" { return tracking_invalid("invalid_reference", "首次检查不得引用其他目标历史") }
+        } else if insight["compared_run_id"] != previous.run_id { return tracking_invalid("invalid_reference", "比较历史必须属于当前目标版本") }
+        if insight.change_kind == "updated" || insight.change_kind == "withdrawn" {
+            if previous == nil || insight.material_change.trim() == "" { return tracking_invalid("invalid_schema", "更新/撤回必须解释变化依据") }
+            if tracking_find(previous.insights, "issue_key", insight.issue_key) == nil { return tracking_invalid("invalid_reference", "修订或撤回了不存在的变化") }
+        }
+        let key = target.target_type + ":" + target.target_id
+        let count = counts[key] if count == nil { count = 0 } count = count + 1 counts[key] = count
+        if count > 3 || seen[key + ":" + insight.issue_key] == true { return tracking_invalid("invalid_schema", "同一目标变化重复或超限") }
+        seen[key + ":" + insight.issue_key] = true
+    }
+    for target in insight_targets(snapshot) {
+        if counts[target.target_type + ":" + target.target_id] == nil { return tracking_invalid("invalid_schema", "每个目标需明确报告变化或证据不足") }
+    }
+    {valid: true result: value error: "" message: ""}
+}
+fn insight_facts(insight, snapshot){
+    let facts = []
+    for id in insight.evidence_ids {
+        let e = tracking_find(snapshot.evidence, "news_id", id)
+        let text = {title: e.title summary: e.summary paragraphs: e["paragraphs"]}.to_json()
+        if !record_contains(facts, text) { facts.push(text) }
+    }
+    facts
+}
+fn insight_state(insight, run){
+    if insight.change_kind == "withdrawn" { return "withdrawn" }
+    let facts = insight_facts(insight, run.snapshot)
+    for i in topic_records.decisions.len() {
+        let d = topic_records.decisions[topic_records.decisions.len() - 1 - i]
+        if d["kind"] != "insight" { continue }
+        if d.target_type != insight.target_type || d.target_id != insight.target_id || d.target_version != insight.target_version || d.issue_key != insight.issue_key { continue }
+        let same = true
+        for fact in facts { if !record_contains(d.evidence_facts, fact) { same = false } }
+        if same || insight.material_change.trim() == "" { return d.state }
+    }
+    if insight.change_kind == "unchanged" { return "unchanged" }
+    "pending"
+}

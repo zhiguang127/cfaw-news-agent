@@ -9,4 +9,4 @@ let news_config = {request_timeout_seconds: 15 max_parallel_requests: 3
 let tracking_config = {max_topics: 20 max_targets: 2 max_schedules: 8 max_candidates: 8 max_rules: 6
     bm25_k1: 1.2 bm25_b: 0.75 max_bm25_terms: 24 bm25_batch_items: 2 max_bm25_body_chars: 1800
     max_input_chars: 1000 max_prompt_bytes: 32000 max_summary_chars: 1200 max_runs: 12 max_decisions: 200
-    request_timeout_seconds: 90 interrupt_timeout_seconds: 10 auto_check_delay_seconds: 0.3}
+    request_timeout_seconds: 90 interrupt_timeout_seconds: 10 auto_check_delay_seconds: 0.3 enable_reschedule_proposals: false}

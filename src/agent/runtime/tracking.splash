@@ -15,6 +15,8 @@ let agent_task = nil
 let agent_task_counter = 0
 let agent_last_error = ""
 let agent_last_category = ""
+let agent_progress_handler = |stage| {}
+fn agent_task_stage(task, stage){ task.stage = stage agent_progress_handler(stage) }
 fn agent_task_finish(task, state, error, category, result){
     if agent_task == nil { return }
     if agent_task.id != task.id || task.terminal { return }
@@ -23,7 +25,16 @@ fn agent_task_finish(task, state, error, category, result){
     analysis_busy = false analysis_terminal = true analysis_state = state
     analysis_error = error analysis_error_category = category
     agent_last_error = error agent_last_category = category
+    let published = time_now()
+    if state == "succeeded" { agent_task_stage(task, "publishing") }
     task.complete({success: state == "succeeded" result: result error: error category: category task_id: task.id})
+    let calls = agent_launch_calls[task.kind] if calls == nil { calls = 0 } agent_launch_calls[task.kind] = calls + 1
+    agent_metrics_record({task_type: task.kind task_id: task.id started_at: task.started sample_origin: agent_metrics_origin launch_id: agent_launch_id call_phase: if calls == 0 {"cold"} else {"warm"}
+        recall_seconds: task.recall_seconds session_seconds: task.session_seconds model_seconds: task.model_seconds
+        enrichment_seconds: task.enrichment_seconds
+        validation_seconds: task.validation_seconds publish_seconds: time_now() - published
+        total_seconds: time_now() - task.started input_bytes: task.input_bytes output_bytes: task.output_bytes
+        error_category: analysis_error_category success: analysis_state == "succeeded" valid_json: result != nil prompt_revision: task.snapshot["prompt_revision"]})
     intent_after_interrupt()
     if tracking_check_pending && !intent_open && !analysis_needs_reopen { tracking_schedule_check() }
 }
@@ -32,10 +43,15 @@ fn agent_task_start(kind, snapshot, prompt, current, complete){
     agent_task_counter = agent_task_counter + 1
     let task = {id: "tracking-" + time_now() + "-" + agent_task_counter kind: kind snapshot: snapshot
         current: current complete: complete terminal: false stopping: false timer: nil interrupt_timer: nil
-        stop_state: "cancelled" stop_error: "已取消请求" stop_category: "cancelled"}
+        stop_state: "cancelled" stop_error: "已取消请求" stop_category: "cancelled"
+        started: time_now() stage: "session" session_started: time_now() model_started: 0
+        recall_seconds: 0 enrichment_seconds: 0 session_seconds: 0 model_seconds: 0 validation_seconds: 0
+        input_bytes: prompt.to_bytes().len() output_bytes: 0}
+    if kind == "tracking_update" { task.recall_seconds = tracking_recall_seconds task.enrichment_seconds = tracking_enrichment_seconds task.started = tracking_started_at }
     agent_task = task analysis_request_id = task.id
     analysis_busy = true analysis_terminal = false analysis_state = "running"
     analysis_error = "" analysis_error_category = ""
+    agent_task_stage(task, "session")
     if prompt.to_bytes().len() > tracking_config.max_prompt_bytes { agent_task_finish(task, "failed", "上下文超过宿主32 KiB限制，未发送", "invalid_schema", nil) return "" }
     if !analysis_host_has("octos.session.open") || !analysis_host_has("octos.turn.start") || !analysis_host_has("octos.turn.interrupt") {
         agent_task_finish(task, "failed", "当前宿主未提供 Octos 服务；新闻浏览仍可使用", "service_unavailable", nil) return ""
@@ -45,13 +61,20 @@ fn agent_task_start(kind, snapshot, prompt, current, complete){
         if agent_task == nil { return }
         if agent_task.id != task.id || task.terminal || task.stopping { return }
         if !opened.is_ok { agent_task_finish(task, "failed", "Octos 上下文失败：" + opened.error, "service_unavailable", nil) return }
+        task.session_seconds = time_now() - task.session_started task.model_started = time_now()
+        agent_task_stage(task, "model")
         analysis_host_request("octos.turn.start", {text: prompt}, fn(reply){
             if agent_task == nil { return }
             if agent_task.id != task.id || task.terminal || task.stopping { return }
+            task.model_seconds = time_now() - task.model_started
             if !reply.is_ok { agent_task_finish(task, "failed", "Octos 请求失败：" + reply.error, "request_failed", nil) return }
             if !task.current() { agent_task_finish(task, "failed", "关注、日程、证据或决定已变化，请重新检查", "stale_context", nil) return }
             let model_text = nil if reply["data"] != nil { model_text = reply.data["text"] }
+            if record_string(model_text) { task.output_bytes = model_text.to_bytes().len() }
+            let validation_started = time_now()
+            agent_task_stage(task, "validation")
             let checked = tracking_parse(model_text, kind, snapshot)
+            task.validation_seconds = time_now() - validation_started
             if !checked.valid { agent_task_finish(task, "failed", checked.message, checked.error, nil) return }
             agent_task_finish(task, "succeeded", "", "", checked.result)
         })
@@ -79,7 +102,9 @@ fn agent_task_stop_ack(task, acknowledged){
 fn analysis_cancel(){
     tracking_check_pending = false
     if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) tracking_auto_timer = nil }
-    if tracking_status == "recalling" {
+    if tracking_status == "recalling" || tracking_status == "enriching" {
+        if tracking_recall_targets != nil { check_states_record(tracking_recall_targets, "failed", "cancelled", false) }
+        evidence_generation = evidence_generation + 1
         tracking_recall_generation = tracking_recall_generation + 1 tracking_status = "cancelled" tracking_message = "已停止候选召回"
         tracking_ui_update() return
     }

@@ -28,9 +28,11 @@ let IntentBackdrop = View{width: Fill height: Fill show_bg: true
 let IntentReveal = View{width: Fill height: Fill show_bg: true
     draw_bg +: {
         progress: uniform(0.0)
+        origin_x: uniform(1.0)
+        origin_y: uniform(0.86)
         pixel: fn(){
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            let origin = self.rect_size - vec2(54.0, 136.0)
+            let origin = vec2(54.0 + (self.rect_size.x - 108.0) * self.origin_x, 72.0 + (self.rect_size.y - 208.0) * self.origin_y)
             let radius = 28.0 + length(self.rect_size) * self.progress
             sdf.circle(origin.x, origin.y, radius + 14.0) sdf.fill(#x93a1ec22)
             sdf.circle(origin.x, origin.y, radius + 6.0) sdf.fill(#xa3b9ef45)
