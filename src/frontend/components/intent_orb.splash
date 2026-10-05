@@ -1,0 +1,57 @@
+// The reveal origin matches the floating orb's 72px hit target and insets.
+let AIOrb = ButtonFlat{width: 72 height: 72 padding: 0 margin: 0 text: "AI"
+    draw_text +: {color: white color_hover: white color_down: white text_style: theme.font_bold{font_size: 14}}
+    draw_bg +: {
+        pixel: fn(){
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let w = self.rect_size.x
+            sdf.circle(w * 0.5, w * 0.53, w * 0.49) sdf.fill(#x6b69db18)
+            sdf.circle(w * 0.5, w * 0.51, w * 0.43) sdf.fill(#x9aa8ee30)
+            let glow = clamp(1.0 - length(self.pos - vec2(0.3, 0.24)) * 1.45, 0.0, 1.0)
+            let body = mix(#x6250d8, #x5fbfe3, self.pos.x * 0.55 + (1.0 - self.pos.y) * 0.45)
+            sdf.circle(w * 0.5, w * 0.47, w * (0.38 + self.hover * 0.02))
+            sdf.fill(mix(body, #xf0f9ff, glow * glow * 0.7))
+            sdf.circle(w * 0.5, w * 0.47, w * 0.37) sdf.stroke(#xffffff45, 1.0)
+            return sdf.result
+        }
+    }
+}
+let IntentBackdrop = View{width: Fill height: Fill show_bg: true
+    draw_bg +: {
+        pixel: fn(){
+            let blue = clamp(1.0 - length((self.pos - vec2(0.88, 0.12)) * vec2(1.1, 1.5)), 0.0, 1.0)
+            let mint = clamp(1.0 - length((self.pos - vec2(0.05, 0.72)) * vec2(1.4, 1.7)), 0.0, 1.0)
+            return mix(mix(#xf8f9ff, #xe2e5ff, blue * 0.7), #xe1f3ef, mint * 0.48)
+        }
+    }
+}
+let IntentReveal = View{width: Fill height: Fill show_bg: true
+    draw_bg +: {
+        progress: uniform(0.0)
+        origin_x: uniform(1.0)
+        origin_y: uniform(0.86)
+        pixel: fn(){
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let origin = vec2(54.0 + (self.rect_size.x - 108.0) * self.origin_x, 72.0 + (self.rect_size.y - 208.0) * self.origin_y)
+            let radius = 28.0 + length(self.rect_size) * self.progress
+            sdf.circle(origin.x, origin.y, radius + 14.0) sdf.fill(#x93a1ec22)
+            sdf.circle(origin.x, origin.y, radius + 6.0) sdf.fill(#xa3b9ef45)
+            sdf.circle(origin.x, origin.y, radius)
+            let tint = mix(#x6577dc, #xf8f9ff, self.progress)
+            sdf.fill(tint)
+            return sdf.result
+        }
+    }
+}
+let IntentMode = QuietButton{width: Fill height: 38
+    draw_bg +: {border_radius: 19.0 color: #xffffffb0 color_hover: white color_down: #xe1e7ff}
+    draw_text +: {color: #x66718d color_hover: #x344775 color_down: #x344775 text_style +: {font_size: 12}}
+}
+let IntentModeActive = IntentMode{draw_bg +: {color: #x334e86 color_hover: #x3f5c97 color_down: #x2b4175}
+    draw_text +: {color: white color_hover: white color_down: white}}
+let IntentSend = Primary{width: Fill height: 48 draw_bg +: {border_radius: 24.0 color: #x425bd0 color_hover: #x536be0 color_down: #x344cb8}}
+let IntentInput = Search{height: 118 is_multiline: true padding: Inset{left: 16 right: 16 top: 16 bottom: 16}
+    draw_bg +: {border_radius: 16.0 color: #xffffffd0 color_hover: white color_focus: white color_empty: #xffffffd0
+        border_size: 1.0 border_color: #xdde3f4 border_color_hover: #xc7d3ef border_color_focus: #x8c9de1 border_color_empty: #xdde3f4}
+    draw_text +: {text_style +: {font_size: 14 line_spacing: 1.35} color_empty: #x8993aa color_empty_hover: #x8993aa}
+}

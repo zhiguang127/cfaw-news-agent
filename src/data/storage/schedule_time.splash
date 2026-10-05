@@ -1,0 +1,69 @@
+// Simple wall-clock entry; serialize to offset timestamps at the storage boundary.
+// New York uses the US DST rules effective since 2007. Ambiguous/nonexistent
+// transition hours are rejected rather than silently choosing an instant.
+fn schedule_date_at(seconds){ analysis_epoch_rfc3339(seconds).split("T")[0] }
+fn schedule_sunday(year, month, occurrence){
+    let first = analysis_four_digits(year) + "-" + analysis_two_digits(month) + "-01"
+    let days = schedule_instant(first + "T00:00:00Z") / 86400
+    let weekday = (days + 4) % 7
+    1 + ((7 - weekday) % 7) + (occurrence - 1) * 7
+}
+fn schedule_ny_offset(date, hour){
+    let parts = date.split("-")
+    let year = parts[0].to_f64()
+    let month = parts[1].to_f64()
+    let day = parts[2].to_f64()
+    if year < 2007 { return {valid: false error: "纽约时间目前支持 2007 年及以后的日期。"} }
+    let spring = schedule_sunday(year, 3, 2)
+    let autumn = schedule_sunday(year, 11, 1)
+    if month == 3 && day == spring && hour == 2 { return {valid: false error: "纽约这天切换夏令时，02 时不存在，请选择其他时间。"} }
+    if month == 11 && day == autumn && hour == 1 { return {valid: false error: "纽约这天结束夏令时，01 时会出现两次，请选择其他时间以避免歧义。"} }
+    let daylight = month > 3 && month < 11
+    if month == 3 { daylight = day > spring || (day == spring && hour >= 3) }
+    if month == 11 { daylight = day < autumn || (day == autumn && hour < 1) }
+    let offset = "-05:00"
+    if daylight { offset = "-04:00" }
+    {valid: true offset: offset}
+}
+fn schedule_entry_timestamp(date, hour_text, minute_text, zone){
+    if !regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}$").test(date) || schedule_instant(date + "T00:00:00Z") == nil {
+        return {valid: false error: "请填写有效日期，例如 2026-10-03。"}
+    }
+    if !regex("^[0-9]{1,2}$").test(hour_text.trim()) || !regex("^[0-9]{1,2}$").test(minute_text.trim()) {
+        return {valid: false error: "时间使用 24 小时制，请分别填写时（0–23）和分（0–59）。"}
+    }
+    let hour = hour_text.trim().to_f64()
+    let minute = minute_text.trim().to_f64()
+    if hour > 23 || minute > 59 { return {valid: false error: "时必须为 0–23，分必须为 0–59（24 小时制）。"} }
+    let offset = "+08:00"
+    if zone == "America/New_York" {
+        let resolved = schedule_ny_offset(date, hour)
+        if !resolved.valid { return resolved }
+        offset = resolved.offset
+    } else if zone != "Asia/Shanghai" { return {valid: false error: "请选择北京时间或美国东部时间。"} }
+    {valid: true timestamp: date + "T" + analysis_two_digits(hour) + ":" + analysis_two_digits(minute) + ":00" + offset}
+}
+fn schedule_zone_seconds(seconds, zone){
+    if zone != "America/New_York" { return seconds + 8 * 3600 }
+    let year = analysis_epoch_rfc3339(seconds).split("T")[0].split("-")[0].to_f64()
+    let spring = analysis_four_digits(year) + "-03-" + analysis_two_digits(schedule_sunday(year, 3, 2)) + "T07:00:00Z"
+    let autumn = analysis_four_digits(year) + "-11-" + analysis_two_digits(schedule_sunday(year, 11, 1)) + "T06:00:00Z"
+    let offset = -5 * 3600
+    if seconds >= schedule_instant(spring) && seconds < schedule_instant(autumn) { offset = -4 * 3600 }
+    seconds + offset
+}
+fn schedule_entry_parts(timestamp, zone){
+    let value = analysis_epoch_rfc3339(schedule_zone_seconds(schedule_instant(timestamp), zone)).split("T")
+    let clock = value[1].split(":")
+    {date: value[0] hour: clock[0] minute: clock[1]}
+}
+fn schedule_zone_label(zone){
+    if zone == "America/New_York" { return "美国东部时间（纽约）" }
+    if zone == "Asia/Shanghai" { return "北京时间" }
+    zone
+}
+fn schedule_display_time(timestamp, zone){
+    if zone != "Asia/Shanghai" && zone != "America/New_York" { return timestamp }
+    let value = schedule_entry_parts(timestamp, zone)
+    value.date + " " + value.hour + ":" + value.minute
+}

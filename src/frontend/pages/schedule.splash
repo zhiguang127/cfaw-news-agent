@@ -1,0 +1,109 @@
+let SchedulePage = View{visible: false width: Fill height: Fill flow: Down
+    ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 12
+        Heading{text: "我的日程"}
+        Small{text: "应用内日程；时间采用 24 小时制。"}
+        if schedule_warning != "" { Small{text: schedule_warning draw_text.color: accent} }
+        schedule_list := View{width: Fill height: Fit flow: Down spacing: 8 on_render: || {
+            let has_schedules = false
+            for item in user_schedules { if schedule_is_user_record(item) { has_schedules = true } }
+            if !has_schedules { Small{text: "暂无日程。添加安排后，Agent 可结合内容与地点分析影响。"} }
+            for item in user_schedules {
+                if !schedule_is_user_record(item) { continue }
+                View{width: Fill height: Fit flow: Down spacing: 3
+                    Text{text: item.title}
+                    if item["demo_preset"] == true { Small{text: "演示预设 · 可编辑或取消"} }
+                    if record_string(item["content"]) && item.content != "" { Small{text: item.content} }
+                    if record_string(item["location"]) && item.location != "" { Small{text: "地点：" + item.location} }
+                    if item["time_precision"] == "day" {
+                        Small{text: schedule_entry_parts(item.start, item.timezone).date + " · 具体时间待补充"}
+                    } else { Small{text: schedule_display_time(item.start, item.timezone) + " → " + schedule_display_time(item.end, item.timezone)} }
+                    Small{text: schedule_zone_label(item.timezone) + " · 24 小时制"}
+                    Small{text: schedule_status_label(item)}
+                    Small{text: target_check_label("schedule", item.schedule_id, item.version)}
+                    QuietButton{text: "核对行程与消息覆盖" on_click: || trip_review_begin(item.schedule_id)}
+                    if trip_review_id == item.schedule_id {
+                        Small{text: trip_review_question(item)}
+                        Small{text: trip_review_coverage(item)}
+                        QuietButton{text: "编辑并确认补充" on_click: || schedule_begin_edit(item.schedule_id)}
+                        QuietButton{text: "检查相关消息" on_click: || tracking_start(nil)}
+                    }
+                    QuietButton{text: "编辑" on_click: || schedule_begin_edit(item.schedule_id)}
+                    if schedule_active(item) {
+                        View{width: Fill height: Fit flow: Right spacing: 8
+                            QuietButton{text: "标记完成" on_click: || schedule_change_status(item.schedule_id, item.version, "completed")}
+                            QuietButton{text: "取消日程" on_click: || schedule_change_status(item.schedule_id, item.version, "cancelled")}
+                        }
+                    }
+                }
+                Divider{}
+            }
+        }}
+        Divider{}
+        schedule_editor := View{width: Fill height: Fit flow: Down spacing: 7 on_render: || {
+            if schedule_saved_view {
+                Section{text: "日程已保存"}
+                Small{text: "可在上方查看安排，或添加下一条日程。"}
+                View{width: Fill height: Fit flow: Right spacing: 8
+                    Primary{text: "添加另一条" on_click: || schedule_begin_new()}
+                    QuietButton{text: "继续编辑" on_click: || schedule_begin_edit(schedule_edit_id)}
+                }
+            } else {
+            if schedule_edit_id == nil { Section{text: "录入日程"} }
+            else { Section{text: "编辑日程"} }
+            Small{text: "日程标题"}
+            Search{text: schedule_title_draft empty_text: "例如：项目讨论" on_change: |value| {schedule_title_draft = value}}
+            Small{text: "日程内容"}
+            Search{text: schedule_content_draft empty_text: "例如：讨论新闻 Agent 的演示方案" on_change: |value| {schedule_content_draft = value}}
+            Small{text: "地点"}
+            Search{text: schedule_location_draft empty_text: "例如：会议室 / 线上会议" on_change: |value| {schedule_location_draft = value}}
+            Small{text: "时间标准（默认北京时间）"}
+            View{width: Fill height: Fit flow: Right spacing: 6
+                if schedule_timezone_draft == "Asia/Shanghai" { Pill{text: "✓ 北京时间" on_click: || schedule_pick_zone("Asia/Shanghai")} }
+                else { QuietButton{text: "北京时间" on_click: || schedule_pick_zone("Asia/Shanghai")} }
+                if schedule_timezone_draft == "America/New_York" { Pill{text: "✓ 美国东部" on_click: || schedule_pick_zone("America/New_York")} }
+                else { QuietButton{text: "美国东部" on_click: || schedule_pick_zone("America/New_York")} }
+            }
+            if schedule_timezone_draft == "America/New_York" { Small{text: "纽约时间；自动处理夏令时。"} }
+            Small{text: "日程日期"}
+            View{width: Fill height: Fit flow: Right spacing: 8
+                QuietButton{text: "今天" on_click: || schedule_pick_day(0)}
+                QuietButton{text: "明天" on_click: || schedule_pick_day(1)}
+                Search{width: Fill text: schedule_date_draft empty_text: "年-月-日" on_change: |value| {
+                    schedule_date_draft = value schedule_custom_date = true
+                    if !schedule_next_day { schedule_end_date_draft = value }
+                    else if schedule_instant(value + "T00:00:00Z") != nil { schedule_end_date_draft = schedule_date_at(schedule_instant(value + "T00:00:00Z") + 86400) }
+                }}
+            }
+            Small{text: "开始时间 · 24 小时制"}
+            View{width: Fill height: Fit flow: Right spacing: 6 align: Align{y: 0.5}
+                Search{width: 66 text: schedule_start_hour_draft empty_text: "0–23" on_change: |value| {schedule_start_hour_draft = value}}
+                Small{width: Fit text: "时"}
+                Search{width: 66 text: schedule_start_minute_draft empty_text: "0–59" on_change: |value| {schedule_start_minute_draft = value}}
+                Small{width: Fit text: "分"}
+            }
+            Small{text: "预计结束时间 · 24 小时制"}
+            View{width: Fill height: Fit flow: Right spacing: 6 align: Align{y: 0.5}
+                Search{width: 66 text: schedule_end_hour_draft empty_text: "0–23" on_change: |value| {schedule_end_hour_draft = value}}
+                Small{width: Fit text: "时"}
+                Search{width: 66 text: schedule_end_minute_draft empty_text: "0–59" on_change: |value| {schedule_end_minute_draft = value}}
+                Small{width: Fit text: "分"}
+            }
+            View{width: Fill height: Fit flow: Right spacing: 8
+                if !schedule_next_day { Pill{text: "✓ 当日结束" on_click: || schedule_pick_end_day(false)} }
+                else { QuietButton{text: "当日结束" on_click: || schedule_pick_end_day(false)} }
+                if schedule_next_day { Pill{text: "✓ 次日结束" on_click: || schedule_pick_end_day(true)} }
+                else { QuietButton{text: "次日结束" on_click: || schedule_pick_end_day(true)} }
+            }
+            if schedule_next_day { Search{text: schedule_end_date_draft empty_text: "结束日期：年-月-日" on_change: |value| {schedule_end_date_draft = value}} }
+            if schedule_edit_error != "" { Small{text: schedule_edit_error draw_text.color: accent} }
+            if schedule_allow_draft { Pill{text: "✓ 允许 Agent 提议改期" on_click: || {schedule_allow_draft = false ui.schedule_editor.render()}} }
+            else { SecondaryButton{text: "允许 Agent 提议改期（未开启）" on_click: || {schedule_allow_draft = true ui.schedule_editor.render()}} }
+            Small{text: "默认不允许改期；开启后仍须你确认，Agent 才能保存变更。"}
+            View{width: Fill height: Fit flow: Right spacing: 8
+                Primary{text: "保存日程" on_click: || schedule_save_draft()}
+                if schedule_edit_id != nil { QuietButton{text: "新建" on_click: || schedule_begin_new()} }
+            }
+            }
+        }}
+    }
+}

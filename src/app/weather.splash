@@ -1,0 +1,132 @@
+// City-based forecasts, independent of the feed's refresh and navigation state.
+// The pinned script host exposes no device-location service. Never infer the
+// user's location from a default city, timezone, account or network address.
+let weather_app_ready = false
+let weather_picker_open = false
+let weather_city_query = ""
+
+fn weather_app_rows(){
+    let city = weather_primary_city()
+    if city == nil { return [] }
+    let rows = weather_rows_by_city[city.cid]
+    if rows == nil { return [] }
+    let today = weather_time_stamp(weather_day_stamp(time_now()))
+    let out = []
+    for row in rows { if weather_time_stamp(row.day) >= today { out.push(row) } }
+    out
+}
+fn weather_today(){
+    let today = weather_day_stamp(time_now())
+    for row in weather_app_rows() { if row.day == today { return row } }
+    nil
+}
+fn weather_temperature(value){
+    if value == nil { return "—" }
+    "" + floor(value + 0.5) + "°"
+}
+fn weather_day_label(day){
+    if day == weather_day_stamp(time_now()) { return "今天" }
+    if day == weather_day_stamp(time_now() + 86400) { return "明天" }
+    let parts = day.split("-")
+    parts[1] + "." + parts[2]
+}
+fn weather_glyph_condition(row){
+    if row == nil { return 7 }
+    let code = row.code
+    if code == 0 { return 0 }
+    if code <= 2 { return 1 }
+    if code == 3 { return 2 }
+    if code == 45 || code == 48 { return 6 }
+    if code >= 95 { return 4 }
+    if (code >= 71 && code <= 77) || code == 85 || code == 86 { return 5 }
+    if code >= 51 && code <= 82 { return 3 }
+    7
+}
+fn weather_header_condition(row){
+    let city = weather_primary_city()
+    if city == nil { return "选择城市" }
+    let status = weather_status_by_city[city.cid]
+    if status.state == "loading" { return "更新中" }
+    if status.state == "error" { return "更新失败" }
+    if row == nil { return "待更新" }
+    if !weather_city_fresh_at(city.cid, time_now()) { return "缓存预报" }
+    row.condition
+}
+fn weather_app_status(){
+    let city = weather_primary_city()
+    if city == nil { return "选择所在城市或你关心的目的地，查看未来 7 天预报。" }
+    let status = weather_status_by_city[city.cid]
+    if status.state == "loading" { return "正在更新预报，已有缓存仍可查看…" }
+    if status.state == "error" { return "更新失败：" + status.error + "。可点击更新重试。" }
+    if status.fetched_at <= 0 { return "尚未获取预报，请点击更新重试。" }
+    let text = "获取于 " + age_label(status.fetched_at)
+    if !weather_city_fresh_at(city.cid, time_now()) { text = "缓存已过期 · " + text }
+    if weather_today() == nil { text = text + " · 今日预报缺失" }
+    if status.error != "" { text = text + " · " + status.error }
+    text
+}
+fn weather_choose_name(){
+    let city = weather_city_by_name(weather_city_query.trim())
+    if city == nil { notice("目录中暂无该城市，请选择下方的已支持城市。") return }
+    weather_choose_city(city.cid)
+}
+fn weather_render(){
+    ui.weather_header_content.render()
+    if detail_kind == "weather" { ui.weather_content.render() }
+}
+fn weather_app_restore(index, generation){
+    if generation != weather_generation { return }
+    if index >= weather_tracked.len() {
+        weather_app_ready = true
+        weather_render()
+        weather_fetch_cities(weather_tracked, generation)
+        weather_render()
+        return
+    }
+    let city = weather_city_by_cid(weather_tracked[index])
+    if city != nil { weather_read_cache(city) }
+    start_timeout(0.01, || weather_app_restore(index + 1, generation))
+}
+fn weather_app_boot(){
+    weather_initialize()
+    weather_selection_read()
+    weather_on_update = || weather_render()
+    start_timeout(0.01, || weather_app_restore(0, weather_generation))
+}
+fn show_weather(){
+    notice("")
+    weather_picker_open = weather_primary_city() == nil
+    weather_city_query = ""
+    show_detail("weather", "天气预报")
+}
+fn weather_choose_city(cid){
+    if !weather_app_ready { return }
+    let city = weather_city_by_cid(cid)
+    if city == nil { return }
+    if !weather_select(city.name) { notice("最多保存 12 个城市，请先移除不需要的城市。") return }
+    weather_selection_write()
+    weather_picker_open = false
+    weather_city_query = ""
+    weather_render()
+}
+fn weather_remove_city(cid){
+    if !weather_app_ready { return }
+    let kept = []
+    for id in weather_tracked { if id != cid { kept.push(id) } }
+    // Invalidate any completion for a removed city before updating selection.
+    weather_cancel()
+    weather_tracked = kept
+    if weather_primary_cid == cid { weather_primary_cid = "" }
+    weather_selection_write()
+    weather_picker_open = weather_primary_city() == nil
+    weather_fetch_cities(weather_tracked, weather_generation)
+    weather_render()
+}
+fn weather_update_selected(){
+    if !weather_app_ready { return }
+    let city = weather_primary_city()
+    if city == nil { return }
+    weather_cancel()
+    weather_fetch_city(city.cid, weather_generation)
+    weather_render()
+}

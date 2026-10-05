@@ -1,0 +1,31 @@
+let orb_drag_armed = false let orb_dragging = false
+let orb_drag_x = 1.0 let orb_drag_y = 0.86
+let orb_x = 1.0 let orb_y = 0.86
+let orb_viewport_width = 430 let orb_viewport_height = 860
+let orb_native_supported = GestureView["long_press_seconds"] != nil
+fn orb_viewport(width, height){ orb_viewport_width = width orb_viewport_height = height }
+fn orb_load(){ orb_x = agent_preferences.orb_x orb_y = agent_preferences.orb_y ui.orb_position.render() if !orb_native_supported { notice("当前宿主尚无长按拖动支持；小球仍可点击，移动需加载修补后的 Rinx") } }
+fn orb_long_press(x, y){ orb_drag_armed = true intent_orb_press() }
+fn orb_release(){ orb_drag_armed = false orb_dragging = false intent_orb_press() }
+fn orb_tap(x, y){
+    if orb_dragging || orb_drag_armed { return }
+    intent_orb_press()
+    if !intent_open { intent_begin(nil) }
+}
+fn orb_pan(dx, dy, phase, width, height){
+    // Native callback provides the actual window viewport; no assumed 430px.
+    intent_orb_press()
+    if !orb_drag_armed { return }
+    if phase == 0 { orb_drag_x = orb_x orb_drag_y = orb_y orb_dragging = true }
+    if !orb_dragging { return }
+    orb_x = min(1.0, max(0.0, orb_drag_x + dx / max(1.0, orb_viewport_width - 108)))
+    orb_y = min(1.0, max(0.0, orb_drag_y + dy / max(1.0, orb_viewport_height - 208)))
+    if phase == 2 {
+        orb_x = if orb_x < 0.5 { 0.0 } else { 1.0 }
+        let next = agent_preferences.to_json().parse_json() next.orb_x = orb_x next.orb_y = orb_y
+        let error = agent_preferences_commit(next)
+        if error != "" { notice(error) }
+        orb_drag_armed = false orb_dragging = false
+    }
+    ui.orb_position.render()
+}

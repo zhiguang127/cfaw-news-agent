@@ -1,0 +1,77 @@
+// Per-article evidence, separate from the reader's single global article_state.
+let analysis_articles = []
+let evidence_generation = 0
+let evidence_work = nil
+fn evidence_body_fingerprint(paragraphs){
+    // Two bounded polynomial checksums, not a cryptographic signature. Preserve
+    // quoted paragraphs separately; the fingerprint only invalidates caches.
+    let bytes = paragraphs.to_json().to_bytes() let a = 1 let b = 7
+    for byte in bytes { a = (a * 31 + byte) % 2147483647 b = (b * 257 + byte) % 2147483629 }
+    {bytes: bytes.len() a: a b: b}.to_json()
+}
+fn analysis_article_key(row){ tracking_article_key(row) }
+fn analysis_article_find(row){
+    if row == nil { return nil }
+    for entry in analysis_articles {
+        if entry.news_id == row.news_id && entry.content_key == analysis_article_key(row) && time_now() - entry.retrieved_at < news_config.cache_stale_seconds { return entry }
+    }
+    nil
+}
+fn analysis_article_store(row, extracted, error){
+    let paragraphs = []
+    if extracted != nil { for i text in extracted.paragraphs { paragraphs.push({paragraph_id: "p" + (i + 1) text: text}) } }
+    let truncated = false if extracted != nil { truncated = extracted.truncated }
+    let entry = {news_id: row.news_id content_key: analysis_article_key(row) source_url: row.source_url
+        retrieved_at: time_now() paragraphs: paragraphs truncated: truncated error: error
+        body_key: evidence_body_fingerprint(paragraphs)}
+    analysis_articles.retain(|old| old.news_id != row.news_id) analysis_articles.push(entry)
+    while analysis_articles.len() > 4 { analysis_articles.remove(0) }
+    entry
+}
+fn evidence_enrich(rows, current, complete){
+    evidence_generation = evidence_generation + 1
+    let generation = evidence_generation
+    evidence_work = {rows: rows current: current complete: complete generation: generation}
+    let needs_fetch = false
+    for row in rows { if article_url_allowed(row.source_url) && analysis_article_find(row) == nil { needs_fetch = true } }
+    if !needs_fetch { complete() return }
+    evidence_enrich_next(rows, 0, 0, generation, current, complete)
+}
+fn evidence_enrich_next(rows, index, fetched, generation, current, complete){
+    if generation != evidence_generation || !current() { return }
+    if index >= rows.len() || fetched >= 2 { complete() return }
+    let row = rows[index]
+    if analysis_article_find(row) != nil || !article_url_allowed(row.source_url) {
+        start_timeout(0.01, || evidence_enrich_next(rows, index + 1, fetched, generation, current, complete)) return
+    }
+    let done = false
+    let timer = start_timeout(news_config.request_timeout_seconds, || {
+        if done || generation != evidence_generation { return }
+        done = true analysis_article_store(row, nil, "正文补证据超时；仅使用真实摘要")
+        evidence_enrich_next(rows, index + 1, fetched + 1, generation, current, complete)
+    })
+    article_http_request(row.source_url, 0, fn(reply){
+        if done || generation != evidence_generation || !current() { return }
+        done = true stop_timer(timer)
+        let extracted = nil let error = ""
+        if reply.success { try { extracted = article_extract(reply.body) } { error = "正文提取失败" } }
+        else { error = "来源读取失败；仅使用真实摘要" }
+        if extracted != nil { if extracted.paragraphs.len() == 0 { error = "没有可用正文段落；仅使用真实摘要" } }
+        analysis_article_store(row, extracted, error)
+        start_timeout(0.01, || evidence_enrich_next(rows, index + 1, fetched + 1, generation, current, complete))
+    })
+}
+fn evidence_attach(snapshot, rows){
+    for e in snapshot.evidence {
+        e.paragraphs = [] e.body_key = "" e.body_truncated = false e.body_error = "未补充正文，只提供标题与摘要"
+        let row = tracking_find(rows, "news_id", e.news_id)
+        let article = analysis_article_find(row)
+        if article == nil { continue }
+        e.body_key = article.body_key e.body_error = article.error e.body_truncated = article.truncated e.body_retrieved_at = article.retrieved_at
+        let bytes = 0
+        for paragraph in article.paragraphs {
+            if e.paragraphs.len() >= 6 || bytes + paragraph.text.to_bytes().len() > 4000 { e.body_truncated = true break }
+            e.paragraphs.push(paragraph) bytes = bytes + paragraph.text.to_bytes().len()
+        }
+    }
+}

@@ -1,0 +1,139 @@
+let insights_test_passed = 0 let insights_test_failed = 0 let insights_test_failures = []
+fn insights_assert(value, label){ if value { insights_test_passed = insights_test_passed + 1 } else { insights_test_failed = insights_test_failed + 1 insights_test_failures.push(label) } }
+fn insights_tests(){
+    let topic = fixture_tracking_intent.parse_json().understanding
+    topic.topic_id = "topic-test" topic.version = 1 topic.intent_kind = "goal" topic.status = "active"
+    let snapshot = {topics: [topic] schedules: [] evidence: [{news_id: "n1" title: "固定测试：本地部署" summary: "测试摘要" paragraphs: [{paragraph_id: "p1" text: "本地部署需要核对内存。"}]}] previous_by_target: []}
+    let insight = {target_type: "topic" target_id: "topic-test" target_version: 1 issue_key: "local" change_kind: "new" summary: "固定测试：需要核对内存" decision_effect: "review" next_step: "核对实际机器内存" material_change: "" uncertainties: [] evidence_ids: ["n1"] evidence_refs: [{news_id: "n1" paragraph_id: "p1" quote: "本地部署需要核对内存。"}] compared_run_id: nil reschedule: nil}
+    let result = {insights: [insight]}
+    insights_assert(!tracking_parse(fixture_tracking_update, "tracking_update", {prompt_revision: "tracking-v2.0"}).valid, "live v2 task rejects legacy result missing insights")
+    insights_assert(insights_validate(result, snapshot).valid, "goal concrete next check with real paragraph")
+    insight.next_step = nil
+    insights_assert(!insights_validate(result, snapshot).valid, "goal review cannot omit next check")
+    topic.intent_kind = "news"
+    insights_assert(insights_validate(result, snapshot).valid, "news topic permits no forced action")
+    insight.evidence_refs[0].quote = "编造引文"
+    insights_assert(!insights_validate(result, snapshot).valid, "fabricated quote rejected")
+    insight.evidence_refs[0].quote = "本地部署需要核对内存。"
+    insight.target_version = 2
+    insights_assert(!insights_validate(result, snapshot).valid, "wrong target version rejected")
+    insight.target_version = 1 insight.compared_run_id = "other-target"
+    insights_assert(!insights_validate(result, snapshot).valid, "other target history rejected")
+    insight.compared_run_id = nil
+    let run = {snapshot: snapshot}
+    topic_records.decisions = [{kind: "insight" target_type: "topic" target_id: "topic-test" target_version: 1 issue_key: "local" state: "handled" decided_at: time_now() evidence_facts: insight_facts(insight, snapshot)}]
+    insights_assert(insight_state(insight, run) == "handled", "repeated facts stay handled")
+    snapshot.evidence[0].summary = "固定测试：新增内存条件"
+    insight.material_change = "新增明确内存要求"
+    insights_assert(insight_state(insight, run) == "pending", "material new facts reopen")
+    insight.change_kind = "withdrawn"
+    insights_assert(insight_state(insight, run) == "withdrawn", "withdrawn remains visibly withdrawn")
+    let prefs = agent_preferences.to_json().parse_json() prefs.orb_x = 2
+    insights_assert(!agent_preferences_valid(prefs), "orb must stay normalized inside viewport")
+    prefs.orb_x = 0 prefs.interval_seconds = 1
+    insights_assert(!agent_preferences_valid(prefs), "continuous checks cannot become unbounded timer")
+    topic_records.decisions = []
+    let s = {schedule_id: "trip-test" version: 1 title: "固定测试行程" content: "测试" location: "上海" start: "2026-11-20T09:00:00+08:00" end: "2026-11-20T10:00:00+08:00" timezone: "Asia/Shanghai" status: "active" allow_reschedule: true time_precision: "exact"}
+    snapshot.schedules = [s]
+    let travel = {target_type: "schedule" target_id: "trip-test" evidence_ids: ["n1"]}
+    let p = {start: "2026-11-20T11:00:00+08:00" end: "2026-11-20T12:00:00+08:00" timezone: "Asia/Shanghai" reason: "固定测试：来源有新安排" evidence_refs: [{news_id: "n1" paragraph_id: "p1" quote: "上海 2026-11-20T11:00 至 2026-11-20T12:00"}]}
+    snapshot.evidence[0].paragraphs[0].text = p.evidence_refs[0].quote
+    insights_assert(reschedule_validate(p, travel, snapshot), "exact-time sourced proposal accepted")
+    s.time_precision = "day"
+    insights_assert(!reschedule_validate(p, travel, snapshot), "date-only trip cannot auto infer exact reschedule")
+    s.time_precision = "exact" s.allow_reschedule = false
+    insights_assert(!reschedule_validate(p, travel, snapshot), "reschedule requires user opt in")
+    s.allow_reschedule = true
+    start_timeout(0.02, || insights_owner_tests(s, p))
+}
+fn insights_owner_tests(s, p){
+    user_schedules = [s] schedule_write()
+    schedule_actions.items = [{action_id: "test-action" state: "prepared" original: s.to_json().parse_json() start: p.start end: p.end created_at: time_now()}]
+    schedule_actions_commit(schedule_actions.to_json().parse_json())
+    start_timeout(0.02, || {
+    insights_assert(schedule_action_apply("test-action") == "" && schedule_find("trip-test").version == 2, "confirmation owner applies versioned write")
+    insights_assert(schedule_action_apply("test-action") == "" && schedule_find("trip-test").version == 2, "duplicate confirmation idempotent")
+    start_timeout(0.02, || {
+    insights_assert(schedule_action_undo("test-action") == "" && schedule_find("trip-test").version == 3 && schedule_find("trip-test").start == s.start, "undo restores original with new version")
+    start_timeout(0.02, || insights_evidence_tests())
+    })
+    })
+}
+let insights_fetches = 0 let insights_rows = []
+fn insights_evidence_tests(){
+    let row = news_normalize({title: "固定测试：上海交通" summary: "摘要缺事件日期" link: "https://www.airchinagroup.com/cnah/test-evidence"}, news_sources[0], time_now())
+    app_feed_rows = [row]
+    let s = schedule_find("trip-test")
+    let snapshot = tracking_snapshot([row], {topics: [] schedules: [s] legacy_interests: [] omitted_targets: 0})
+    analysis_article_store(row, {paragraphs: ["上海 2026-11-20 全天交通公告。"] truncated: false}, "")
+    evidence_attach(snapshot, [row])
+    insights_assert(snapshot.evidence[0].paragraphs[0].paragraph_id == "p1" && snapshot.evidence[0].body_retrieved_at > 0, "body retains paragraph ID and capture time")
+    let impact = {schedule_id: s.schedule_id schedule_version: s.version goal_key: "travel" impact_summary: "固定测试全天公告" event_start: "2026-11-20T00:00:00+08:00" event_end: "2026-11-21T00:00:00+08:00" event_location: "上海" overlap_reason: "日期与地点匹配" evidence_ids: [row.news_id] evidence_refs: [{news_id: row.news_id paragraph_id: "p1" quote: "上海 2026-11-20 全天交通公告。"}] uncertainties: ["实际班次待核对"] material_change: ""}
+    let insight = {target_type: "schedule" target_id: s.schedule_id target_version: s.version issue_key: "travel" change_kind: "new" summary: "固定测试：需核对班次" decision_effect: "review" next_step: "核对当天实际交通班次" material_change: "" uncertainties: ["未知班次"] evidence_ids: [row.news_id] evidence_refs: impact.evidence_refs compared_run_id: nil reschedule: nil}
+    let result = {schema_version: 2 outcome: "update" explanation: "固定测试：日期来自正文，非摘要" items: [{news_id: row.news_id relevance: "uncertain" topic_ids: [] legacy_interest_ids: [] why_related: "行程有关" evidence_ids: [row.news_id] uncertainties: [] schedule_impacts: [impact]}] insights: [insight]}
+    insights_assert(tracking_validate(result, snapshot).valid, "summary lacks date but real body supports impact")
+    impact.evidence_refs[0].quote = "上海交通公告。"
+    insights_assert(!tracking_validate(result, snapshot).valid, "unknown body date cannot imply impact")
+    impact.evidence_refs[0].quote = "上海 2026-11-20 全天交通公告。"
+    impact.event_start = "2026-11-22T00:00:00+08:00" impact.event_end = "2026-11-23T00:00:00+08:00"
+    insights_assert(!tracking_validate(result, snapshot).valid, "out of itinerary date rejected")
+    impact.event_start = "2026-11-20T00:00:00+08:00" impact.event_end = "2026-11-21T00:00:00+08:00"
+    insights_assert(tracking_snapshot_current(snapshot), "original body and target versions current")
+    analysis_article_store(row, {paragraphs: ["上海 2026-11-20 通告已撤回。"] truncated: false}, "")
+    insights_assert(!tracking_snapshot_current(snapshot), "new body fingerprint invalidates old conclusions")
+    insights_assert(regex("7天以外").test(trip_review_coverage(s)), "two-week weather cannot be treated as known forecast")
+    s.time_precision = "day"
+    insights_assert(regex("实际的出发和结束时间").test(trip_review_question(s)), "day-only trip asks one timing question")
+    s.time_precision = "exact"
+    start_timeout(0.02, || insights_action_tests(row))
+}
+fn insights_action_tests(row){
+    let s = schedule_find("trip-test")
+    let current = s.to_json().parse_json()
+    let next = schedule_actions.to_json().parse_json()
+    next.items.push({action_id: "test-conflict" state: "prepared" original: current start: "2026-11-20T13:00:00+08:00" end: "2026-11-20T14:00:00+08:00" created_at: time_now()})
+    schedule_actions_commit(next)
+    let other = schedule_create_details("固定测试冲突", "", "上海", "2026-11-20T13:00:00+08:00", "2026-11-20T14:00:00+08:00", "Asia/Shanghai", nil)
+    insights_assert(other.success && schedule_action_apply("test-conflict") != "" && schedule_find(s.schedule_id).version == current.version, "conflict preserves original schedule and prepared proposal")
+    let changed = schedule_update_options(s.schedule_id, current.version, "用户后来编辑", s.content, s.location, s.start, s.end, s.timezone, nil, true)
+    insights_assert(changed.success && schedule_action_apply("test-conflict") != "", "later edit prevents stale confirmation")
+    analysis_articles = [] insights_rows = []
+    for i in 3 { let r = row.to_json().parse_json() r.news_id = "fixture-body-" + i r.source_url = "https://www.airchinagroup.com/test/" + i insights_rows.push(r) }
+    article_http_request = |url, redirects, callback| { insights_fetches = insights_fetches + 1 callback({success: false}) }
+    evidence_enrich(insights_rows, || true, || {
+        insights_assert(insights_fetches == 2 && analysis_articles.len() == 2, "one round makes at most two body requests")
+        insights_assert(analysis_articles[0].paragraphs.len() == 0 && analysis_articles[0].error != "", "failed page keeps honest summary fallback")
+        let stale_reply = nil let completed = false
+        article_http_request = |url, redirects, callback| { stale_reply = callback }
+        analysis_articles = []
+        evidence_enrich([insights_rows[2]], || true, || {completed = true})
+        evidence_generation = evidence_generation + 1
+        stale_reply({success: true body: "<main><p>固定测试：过期正文</p></main>"})
+        insights_assert(!completed && analysis_articles.len() == 0, "cancelled body completion cannot publish")
+        start_timeout(0.02, || insights_render_fixture())
+    })
+}
+fn insights_render_fixture(){
+    let topic = fixture_tracking_intent.parse_json().understanding
+    topic.topic_id = "insights-ui-topic" topic.version = 1 topic.intent_kind = "goal" topic.status = "active"
+    topic.original_input = "固定测试：本地部署选型" topic.supplement = "" topic.created_at = time_now() topic.updated_at = time_now()
+    let next = topic_records.to_json().parse_json() next.topics = [topic] topics_commit(next)
+    let row = news_normalize({title: "固定测试：部署资源条件更新" summary: "固定测试摘要，非实时消息" link: "https://example.invalid/insights-ui"}, news_sources[0], time_now())
+    app_feed_rows = [row]
+    let snapshot = tracking_snapshot([row], {topics: [topic] schedules: [] legacy_interests: [] omitted_targets: 0})
+    let insight = {target_type: "topic" target_id: topic.topic_id target_version: 1 issue_key: "resources" change_kind: "new" summary: "固定测试：先核对机器内存再选框架" decision_effect: "review" next_step: "对照机器内存与官方部署要求" material_change: "" uncertainties: ["只有摘要，未读取正文"] evidence_ids: [row.news_id] evidence_refs: [] compared_run_id: nil reschedule: nil}
+    let result = {schema_version: 2 outcome: "update" explanation: "固定测试目标洞察" items: [{news_id: row.news_id relevance: "related" topic_ids: [topic.topic_id] legacy_interest_ids: [] why_related: "与本地部署目标相关" evidence_ids: [row.news_id] uncertainties: ["仅摘要"] schedule_impacts: []}] insights: [insight]}
+    insights_assert(tracking_publish(snapshot, tracking_input_key(snapshot), result, "insights-fixture") == "", "v2 insight persists through actual publication owner")
+    insights_assert(current_insights().len() == 1, "current target insight visible without erasing history")
+    start_timeout(0.02, || {
+        records_load() feed_initialize() weather_initialize() weather_app_ready = true
+        render_main()
+        start_timeout(0.02, || {
+            orb_load() show_analysis_results()
+            start_timeout(0.05, || {
+                fs.write("insights-report.json", {passed: insights_test_passed failed: insights_test_failed failures: insights_test_failures stage: "complete"}.to_json())
+            })
+        })
+    })
+}
+start_timeout(0.05, || insights_tests())

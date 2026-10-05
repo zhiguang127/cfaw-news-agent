@@ -1,0 +1,37 @@
+// Explicit demo context, persisted once with stable IDs. No fixture news or
+// fabricated Agent results; existing dates, edits and decisions stay intact.
+fn presets_initialize(now){
+    let next = topic_records.to_json().parse_json()
+    let topic = topic_find("preset-agent-development-v1")
+    if topic == nil && next.topics.len() < tracking_config.max_topics {
+        let preset = {topic_id: "preset-agent-development-v1" version: 1 intent_kind: "news" demo_preset: true
+            title: "Agent 领域发展" purpose: "了解 Agent 领域的新进展"
+            original_input: "演示预设：关注 Agent 领域新闻" supplement: ""
+            preferences: []
+            recall_rules: [{kind: "keyword" value: "Agent"} {kind: "keyword" value: "智能体"}]
+            status: "active" created_at: now updated_at: now}
+        preset["scope"] = ["Agent 框架、工具与应用进展"]
+        next.topics.push(preset)
+    } else if topic != nil && topic.version == 1 && topic["demo_preset"] != true {
+        for item in next.topics { if item.topic_id == topic.topic_id { item.demo_preset = true } }
+    }
+    if next.to_json() != topic_records.to_json() {
+        let error = topics_commit(next)
+        if error != "" { topic_warning = topic_warning + "演示关注未保存：" + error + "；" }
+    }
+    let trip = schedule_find("preset-shanghai-trip-v1")
+    let previous = user_schedules.to_json()
+    if trip == nil {
+        let date = schedule_date_at(schedule_zone_seconds(now, "Asia/Shanghai") + 14 * 86400)
+        let end_date = schedule_date_at(schedule_instant(date + "T00:00:00Z") + 86400)
+        user_schedules.push({schedule_id: "preset-shanghai-trip-v1" version: 1 demo_preset: true
+            title: "上海旅游" content: "演示预设：两周后去上海旅游；具体时间、班次和返程待补充"
+            location: "上海" news_keywords: ["上海" "Shanghai"] time_precision: "day"
+            start: date + "T00:00:00+08:00" end: end_date + "T00:00:00+08:00" timezone: "Asia/Shanghai"
+            status: "active" allow_reschedule: false})
+    } else if trip.version == 1 && trip["demo_preset"] != true { trip.demo_preset = true }
+    if user_schedules.to_json() != previous {
+        let error = schedule_write()
+        if error != "" { user_schedules = previous.parse_json() schedule_warn("演示行程未保存：" + error) }
+    }
+}

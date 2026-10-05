@@ -1,0 +1,14 @@
+let trip_review_id = nil
+fn trip_review_begin(id){ trip_review_id = id ui.schedule_list.render() }
+fn trip_review_question(item){
+    if item["location"] == nil || item.location.trim() == "" { return "这次行程具体到哪里？请编辑地点后确认保存。" }
+    if item["time_precision"] == "day" { return "当天实际的出发和结束时间是什么？请在编辑页填写并确认保存。" }
+    "是否已核对实际交通班次与目的地安排？可编辑补充行程内容，确认后再检查新闻。"
+}
+fn trip_review_coverage(item){
+    let count = 0
+    for id in enabled_source_ids { let source = news_source(id) if source != nil { if source.category == "travel" { count = count + 1 } } }
+    let text = "当前启用出行来源 " + count + " 个；优先已有的一手出行通告，不能覆盖所有交通或目的地消息。"
+    if schedule_instant(item.start) - time_now() > 7 * 86400 { return text + " 行程尚在7天以外，天气预报不足以判断出行。" }
+    text + " 近期天气可在天气页核对；新闻未发现影响不等于保证安全。"
+}

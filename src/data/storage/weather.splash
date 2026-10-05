@@ -1,0 +1,113 @@
+// Persisted city selection. Follows the conventions in records.splash: one
+// writer, {schema_version, ...} on disk, a warning string instead of a thrown
+// error, and the in-memory value stays usable when the write fails.
+//
+// Forecasts themselves are cache, not user records: weather_read_cache owns
+// those files and a corrupt cache degrades to "not loaded" without touching
+// anything the user authored.
+let weather_file = {path: "weather_selection_v1.json" writable: true recovered: false}
+let weather_warning = ""
+
+fn weather_warn(text){
+    if weather_warning != "" {
+        weather_warning = weather_warning + "; "
+    }
+    weather_warning = weather_warning + text
+}
+
+fn weather_selection_document_valid(value){
+    if !record_object(value) || value["schema_version"] != 1 { return false }
+    if !record_array(value["tracked"]) { return false }
+    if value["selected_city_id"] != nil {
+        if !record_string(value["selected_city_id"]) { return false }
+        if value["selected_city_id"] != "" && !record_contains(value["tracked"], value["selected_city_id"]) { return false }
+    }
+    weather_tracked_valid(value["tracked"])
+}
+
+fn weather_selection_read(){
+    let exists = false
+    try { exists = fs.exists(weather_file["path"]) } {
+        weather_file.writable = false
+        weather_warn("无法检查城市设置，原文件已保留；本次选择仅在当前会话有效")
+        return
+    }
+    if !exists { return }
+    // fs.read and parse_json are isolated in their own try, as in
+    // records.splash: a trap inside a larger try body is not dependable.
+    let raw = ""
+    try { raw = fs.read(weather_file["path"]) } { raw = "" }
+    if raw == "" {
+        weather_file.writable = false
+        weather_warn("城市设置读取失败，原文件已保留；保留当前选择")
+        return
+    }
+    let parsed = nil
+    try { parsed = raw.parse_json() } { parsed = nil }
+    if parsed == nil {
+        weather_warn("城市设置不是有效 JSON，原文件已保留；保留当前选择")
+        weather_file.writable = false
+        return
+    }
+    if !weather_selection_document_valid(parsed) {
+        weather_file.writable = false
+        weather_warn("城市设置格式不受支持，原文件已保留；保留当前选择")
+        return
+    }
+    weather_tracked = []
+    for cid in parsed["tracked"] { weather_tracked.push(cid) }
+    weather_primary_cid = ""
+    if parsed["selected_city_id"] != nil { weather_primary_cid = parsed["selected_city_id"] }
+}
+
+fn weather_selection_write(){
+    let selected = ""
+    let city = weather_primary_city()
+    if city != nil { selected = city.cid }
+    let document = {schema_version: 1 tracked: weather_tracked selected_city_id: selected}
+    if !weather_selection_document_valid(document) {
+        weather_warn("城市选择未通过校验，原文件未覆盖")
+        return false
+    }
+    if !weather_file.writable {
+        weather_warn("城市设置只读，本次选择仅在当前会话有效")
+        return false
+    }
+    let exists = false
+    try { exists = fs.exists(weather_file["path"]) } {
+        weather_file.writable = false
+        weather_warn("无法检查城市设置，原文件未覆盖")
+        return false
+    }
+    let previous = ""
+    if exists {
+        try { previous = fs.read(weather_file["path"]) } { previous = "" }
+        let parsed = nil
+        try { parsed = previous.parse_json() } { parsed = nil }
+        if !weather_selection_document_valid(parsed) {
+            weather_file.writable = false
+            weather_warn("城市设置无法读取或已变为不支持的格式，原文件未覆盖")
+            return false
+        }
+    }
+    let saved = false
+    try {
+        if exists { fs.write(weather_file["path"] + ".backup", previous) }
+        fs.write(weather_file["path"], document.to_json())
+        weather_warning = ""
+        saved = true
+    } {
+        weather_warn("城市设置保存失败，本次选择仅在当前会话有效")
+    }
+    saved
+}
+
+fn weather_load(){
+    weather_file.writable = true
+    weather_file.recovered = false
+    weather_warning = ""
+    weather_initialize()
+    weather_selection_read()
+    for city in weather_cities { weather_read_cache(city) }
+    weather_fetch_cities(weather_tracked, weather_generation)
+}

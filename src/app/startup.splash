@@ -1,0 +1,38 @@
+fn boot(){
+    records_load()
+    schedules_load()
+    history_load()
+    topics_load()
+    agent_preferences_load()
+    schedule_actions_load()
+    check_states_load()
+    agent_metrics_load()
+    agent_progress_handler = agent_progress
+    foreground_tracking_arm()
+    start_timeout(0.01, || boot_loaded())
+}
+fn boot_loaded(){
+    presets_initialize(time_now())
+    feed_initialize()
+    render_main()
+    start_timeout(0.01, || orb_load())
+    start_timeout(0.01, || weather_app_boot())
+    if records_warning != "" || schedule_warning != "" || analysis_history_warning != "" || topic_warning != "" { notice(records_warning + " " + schedule_warning + " " + analysis_history_warning + " " + topic_warning) }
+    // records_load/history_load/render_main already spent most of this 64ms
+    // slice; defer the cache restore so its first source read gets a fresh budget.
+    start_timeout(0.01, || feed_restore_cache(enabled_source_ids, 0, feed_generation, || {
+        rebuild_feed(|| {
+            render_main()
+            let demo_cache = false
+            for row in app_feed_rows { if row["demo_data"] == true { demo_cache = true } }
+            if demo_cache { notice("演示缓存仅供测试，非实时新闻；手动刷新可尝试获取真实来源。") }
+            else {
+                tracking_schedule_check()
+                let ids = feed_refresh_needed_ids(enabled_source_ids, time_now())
+                start_timeout(0.01, || refresh_sources(ids))
+            }
+        })
+    }))
+}
+// Defer until all page prototypes and widget references have been mounted.
+start_timeout(0.05, || boot())

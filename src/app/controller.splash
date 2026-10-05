@@ -1,0 +1,607 @@
+let results_pending_offset = 0
+let suggestion_focus_id = nil
+// UI actions connect repository/retrieval/ingestion; mutable navigation lives here.
+let page = "feed"
+let category = "all"
+let query = ""
+let page_filters = {feed: {category: "all" query: ""} tracking: {category: "all" query: ""} saved: {category: "all" query: ""}}
+let reading = nil
+let detail_kind = ""
+let story_show_analysis = false
+let busy = false
+let menu_open = false
+let last_swipe_refresh_at = 0
+let last_return_top_at = 0
+let settings_show_diagnostics = false
+let results_show_error_detail = false
+let analysis_check_message = ""
+let app_feed_rows = []
+let app_feed_build_task = nil
+let app_feed_build_counter = 0
+let refresh_successes_seen = 0
+let display_rows = []
+let main_render_pending = false
+let feed_render_pending = false
+let feed_render_generation = 0
+let feed_reset_scroll_pending = false
+let schedule_edit_id = nil
+let schedule_edit_version = nil
+let schedule_title_draft = ""
+let schedule_content_draft = ""
+let schedule_location_draft = ""
+let schedule_date_draft = ""
+let schedule_end_date_draft = ""
+let schedule_start_hour_draft = ""
+let schedule_start_minute_draft = ""
+let schedule_end_hour_draft = ""
+let schedule_end_minute_draft = ""
+let schedule_timezone_draft = "Asia/Shanghai"
+let schedule_next_day = false
+let schedule_custom_date = false
+let schedule_edit_error = ""
+let schedule_saved_view = false
+let schedule_allow_draft = false
+let schedule_original = nil
+let schedule_confirmation_id = nil
+let category_filters = [{id: "all" label: "全部"} {id: "tech" label: "科技"}
+    {id: "ai" label: "AI"} {id: "world" label: "国际"} {id: "finance" label: "财经"} {id: "china" label: "中文"}]
+fn age_label(seconds){
+    if seconds == nil || seconds <= 0 { return "时间未知" }
+    let delta = time_now() - seconds
+    if delta < 0 { return "来源时间晚于当前时间" }
+    if delta < 60 { return "刚刚" }
+    if delta < 3600 { return "" + floor(delta / 60) + " 分钟前" }
+    if delta < 86400 { return "" + floor(delta / 3600) + " 小时前" }
+    "" + floor(delta / 86400) + " 天前"
+}
+fn news_meta(row){
+    let label = "发布于 "
+    if row.timestamp_kind == "submitted" { label = "提交于 " }
+    row.source + " · " + label + age_label(row.published_at)
+}
+fn news_avatar(row){
+    if row.source_id == "hn" { return "HN" }
+    if row.category == "ai" { return "AI" }
+    if row.category == "china" { return "中" }
+    if row.category == "finance" { return "财" }
+    if row.category == "world" { return "世" }
+    "科"
+}
+fn source_enabled(id){ return record_contains(enabled_source_ids, id) }
+fn source_status_text(source){
+    let status = feed_status_by_source[source.id]
+    if status == nil { return "尚未请求" }
+    if status.state == "loading" { return "正在获取…" }
+    let text = "尚未请求"
+    if status.state == "error" { text = "请求失败" }
+    if status.retrieved_at > 0 {
+        text = "" + status.count + " 条 · 抓取于 " + age_label(status.retrieved_at)
+        if status.state == "cached" || time_now() - status.retrieved_at > news_config.cache_stale_seconds { text = text + " · 缓存" }
+    } else if status.state == "fresh" { text = "请求成功，暂无条目" }
+    if status.error != "" { text = text + " · " + status.error }
+    text
+}
+fn row_cache_note(row){
+    if row["demo_data"] == true { return "演示缓存 · 非实时新闻" }
+    if page == "saved" { return "收藏快照" }
+    let status = feed_status_by_source[row.source_id]
+    if status == nil { return "" }
+    if status.state == "error" { return "缓存 · 该来源刷新失败" }
+    if row.retrieved_at > 0 && time_now() - row.retrieved_at > news_config.cache_stale_seconds { return "缓存 · 超过两小时未更新" }
+    ""
+}
+fn row_match_hint(row){
+    let cached = feed_match_hints[row.news_id]
+    if cached != nil { return cached }
+    let reasons = interest_matches(row, user_interests)
+    if reasons.len() > 0 { return reasons[0] }
+    ""
+}
+fn row_is_new(row){ return records_is_unread(row.news_id) && row_match_hint(row) != "" }
+fn tracking_new_count(){
+    let count = 0
+    for row in app_feed_rows { if row_is_new(row) { count = count + 1 } }
+    count
+}
+fn visible_rows(){
+    if page == "saved" {
+        let rows = []
+        for i in user_bookmarks.len() { rows.push(user_bookmarks[user_bookmarks.len() - 1 - i]) }
+        return news_filter(rows, [], "all", false, query)
+    }
+    news_filter(app_feed_rows, [], category, false, query)
+}
+
+fn empty_text(){
+    if query != "" { return "没有匹配的新闻，试试其他关键词。" }
+    if page == "saved" { return "收藏新闻后可在这里重看；清理新闻缓存不会删除收藏。" }
+    if page == "tracking" {
+        if user_interests.len() == 0 { return "还没有关注。添加主题、关键词或关注新闻来源后，相关消息会出现在这里。" }
+        return "暂时没有与你关注内容匹配的新闻，可以刷新或调整关注。"
+    }
+    if enabled_source_ids.len() == 0 { return "尚未启用新闻源。打开左上角菜单，选择需要获取的来源。" }
+    if busy { return "正在获取真实新闻，来源完成后会逐步显示。" }
+    "暂无可显示的新闻，可从菜单查看来源状态。"
+}
+fn notice(text){ ui.feedback.set_text(text) ui.feedback_panel.set_visible(text != "") }
+fn sync_status(){
+    let failed = 0
+    for id in enabled_source_ids { if feed_status_by_source[id].state == "error" { failed = failed + 1 } }
+    let text = "" + app_feed_rows.len() + " 条新闻"
+    if busy {
+        text = text + " · 正在更新"
+        if feed_task != nil { text = text + " " + feed_task.completed + "/" + feed_task.sources.len() }
+    }
+    if page == "saved" { text = "" + user_bookmarks.len() + " 条收藏" }
+    if page == "tracking" && !busy { text = "" + display_rows.len() + " 条相关新闻" }
+    if failed > 0 && page != "saved" { text = text + " · 部分来源暂时不可用" }
+    ui.status.set_text(text)
+    ui.menu_cancel_update.set_visible(busy)
+    ui.tracking_summary.set_text("我的关注 · " + tracking_new_count() + " 条未读更新")
+    render_analysis_controls()
+}
+fn render_feed(){
+    feed_render_generation = feed_render_generation + 1
+    if feed_render_pending { return }
+    feed_render_pending = true
+    start_timeout(0.01, || {
+        // The host's growth-only GC can exhaust a bounded isolate before its
+        // next collection. Collect between events, before building a new list.
+        // Remove when host GC accounts for heap pressure; keep the 32 MiB cap.
+        mod.gc.run()
+        render_feed_now()
+    })
+}
+fn render_feed_now(){
+    // A source completion or an earlier navigation may arrive while the
+    // calendar is visible. Its hidden list can wait until browsing resumes.
+    if page == "schedule" { feed_render_pending = false sync_status() ui.tile_list.render() return }
+    let generation = feed_render_generation
+    let rows = visible_rows()
+    prepare_feed_presentation(rows, generation, fn(prepared){
+        if prepared == nil { feed_render_pending = false render_feed() return }
+        display_rows = prepared.rows feed_match_hints = prepared.matches feed_agent_hints = prepared.hints feed_schedule_matches = prepared.schedule_matches
+        feed_render_pending = false
+        render_prepared_feed()
+    })
+}
+fn render_prepared_feed(){
+    if feed_reset_scroll_pending {
+        feed_reset_scroll_pending = false
+        ui.list_container.render()
+        // Container replacement is applied after this callback. Render its
+        // new child in the next event, through the same GC-protected path.
+        render_feed()
+        return
+    }
+    ui.list.render()
+    let empty = display_rows.len() == 0
+    ui.list_container.set_visible(!empty)
+    ui.empty_panel.set_visible(empty)
+    ui.empty_message.set_text(empty_text())
+    ui.back_to_top.set_visible(!empty)
+    sync_status()
+    ui.tile_list.render()
+}
+fn render_main(){
+    if main_render_pending { return }
+    main_render_pending = true
+    start_timeout(0.01, || {
+        // Apply the latest page once, after the input callback has finished.
+        // Navigation and calendar rebuilds need the same heap protection as
+        // the feed; collecting only before a list rebuild misses these paths.
+        mod.gc.run()
+        main_render_pending = false
+        render_main_now()
+    })
+}
+fn render_main_now(){
+    // Set toolbar geometry before the asynchronous list preparation completes.
+    render_analysis_controls()
+    if page == "feed" { ui.categories.render() }
+    // Keep navigation hit targets alive while deferred page renders settle.
+    ui.feed_tab_active.set_visible(page != "schedule")
+    ui.schedule_tab_active.set_visible(page == "schedule")
+    ui.feed_filters.set_visible(page == "feed")
+    ui.tracking_header.set_visible(page == "tracking")
+    ui.bookmarks_header.set_visible(page == "saved")
+    ui.search_box.set_visible(page != "schedule")
+    ui.status.set_visible(page != "schedule")
+    ui.feed_list.set_visible(page != "schedule")
+    ui.schedule_page.set_visible(page == "schedule")
+    if page == "schedule" {
+        ui.schedule_list.render()
+        ui.schedule_editor.render()
+    } else { render_feed() }
+}
+fn select_page(id){
+    close_menu()
+    notice("")
+    if page != "schedule" { page_filters[page] = {category: category query: query} }
+    page = id
+    let filters = page_filters[id]
+    category = "all" query = ""
+    if filters != nil { category = filters.category query = filters.query }
+    reading = nil
+    detail_kind = ""
+    ui.search.set_text(query)
+    ui.navigation.set_visible(true)
+    ui.detail_pane.set_visible(false)
+    ui.main.set_visible(true)
+    if id == "schedule" && schedule_date_draft == "" { schedule_reset_draft() }
+    render_main()
+}
+fn schedule_reset_draft(){
+    schedule_saved_view = false schedule_original = nil schedule_allow_draft = false
+    schedule_edit_id = nil schedule_edit_version = nil
+    schedule_title_draft = "" schedule_content_draft = "" schedule_location_draft = ""
+    schedule_timezone_draft = "Asia/Shanghai"
+    schedule_date_draft = schedule_date_at(schedule_zone_seconds(time_now(), schedule_timezone_draft))
+    schedule_end_date_draft = schedule_date_draft
+    schedule_start_hour_draft = "" schedule_start_minute_draft = ""
+    schedule_end_hour_draft = "" schedule_end_minute_draft = ""
+    schedule_next_day = false schedule_custom_date = false schedule_edit_error = ""
+}
+fn schedule_begin_new(){
+    schedule_reset_draft()
+    ui.schedule_editor.render()
+}
+fn schedule_pick_zone(zone){
+    if schedule_edit_id != nil && zone != schedule_timezone_draft {
+        let start = schedule_entry_timestamp(schedule_date_draft, schedule_start_hour_draft, schedule_start_minute_draft, schedule_timezone_draft)
+        let end_date = schedule_date_draft
+        if schedule_next_day { end_date = schedule_end_date_draft }
+        let end = schedule_entry_timestamp(end_date, schedule_end_hour_draft, schedule_end_minute_draft, schedule_timezone_draft)
+        if !start.valid || !end.valid { schedule_edit_error = "请先填写有效时间，再切换时区。" ui.schedule_editor.render() return }
+        let converted_start = schedule_entry_parts(start.timestamp, zone)
+        let converted_end = schedule_entry_parts(end.timestamp, zone)
+        schedule_date_draft = converted_start.date schedule_end_date_draft = converted_end.date
+        schedule_start_hour_draft = converted_start.hour schedule_start_minute_draft = converted_start.minute
+        schedule_end_hour_draft = converted_end.hour schedule_end_minute_draft = converted_end.minute
+        schedule_next_day = converted_start.date != converted_end.date
+    }
+    schedule_timezone_draft = zone schedule_edit_error = ""
+    if schedule_edit_id == nil && !schedule_custom_date {
+        schedule_date_draft = schedule_date_at(schedule_zone_seconds(time_now(), zone))
+        schedule_end_date_draft = schedule_date_draft
+        if schedule_next_day { schedule_end_date_draft = schedule_date_at(schedule_instant(schedule_date_draft + "T00:00:00Z") + 86400) }
+    }
+    ui.schedule_editor.render()
+}
+fn schedule_pick_day(days){
+    schedule_date_draft = schedule_date_at(schedule_zone_seconds(time_now(), schedule_timezone_draft) + days * 86400)
+    schedule_end_date_draft = schedule_date_draft
+    schedule_custom_date = true schedule_next_day = false schedule_edit_error = ""
+    ui.schedule_editor.render()
+}
+fn schedule_pick_end_day(next_day){
+    schedule_next_day = next_day
+    schedule_end_date_draft = schedule_date_draft
+    if next_day && schedule_instant(schedule_date_draft + "T00:00:00Z") != nil {
+        schedule_end_date_draft = schedule_date_at(schedule_instant(schedule_date_draft + "T00:00:00Z") + 86400)
+    }
+    ui.schedule_editor.render()
+}
+fn schedule_begin_edit(id){
+    let item = schedule_find(id)
+    if item == nil { notice("找不到日程，请刷新") return }
+    schedule_saved_view = false schedule_original = item.to_json().parse_json()
+    schedule_allow_draft = item["allow_reschedule"] == true
+    schedule_edit_id = id schedule_edit_version = item.version
+    schedule_title_draft = item.title schedule_content_draft = "" schedule_location_draft = ""
+    if record_string(item["content"]) { schedule_content_draft = item.content }
+    if record_string(item["location"]) { schedule_location_draft = item.location }
+    schedule_timezone_draft = "Asia/Shanghai"
+    if item.timezone == "America/New_York" { schedule_timezone_draft = item.timezone }
+    let start = schedule_entry_parts(item.start, schedule_timezone_draft)
+    let end = schedule_entry_parts(item.end, schedule_timezone_draft)
+    schedule_date_draft = start.date schedule_end_date_draft = end.date
+    schedule_start_hour_draft = start.hour schedule_start_minute_draft = start.minute
+    schedule_end_hour_draft = end.hour schedule_end_minute_draft = end.minute
+    schedule_next_day = end.date != start.date schedule_custom_date = true schedule_edit_error = ""
+    ui.schedule_editor.render()
+}
+fn schedule_save_draft(){
+    schedule_edit_error = ""
+    let start = schedule_entry_timestamp(schedule_date_draft.trim(), schedule_start_hour_draft, schedule_start_minute_draft, schedule_timezone_draft)
+    let end_date = schedule_date_draft.trim()
+    if schedule_next_day { end_date = schedule_end_date_draft.trim() }
+    let end = schedule_entry_timestamp(end_date, schedule_end_hour_draft, schedule_end_minute_draft, schedule_timezone_draft)
+    if !start.valid { schedule_edit_error = "开始时间：" + start.error ui.schedule_editor.render() return }
+    if !end.valid { schedule_edit_error = "预计结束时间：" + end.error ui.schedule_editor.render() return }
+    if schedule_title_draft.trim() == "" { schedule_edit_error = "请填写日程标题。" ui.schedule_editor.render() return }
+    if !schedule_interval(start.timestamp, end.timestamp) {
+        schedule_edit_error = "预计结束时间必须晚于开始时间；跨午夜请选择次日结束。"
+        ui.schedule_editor.render() return
+    }
+    let result = nil
+    let stored_start = start.timestamp
+    let stored_end = end.timestamp
+    let stored_zone = schedule_timezone_draft
+    // Preserve seconds and original timezone when visible minute values did not change.
+    if schedule_original != nil {
+        let old_start = schedule_entry_parts(schedule_original.start, schedule_timezone_draft)
+        let old_end = schedule_entry_parts(schedule_original.end, schedule_timezone_draft)
+        if old_start.date == schedule_date_draft && old_start.hour.to_f64() == schedule_start_hour_draft.trim().to_f64() && old_start.minute.to_f64() == schedule_start_minute_draft.trim().to_f64() {
+            stored_start = schedule_original.start
+        }
+        if old_end.date == end_date && old_end.hour.to_f64() == schedule_end_hour_draft.trim().to_f64() && old_end.minute.to_f64() == schedule_end_minute_draft.trim().to_f64() {
+            stored_end = schedule_original.end
+        }
+        if stored_start == schedule_original.start && stored_end == schedule_original.end { stored_zone = schedule_original.timezone }
+    }
+    if schedule_edit_id == nil { result = schedule_create_options(schedule_title_draft, schedule_content_draft, schedule_location_draft, stored_start, stored_end, stored_zone, nil, schedule_allow_draft) }
+    else { result = schedule_update_options(schedule_edit_id, schedule_edit_version, schedule_title_draft, schedule_content_draft, schedule_location_draft, stored_start, stored_end, stored_zone, nil, schedule_allow_draft) }
+    if !result.success {
+        schedule_edit_error = result.error
+        if result.error == "Schedule conflict" { schedule_edit_error = "该时间段与已有日程冲突，请调整开始或结束时间。" }
+        if result.error == "Schedule version changed; review again" { schedule_edit_error = "日程已被修改，请重新打开编辑后保存。" }
+        ui.schedule_editor.render() return
+    }
+    analysis_check_message = ""
+    tracking_schedule_check()
+    notice("日程已保存")
+    schedule_edit_id = result.item.schedule_id schedule_edit_version = result.item.version
+    schedule_saved_view = true schedule_original = result.item.to_json().parse_json()
+    ui.schedule_list.render() ui.schedule_editor.render()
+}
+fn schedule_change_status(id, version, status){
+    let error = schedule_set_status(id, version, status)
+    if error != "" { notice(error) }
+    else { analysis_check_message = "" notice("日程状态已更新") tracking_schedule_check() }
+    if schedule_edit_id == id { schedule_saved_view = true }
+    ui.schedule_list.render() ui.schedule_editor.render()
+}
+fn schedule_begin_confirm(id){
+    let item = history_find_suggestion(id)
+    if item == nil || item.state != "pending" { notice("建议已变化，请刷新详情") return }
+    schedule_confirmation_id = id
+    ui.story_content.render()
+}
+fn schedule_cancel_confirm(){ schedule_confirmation_id = nil ui.story_content.render() }
+fn schedule_confirm(){
+    if schedule_confirmation_id == nil { return }
+    let result = history_confirm_suggestion(schedule_confirmation_id)
+    if result.success {
+        schedule_confirmation_id = nil
+        analysis_check_message = ""
+        notice("已确认；日程与建议状态已保存")
+        ui.schedule_list.render()
+    } else { notice(result.error) }
+    ui.story_content.render()
+    render_analysis_controls()
+}
+fn pick_category(id){ category = id ui.categories.render() render_feed() }
+fn set_query(text){ query = text.trim() render_feed() }
+fn return_feed_top(){
+    last_return_top_at = time_now()
+    // The pinned script UI has no scroll-position method. Recreate only the
+    // scroll child for this explicit action; ordinary updates retain it.
+    feed_reset_scroll_pending = true
+    render_feed()
+}
+fn rebuild_feed(complete){
+    let source_key = enabled_source_ids.to_json()
+    if app_feed_build_task != nil {
+        if app_feed_build_task.generation == feed_generation && app_feed_build_task.source_key == source_key {
+            app_feed_build_task.complete = complete
+            return
+        }
+    }
+    app_feed_build_counter = app_feed_build_counter + 1
+    let task = {id: app_feed_build_counter generation: feed_generation source_key: source_key complete: complete}
+    app_feed_build_task = task
+    rebuild_feed_step(task)
+}
+fn rebuild_feed_step(task){
+    let data_revision = feed_data_revision
+    feed_build_rows(enabled_source_ids, fn(rows){
+        if app_feed_build_task == nil || app_feed_build_task.id != task.id || task.generation != feed_generation { return }
+        app_feed_rows = rows
+        // Publish this snapshot while newer sources accumulate; never restart
+        // an in-flight sort for every HTTP completion.
+        if data_revision != feed_data_revision {
+            render_feed()
+            start_timeout(0.01, || rebuild_feed_step(task))
+        } else { app_feed_build_task = nil task.complete() }
+    })
+}
+fn refresh(){
+    analysis_check_message = ""
+    if busy { feed_cancel() busy = false render_feed() notice("已取消等待；迟到结果不会更新新闻。") return }
+    refresh_sources(enabled_source_ids)
+}
+fn feed_swipe_refresh(dx, dy){
+    if dy >= 0 || dx != 0 || page != "feed" || detail_kind != "" || busy { return }
+    let checked_at = time_now()
+    if checked_at - last_swipe_refresh_at < news_config.refresh_gesture_cooldown_seconds { return }
+    last_swipe_refresh_at = checked_at
+    refresh()
+}
+fn refresh_sources(ids){
+    if ids.len() == 0 { return }
+    busy = true
+    refresh_successes_seen = 0
+    let generation = feed_generation + 1
+    feed_refresh(ids, || {
+        if feed_task.successes > refresh_successes_seen {
+            refresh_successes_seen = feed_task.successes
+            rebuild_feed(|| render_feed())
+        } else { sync_status() }
+        if detail_kind == "settings" { ui.source_list.render() }
+    }, fn(successes){
+        if successes == 0 { busy = false render_feed() if detail_kind == "settings" { ui.source_list.render() } return }
+        rebuild_feed(|| {
+            records_check_tracking(app_feed_rows, user_interests, time_now(), || generation == feed_generation, fn(error){
+                busy = false
+                tracking_schedule_check()
+                if error != "" { notice(error) }
+                render_feed()
+                if detail_kind == "settings" { ui.source_list.render() }
+            })
+        })
+    }, news_http_request)
+    sync_status()
+}
+fn analysis_has_focus(){
+    for item in topic_records.topics { if topic_is_user_record(item) && item.status == "active" { return true } }
+    for interest in user_interests { if interest.enabled { return true } }
+    for schedule in user_schedules { if schedule_is_user_record(schedule) && schedule_active(schedule) { return true } }
+    false
+}
+
+fn suggestion_attention_count(){ if agent_preferences.paused { return 0 } max(tracking_active_reminders().len(), insight_attention_count()) }
+
+fn render_analysis_controls(){
+    let context = feed_context_state()
+    ui.feed_context.set_visible(context.has_context && page == "feed" && detail_kind == "")
+    if page == "feed" && detail_kind == "" { ui.feed_context_content.render() }
+    let count = suggestion_attention_count()
+    ui.menu_badge.set_visible(count > 0)
+    ui.suggestions_button.set_text("分析与建议")
+    if count > 0 { ui.suggestions_button.set_text("分析与建议 · " + count + " 待处理") }
+    ui.pending_suggestions.set_visible(count > 0 && page == "feed" && detail_kind == "")
+    ui.pending_suggestions.set_text("" + count + " 项变化待关注 ›")
+    ui.manage_tracking_button.set_visible(analysis_has_focus())
+    if page == "tracking" { ui.tracking_analysis_actions.render() }
+}
+fn analysis_check_status(){
+    if analysis_needs_reopen { return "中断未确认，请重新打开应用" }
+    if analysis_busy && analysis_terminal { return "正在等待中断确认…" }
+    tracking_message
+}
+
+fn analysis_error_hint(){
+    if analysis_needs_reopen { return "分析尚未停止，请重新打开应用后再试。" }
+    if analysis_error_category == "service_unavailable" { return "分析服务不可用，请检查 Rinx 中的助手配置。" }
+    if analysis_error_category == "stale_context" { return "新闻或你的安排已变化，请重新分析。" }
+    if analysis_error_category == "storage_error" { return "分析已返回，但结果尚未完整保存，请重试保存。" }
+    if analysis_error_category == "timeout" { return "分析等待超时，请稍后重试。" }
+    "本次分析未能完成，可查看具体原因后重试。"
+}
+fn analysis_status_for_news(id){
+    if analysis_busy { return "助手请求正在进行，可继续浏览或取消" }
+    if tracking_current_values()[id] != nil { return "本条追踪结果已保存" }
+    if tracking_status == "failed" || tracking_status == "stale" { return tracking_message }
+    "尚无当前有效的追踪结果"
+}
+fn analyze_changes(){ tracking_start(nil) }
+fn show_analysis_results(){ results_pending_offset = 0 results_show_error_detail = false schedule_confirmation_id = nil notice("") render_analysis_controls() show_detail("results", "分析与建议") }
+fn retry_analysis_save(){
+    let error = history_retry_save()
+    if error == "" { notice("历史已保存") } else { notice(error) }
+    ui.results_content.render()
+}
+fn open_analysis_record(id){
+    let item = history_find_analysis(id)
+    if item == nil { return }
+    let row = analysis_current_row(item.news_id)
+    if row == nil { row = item["news_snapshot"] }
+    if row == nil { notice("旧分析没有新闻快照；请刷新来源重新查找。") return }
+    open_story(row)
+    story_show_analysis = true
+    ui.story_content.render()
+}
+fn open_suggestion_record(id){
+    let item = history_find_suggestion(id)
+    if item == nil { return }
+    let row = analysis_current_row(item.news_id)
+    if row == nil { row = item["news_snapshot"] }
+    if row == nil { open_analysis_record(item.analysis_id) return }
+    open_story(row)
+    story_show_analysis = true
+    suggestion_focus_id = id
+    ui.story_content.render()
+}
+fn toggle_follow(row){
+    analysis_check_message = ""
+    let error = ""
+    if records_has_interest("source", row.source) { error = records_remove_interest("source:" + row.source) }
+    else { error = records_add_interest("source", row.source) }
+    notice(error)
+    render_feed()
+    if detail_kind == "story" { ui.story_content.render() }
+    render_analysis_controls()
+    tracking_schedule_check()
+}
+fn toggle_save(row){
+    let existed = records_is_bookmarked(row.news_id)
+    let error = records_toggle_bookmark(row)
+    if error != "" { notice(error) }
+    else if existed { notice("已取消收藏") } else { notice("已保存收藏，重开应用仍可查看") }
+    render_feed()
+    if detail_kind == "story" { ui.story_content.render() }
+}
+fn render_detail(){
+    if detail_kind == "story" { ui.story_content.render() }
+    if detail_kind == "settings" { ui.source_list.render() }
+    if detail_kind == "tracking" { ui.interest_list.render() }
+    ui.story_panel.set_visible(detail_kind == "story")
+    ui.settings_panel.set_visible(detail_kind == "settings")
+    ui.tracking_panel.set_visible(detail_kind == "tracking")
+    ui.results_panel.set_visible(detail_kind == "results")
+    ui.weather_panel.set_visible(detail_kind == "weather")
+    if detail_kind == "intent" { intent_render() }
+    if detail_kind == "results" { ui.results_content.render() }
+    if detail_kind == "weather" { ui.weather_content.render() }
+}
+fn show_detail(kind, title){
+    close_menu()
+    if kind != "story" { article_cancel() }
+    detail_kind = kind
+    ui.detail_title.set_text(title)
+    ui.main.set_visible(false)
+    ui.navigation.set_visible(false)
+    ui.search_box.set_visible(false)
+    ui.detail_pane.set_visible(true)
+    render_detail()
+}
+fn open_story(row){
+    if intent_open || intent_motion_active || time_now() - last_intent_orb_press_at < news_config.overlay_tap_guard_seconds { return }
+    // The pinned GestureView can also deliver a tap through a sibling overlay.
+    // Remove this guard when host capture excludes overlapping sibling controls.
+    if time_now() - last_return_top_at < news_config.overlay_tap_guard_seconds { return }
+    suggestion_focus_id = nil
+    schedule_confirmation_id = nil
+    if !analysis_busy { analysis_result = nil analysis_state = "idle" }
+    reading = row
+    story_show_analysis = false
+    let error = records_mark_read(row.news_id)
+    notice(error)
+    article_load(row, || { if detail_kind == "story" { ui.story_content.render() } })
+    show_detail("story", "新闻详情")
+}
+fn update_suggestion_state(id, state){
+    if state == "accepted" { schedule_begin_confirm(id) return }
+    let error = history_update_suggestion_state(id, state)
+    if error != "" { notice(error) }
+    else { notice("建议状态已更新：" + history_state_label(state)) }
+    if detail_kind == "story" { ui.story_content.render() }
+    render_analysis_controls()
+}
+fn close_detail(){
+    if detail_kind == "intent" && intent_open { intent_cancel() return }
+    close_menu()
+    article_cancel()
+    detail_kind = ""
+    reading = nil
+    render_analysis_controls()
+    ui.detail_pane.set_visible(false)
+    ui.main.set_visible(true)
+    ui.navigation.set_visible(true)
+    ui.search_box.set_visible(page != "schedule")
+    // Preserve the existing ScrollYView and its position on return.
+    render_feed()
+}
+fn show_settings(){ notice("") settings_show_diagnostics = false ui.diagnostics_controls.render() show_detail("settings", "设置") }
+fn close_menu(){ menu_open = false ui.menu_panel.set_visible(false) }
+fn toggle_menu(){ menu_open = !menu_open ui.menu_panel.set_visible(menu_open) }
+fn manage_tracking(){ notice("") show_detail("tracking", "管理关注") }
+fn remove_interest(id){ analysis_check_message = "" notice(records_remove_interest(id)) render_detail() render_feed() tracking_schedule_check() }
+fn toggle_source(id){
+    analysis_check_message = ""
+    if busy { feed_cancel() busy = false }
+    notice(records_toggle_source(id))
+    render_detail()
+    rebuild_feed(|| render_feed())
+}

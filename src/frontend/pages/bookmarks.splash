@@ -1,0 +1,1 @@
+let BookmarksHeader = Small{visible: false text: "你的收藏 · 按收藏顺序排列，重开应用保留" padding: Inset{left: 18 right: 18 top: 14 bottom: 8}}

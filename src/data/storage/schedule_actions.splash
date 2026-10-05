@@ -1,0 +1,64 @@
+// Write-ahead action journal: a failed final audit can be reconciled by its ID.
+let schedule_actions = {schema_version: 1 revision: 0 items: []}
+let schedule_actions_file = {path: "schedule_actions_v1.json" revision: 0 writable: true recovered: false}
+fn schedule_actions_valid(v){
+    if !record_object(v) || v["schema_version"] != 1 || !record_number(v["revision"]) || !record_array(v["items"]) || v.items.len() > 32 { return false }
+    let ids = []
+    for a in v.items {
+        if !record_object(a) || !tracking_text(a["action_id"], 300) || record_contains(ids, a.action_id) { return false } ids.push(a.action_id)
+        if !record_contains(["prepared" "applied" "undone"], a["state"]) || !schedule_valid(a["original"]) || !schedule_interval(a["start"], a["end"]) || !record_number(a["created_at"]) { return false }
+    }
+    true
+}
+fn schedule_actions_load(){
+    if !fs.exists(schedule_actions_file.path) { return }
+    try {
+        let v = fs.read(schedule_actions_file.path).parse_json()
+        if schedule_actions_valid(v) { schedule_actions = v schedule_actions_file.revision = v.revision }
+        else { schedule_actions_file.writable = false notice("改期历史损坏，原文件保留") }
+    } { schedule_actions_file.writable = false notice("改期历史读取失败，原文件保留") }
+}
+fn schedule_actions_commit(next){
+    next.revision = schedule_actions.revision + 1
+    let error = tracking_store_write(schedule_actions_file, next, schedule_actions_valid)
+    if error == "" { schedule_actions = next } error
+}
+fn schedule_action_find(id){ for a in schedule_actions.items { if a.action_id == id { return a } } nil }
+fn schedule_action_apply(id){
+    let a = schedule_action_find(id)
+    if a == nil { return "没有已预览的提案" }
+    if a.state == "applied" || a.state == "undone" { return "" }
+    let original = a.original
+    let error = schedule_refresh() if error != "" { return error }
+    let current = schedule_find(original.schedule_id)
+    if current == nil || !schedule_active(current) { return "日程已取消或不存在" }
+    if current["last_suggestion_id"] != id {
+        if current.version != original.version || current.to_json() != original.to_json() { return "日程已变化，请重新检查与预览" }
+        let reply = schedule_update_options(original.schedule_id, original.version, original.title, original.content, original.location, a.start, a.end, original.timezone, id, original["allow_reschedule"] == true)
+        if !reply.success { return reply.error }
+    } else if current.version != original.version + 1 || current.start != a.start || current.end != a.end { return "改期记录与当前版本不符" }
+    let next = schedule_actions.to_json().parse_json()
+    let changed = tracking_find(next.items, "action_id", id)
+    changed.state = "applied" changed.applied_version = schedule_find(original.schedule_id).version changed.applied_at = time_now()
+    error = schedule_actions_commit(next)
+    if error != "" { return "日程已改期，历史待保存；重试同一提案可恢复：" + error }
+    ""
+}
+fn schedule_action_undo(id){
+    let a = schedule_action_find(id) if a == nil { return "改期记录不存在" }
+    if a.state == "undone" { return "" }
+    if a.state != "applied" { return "请先恢复改期记录" }
+    let error = schedule_refresh() if error != "" { return error }
+    let current = schedule_find(a.original.schedule_id)
+    if current == nil || !schedule_active(current) { return "日程已不存在或已结束，未撤回" }
+    let undo_id = "undo:" + id
+    if current["last_suggestion_id"] != undo_id {
+        if current.version != a.applied_version || current["last_suggestion_id"] != id { return "改期后日程又被编辑，不能覆盖新版本" }
+        let o = a.original
+        let reply = schedule_update_options(o.schedule_id, a.applied_version, o.title, o.content, o.location, o.start, o.end, o.timezone, undo_id, o["allow_reschedule"] == true)
+        if !reply.success { return reply.error }
+    } else if current.version != a.applied_version + 1 { return "撤回后日程又被编辑" }
+    let next = schedule_actions.to_json().parse_json()
+    let changed = tracking_find(next.items, "action_id", id) changed.state = "undone" changed.undone_at = time_now()
+    schedule_actions_commit(next)
+}

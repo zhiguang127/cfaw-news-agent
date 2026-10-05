@@ -1,0 +1,42 @@
+# Credentials and publisher signing keys (examples may be shared)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+secrets/
+
+# Local dependency checkouts, build output and app/test state
+/.dev/
+/build/
+/dist/
+target/
+.local-state/
+.test-state/
+*.log
+
+# Python environments, bytecode and tool caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Keep dev-dependencies.lock.json in Git for reproducible tool and source versions.

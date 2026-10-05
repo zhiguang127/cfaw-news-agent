@@ -1,0 +1,85 @@
+// Pure suggestion lifecycle helpers. The application owns persistence and
+// user decisions; these functions only classify a validated proposal.
+// Canonical IDs use numeric UTF-8 byte comparison: string '<' is not lexical
+// in OctoScript. Keys are structured JSON, not delimiter-concatenated user text.
+fn change_text_before(first, second){
+    let a = first.to_bytes()
+    let b = second.to_bytes()
+    for i in min(a.len(), b.len()) { if a[i] != b[i] { return a[i] < b[i] } }
+    a.len() < b.len()
+}
+fn change_sorted(values){
+    let out = []
+    for value in values {
+        if analysis_has_id(out, value) { continue }
+        let next = []
+        let placed = false
+        for old in out { if !placed && change_text_before(value, old) { next.push(value) placed = true } next.push(old) }
+        if !placed { next.push(value) }
+        out = next
+    }
+    out
+}
+fn change_same_ids(a, b){
+    if a.len() != b.len() { return false }
+    for id in a { if !analysis_has_id(b, id) { return false } }
+    true
+}
+
+fn change_join(values){
+    let text = ""
+    for value in values { if text != "" { text = text + "," } text = text + value }
+    text
+}
+
+fn analysis_suggestion_key(suggestion){
+    let schedule = "null"
+    if suggestion.schedule_id != nil { schedule = suggestion.schedule_id }
+    let version = "null"
+    if suggestion.schedule_version != nil { version = "" + suggestion.schedule_version }
+    let action = "null"
+    if suggestion.proposed_action != nil {
+        action = suggestion.proposed_action.kind + "|" + schedule_instant(suggestion.proposed_action.start) + "|" + schedule_instant(suggestion.proposed_action.end)
+    }
+    let goal = suggestion["goal_key"]
+    if !record_string(goal) || goal.trim() == "" {
+        goal = suggestion["change_summary"]
+        if suggestion.proposed_action != nil { goal = suggestion.proposed_action.title }
+    }
+    {interests: change_sorted(suggestion.interest_ids) evidence: change_sorted(suggestion.evidence_ids)
+        schedule: schedule version: version goal: goal action: action}.to_json()
+}
+
+fn analysis_business_key(suggestion){
+    let goal = suggestion["goal_key"]
+    if !record_string(goal) || goal.trim() == "" {
+        goal = suggestion.change_summary
+        if suggestion.proposed_action != nil { goal = suggestion.proposed_action.title }
+    }
+    let kind = nil
+    if suggestion.proposed_action != nil { kind = suggestion.proposed_action.kind }
+    {interests: change_sorted(suggestion.interest_ids) evidence: change_sorted(suggestion.evidence_ids)
+        schedule: suggestion.schedule_id goal: goal kind: kind}.to_json()
+}
+
+fn analysis_evidence_changed(previous_ids, current_ids){
+    let old = change_join(change_sorted(previous_ids))
+    let current = change_join(change_sorted(current_ids))
+    old != current
+}
+
+fn analysis_should_reconsider(previous, current, current_schedule_version){
+    if previous == nil { return {state: "pending" reason: "new_suggestion"} }
+    if previous.state == "accepted" && previous.deduplication_key == analysis_suggestion_key(current) { return {state: "suppressed" reason: "accepted_same_proposal"} }
+    if current_schedule_version != nil && previous.schedule_version != nil && current_schedule_version != previous.schedule_version {
+        return {state: "stale" reason: "schedule_version_changed"}
+    }
+    let old_key = previous.deduplication_key
+    let new_key = analysis_suggestion_key(current)
+    if old_key == new_key && previous.state != "withdrawn" { return {state: "suppressed" reason: "same_validated_proposal"} }
+    if previous.state == "dismissed" && !analysis_evidence_changed(previous.evidence_ids, current.evidence_ids) {
+        return {state: "suppressed" reason: "dismissed_without_material_evidence"}
+    }
+    if previous.state == "pending" { return {state: "superseded" reason: "material_update"} }
+    {state: "pending" reason: "material_new_evidence_or_action"}
+}

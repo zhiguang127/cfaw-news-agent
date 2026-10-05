@@ -1,0 +1,255 @@
+// App-owned calendar. RFC3339 offsets define instants; timezone is a display label.
+let user_schedules = []
+let schedule_file = {path: "schedules_v1.json" writable: true recovered: false}
+let schedule_warning = ""
+let schedule_counter = 0
+fn schedule_warn(text){ if schedule_warning != "" { schedule_warning = schedule_warning + "; " } schedule_warning = schedule_warning + text }
+fn schedule_active(item){ item["status"] == nil || item.status == "active" }
+fn schedule_status_label(item){
+    if item["status"] == "cancelled" { return "已取消" }
+    if item["status"] == "completed" { return "已完成" }
+    "进行中"
+}
+fn schedule_set_status(id, version, status){
+    if status != "active" && status != "cancelled" && status != "completed" { return "不支持的日程状态" }
+    let error = schedule_refresh()
+    if error != "" { return error }
+    let item = schedule_find(id)
+    if item == nil || item.version != version { return "日程已变化，请重新查看" }
+    let previous = user_schedules.to_json()
+    item.status = status item.version = item.version + 1
+    error = schedule_write()
+    if error != "" { user_schedules = previous.parse_json() }
+    error
+}
+fn schedule_instant(text){
+    if !analysis_rfc3339(text) { return nil }
+    let date = text.split("T")[0].split("-")
+    let clock = text.split("T")[1]
+    let local = clock.split("Z")[0].split("+")[0].split("-")[0].split(":")
+    let year = date[0].to_f64()
+    let month = date[1].to_f64()
+    let day = date[2].to_f64()
+    let hour = local[0].to_f64()
+    let minute = local[1].to_f64()
+    let second = local[2].to_f64()
+    if year < 1 || month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59 || second > 59 { return nil }
+    let max_day = 31
+    if month == 4 || month == 6 || month == 9 || month == 11 { max_day = 30 }
+    if month == 2 {
+        max_day = 28
+        if year % 4 == 0 { max_day = 29 }
+        if year % 100 == 0 { max_day = 28 }
+        if year % 400 == 0 { max_day = 29 }
+    }
+    if day > max_day { return nil }
+    let offset = 0
+    let parts = clock.split("+")
+    let sign = 1
+    if parts.len() == 1 { parts = clock.split("-") sign = -1 }
+    if parts.len() > 1 {
+        let zone = parts[1].split(":")
+        let zone_hour = zone[0].to_f64()
+        let zone_minute = zone[1].to_f64()
+        if zone_hour > 14 || zone_minute > 59 { return nil }
+        if zone_hour == 14 && zone_minute > 0 { return nil }
+        offset = sign * (zone_hour * 60 + zone_minute)
+    }
+    let y = year
+    if month <= 2 { y = y - 1 }
+    let era = floor(y / 400)
+    let yoe = y - era * 400
+    let mp = month - 3
+    if month <= 2 { mp = month + 9 }
+    let doy = floor((153 * mp + 2) / 5) + day - 1
+    let days = era * 146097 + yoe * 365 + floor(yoe / 4) - floor(yoe / 100) + doy - 719468
+    days * 86400 + hour * 3600 + (minute - offset) * 60 + second
+}
+fn schedule_interval(start, end){
+    let a = schedule_instant(start)
+    let b = schedule_instant(end)
+    if a == nil || b == nil { return false }
+    b > a
+}
+fn schedule_valid(item){
+    if !record_object(item) || !record_string(item["schedule_id"]) || item.schedule_id == "" { return false }
+    if !record_number(item["version"]) || item.version < 1 { return false }
+    if !record_string(item["title"]) || item.title.trim() == "" { return false }
+    if !record_string(item["timezone"]) || item.timezone.trim() == "" { return false }
+    if item["content"] != nil && !record_string(item["content"]) { return false }
+    if item["location"] != nil && !record_string(item["location"]) { return false }
+    if item["status"] != nil && item.status != "active" && item.status != "cancelled" && item.status != "completed" { return false }
+    if item["allow_reschedule"] != nil && item.allow_reschedule != true && item.allow_reschedule != false { return false }
+    if item["origin_intent_id"] != nil && (!record_string(item.origin_intent_id) || item.origin_intent_id == "" || item.origin_intent_id.len() > 200) { return false }
+    if item["news_keywords"] != nil && !tracking_strings(item.news_keywords, 6, 120) { return false }
+    if item["demo_preset"] != nil && item.demo_preset != true && item.demo_preset != false { return false }
+    schedule_interval(item["start"], item["end"])
+}
+fn schedule_doc_valid(value){
+    if !record_object(value) || value["schema_version"] != 1 || !record_array(value["items"]) { return false }
+    let ids = {}
+    for item in value.items {
+        if !schedule_valid(item) || ids[item.schedule_id] == true { return false }
+        ids[item.schedule_id] = true
+    }
+    true
+}
+fn schedule_read(){
+    let exists = false
+    try { exists = fs.exists(schedule_file.path) } { schedule_file.writable = false schedule_warn("Schedule storage unavailable") }
+    if exists {
+        let value = nil
+        try { value = fs.read(schedule_file.path).parse_json() } { value = nil }
+        if schedule_doc_valid(value) { return value.items }
+        schedule_file.writable = false
+        schedule_warn("Invalid schedule file; original preserved")
+    }
+    let backup = nil
+    try { if fs.exists(schedule_file.path + ".backup") { backup = fs.read(schedule_file.path + ".backup").parse_json() } } { schedule_warn("Schedule backup unreadable") }
+    if schedule_doc_valid(backup) { schedule_file.recovered = true schedule_warn("Schedules recovered from backup") return backup.items }
+    []
+}
+fn schedules_load(){ schedule_file.writable = true schedule_file.recovered = false schedule_warning = "" user_schedules = schedule_read() }
+fn schedule_refresh(){
+    if !schedule_file.writable && !schedule_file.recovered { return "Schedule storage unavailable" }
+    let rows = schedule_read()
+    if !schedule_file.writable && !schedule_file.recovered { return "Schedule storage changed; original preserved" }
+    user_schedules = rows
+    ""
+}
+fn schedule_write(){
+    let value = {schema_version: 1 items: user_schedules}
+    if !schedule_doc_valid(value) { return "Invalid schedule data; nothing saved" }
+    if !schedule_file.writable && !schedule_file.recovered { return "Schedule storage is read-only" }
+    let error = ""
+    try {
+        if schedule_file.recovered { fs.write(schedule_file.path + ".backup", value.to_json()) }
+        else {
+            if fs.exists(schedule_file.path) {
+                let old = fs.read(schedule_file.path).parse_json()
+                if !schedule_doc_valid(old) { error = "Schedule storage changed; original preserved" schedule_file.writable = false }
+                else { fs.write(schedule_file.path + ".backup", old.to_json()) }
+            }
+            if error == "" { fs.write(schedule_file.path, value.to_json()) }
+        }
+    } { error = "Schedule write failed; previous data preserved" }
+    error
+}
+fn schedule_find(id){ for item in user_schedules { if item.schedule_id == id { return item } } nil }
+fn schedule_conflicts(candidate, ignore_id){
+    let out = []
+    let a = schedule_instant(candidate.start)
+    let b = schedule_instant(candidate.end)
+    if a == nil || b == nil { return out }
+    for item in user_schedules {
+        if item.schedule_id != ignore_id && schedule_active(item) {
+            if a < schedule_instant(item.end) {
+                if schedule_instant(item.start) < b { out.push(item.schedule_id) }
+            }
+        }
+    }
+    out
+}
+fn schedule_create(title, start, end, timezone, suggestion_id){
+    schedule_create_details(title, "", "", start, end, timezone, suggestion_id)
+}
+fn schedule_create_details(title, content, location, start, end, timezone, suggestion_id){
+    schedule_create_options(title, content, location, start, end, timezone, suggestion_id, false)
+}
+fn schedule_create_options(title, content, location, start, end, timezone, suggestion_id, allow){
+    schedule_create_record(title, content, location, start, end, timezone, suggestion_id, allow, nil)
+}
+fn schedule_create_record(title, content, location, start, end, timezone, suggestion_id, allow, intent_id){
+    if !record_string(content) || !record_string(location) { return {success: false error: "Invalid schedule content or location"} }
+    if record_string(title) && (title.len() > 200 || content.len() > 2000 || location.len() > 300) { return {success: false error: "标题最多200字，内容最多2000字，地点最多300字"} }
+    if !schedule_interval(start, end) || !record_string(title) || title.trim() == "" { return {success: false error: "Invalid schedule title or interval"} }
+    if !record_string(timezone) || timezone.trim() == "" { return {success: false error: "Timezone label required"} }
+    let error = schedule_refresh()
+    if error != "" { return {success: false error: error} }
+    if suggestion_id != nil {
+        for item in user_schedules { if item["origin_suggestion_id"] == suggestion_id { return {success: true item: item idempotent: true} } }
+    }
+    if intent_id != nil {
+        for item in user_schedules {
+            if item["origin_intent_id"] == intent_id {
+                if item.title != title.trim() || item.content != content.trim() || item.location != location.trim() || item.start != start || item.end != end || item.timezone != timezone {
+                    return {success: false error: "这份草稿已经保存为日程；请丢弃草稿后创建新的安排"}
+                }
+                return {success: true item: item idempotent: true}
+            }
+        }
+    }
+    if user_schedules.len() >= 128 { return {success: false error: "日程容量已达128条；原日程保留，请先备份并整理日程记录"} }
+    let id = "schedule-" + time_now() + "-" + schedule_counter
+    while schedule_find(id) != nil { schedule_counter = schedule_counter + 1 id = "schedule-" + time_now() + "-" + schedule_counter }
+    let candidate = {schedule_id: id version: 1 title: title.trim() content: content.trim() location: location.trim() start: start end: end timezone: timezone origin_suggestion_id: suggestion_id status: "active" allow_reschedule: allow}
+    if intent_id != nil { candidate.origin_intent_id = intent_id }
+    let conflicts = schedule_conflicts(candidate, nil)
+    if conflicts.len() > 0 { return {success: false error: "Schedule conflict" conflicts: conflicts} }
+    schedule_counter = schedule_counter + 1
+    user_schedules.push(candidate)
+    error = schedule_write()
+    if error != "" { user_schedules.remove(user_schedules.len() - 1) return {success: false error: error} }
+    {success: true item: candidate}
+}
+fn schedule_update(id, expected_version, title, start, end, timezone, suggestion_id){
+    let current = schedule_find(id)
+    let content = ""
+    let location = ""
+    if current != nil {
+        if record_string(current["content"]) { content = current.content }
+        if record_string(current["location"]) { location = current.location }
+    }
+    schedule_update_details(id, expected_version, title, content, location, start, end, timezone, suggestion_id)
+}
+fn schedule_update_details(id, expected_version, title, content, location, start, end, timezone, suggestion_id){
+    let current = schedule_find(id)
+    let allow = false
+    if current != nil { allow = current["allow_reschedule"] == true }
+    schedule_update_options(id, expected_version, title, content, location, start, end, timezone, suggestion_id, allow)
+}
+fn schedule_update_options(id, expected_version, title, content, location, start, end, timezone, suggestion_id, allow){
+    if record_string(title) && record_string(content) && record_string(location) && (title.len() > 200 || content.len() > 2000 || location.len() > 300) { return {success: false error: "标题最多200字，内容最多2000字，地点最多300字"} }
+    if !record_string(content) || !record_string(location) { return {success: false error: "Invalid schedule content or location"} }
+    if !schedule_interval(start, end) || !record_string(title) || title.trim() == "" { return {success: false error: "Invalid schedule title or interval"} }
+    if !record_string(timezone) || timezone.trim() == "" { return {success: false error: "Timezone label required"} }
+    let error = schedule_refresh()
+    if error != "" { return {success: false error: error} }
+    let current = schedule_find(id)
+    if current == nil { return {success: false error: "Schedule no longer exists" stale: true} }
+    if suggestion_id != nil { if current["last_suggestion_id"] == suggestion_id { return {success: true item: current idempotent: true} } }
+    if current.version != expected_version { return {success: false error: "Schedule version changed; review again" stale: true} }
+    let old_content = ""
+    let old_location = ""
+    if record_string(current["content"]) { old_content = current.content }
+    if record_string(current["location"]) { old_location = current.location }
+    if current.title == title.trim() && current.start == start && current.end == end && current.timezone == timezone && old_content == content.trim() && old_location == location.trim() && (current["allow_reschedule"] == true) == allow {
+        return {success: true item: current unchanged: true}
+    }
+    let candidate = {schedule_id: id version: expected_version + 1 title: title.trim() start: start end: end timezone: timezone last_suggestion_id: suggestion_id}
+    let conflicts = schedule_conflicts(candidate, id)
+    if conflicts.len() > 0 { return {success: false error: "Schedule conflict" conflicts: conflicts} }
+    let previous = user_schedules.to_json()
+    if current["time_precision"] == "day" && (current.start != candidate.start || current.end != candidate.end) { current.time_precision = "exact" }
+    current.version = candidate.version current.title = candidate.title current.start = candidate.start current.end = candidate.end current.timezone = candidate.timezone
+    current.content = content.trim() current.location = location.trim()
+    current.allow_reschedule = allow
+    current.last_suggestion_id = suggestion_id
+    error = schedule_write()
+    if error != "" { user_schedules = previous.parse_json() return {success: false error: error} }
+    {success: true item: current}
+}
+fn schedule_apply_action(action, suggestion_id){
+    if !record_object(action) { return {success: false error: "No schedule action"} }
+    if action.kind == "create" { return schedule_create(action.title, action.start, action.end, action.timezone, suggestion_id) }
+    if action.kind == "reschedule" {
+        let error = schedule_refresh()
+        if error != "" { return {success: false error: error} }
+        let item = schedule_find(action.schedule_id)
+        if item == nil { return {success: false error: "日程已不存在"} }
+        if item["last_suggestion_id"] == suggestion_id { return {success: true item: item idempotent: true} }
+        if !schedule_active(item) || item["allow_reschedule"] != true { return {success: false error: "该日程未允许 Agent 改期，或已取消/完成。"} }
+        return schedule_update(action.schedule_id, action.schedule_version, action.title, action.start, action.end, action.timezone, suggestion_id)
+    }
+    {success: false error: "Unsupported schedule action"}
+}

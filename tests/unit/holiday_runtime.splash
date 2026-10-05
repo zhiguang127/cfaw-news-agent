@@ -1,0 +1,203 @@
+// Execute the holiday calendar under the pinned native runtime. The fixture
+// is the real upstream file, including its State Council announcement URL.
+let holiday_test_passes = 0
+let holiday_test_failures = 0
+fn holiday_test(condition, message){
+    if condition { holiday_test_passes = holiday_test_passes + 1 }
+    else {
+        holiday_test_failures = holiday_test_failures + 1
+        let previous = ""
+        if fs.exists("holiday-failures.txt") { previous = fs.read("holiday-failures.txt") }
+        fs.write("holiday-failures.txt", previous + "FAIL holiday: " + message + "\n")
+    }
+}
+
+fn holiday_test_reset(){
+    holiday_by_day = {}
+    holiday_years_loaded = []
+    holiday_years_missing = []
+    holiday_pending = 0
+    holiday_status = ""
+    holiday_status_by_year = {}
+    holiday_requests_by_year = {}
+}
+let holiday_test_requests = []
+fn holiday_test_transport(){
+    holiday_test_requests = []
+    holiday_http_request = |url, redirects, callback| holiday_test_requests.push({url: url callback: callback})
+}
+fn holiday_test_reply(index, result){
+    let callback = holiday_test_requests[index]["callback"]
+    callback(result)
+}
+fn holiday_test_loading_and_retry(){
+    holiday_test_reset() holiday_test_transport()
+    holiday_parse(fixture_holiday_2026, "2026")
+    let unloaded = holiday_event_conflict({start: weather_time_stamp("2030-01-01")})
+    holiday_test(unloaded != nil, "another loaded year never conceals an unloaded target year")
+    if unloaded != nil { holiday_test(unloaded["known"] == false, "unloaded target year reports unknown") }
+    holiday_load_year("2030") holiday_load_year("2030")
+    holiday_test(holiday_test_requests.len() == 1 && holiday_pending == 1, "an in-flight year is requested only once")
+    let loading = holiday_event_conflict({start: weather_time_stamp("2030-01-01")})
+    holiday_test(loading != nil, "loading target year reports unknown despite a different loaded year")
+    if loading != nil { holiday_test(loading["known"] == false, "loading target year never means ordinary workday") }
+    holiday_test_reply(0, {success: false error: "fixture timeout"})
+    holiday_test(holiday_pending == 0 && holiday_status != "", "temporary request failure releases pending state and keeps its cause")
+    holiday_load_year("2030")
+    holiday_test(holiday_test_requests.len() == 2 && holiday_pending == 1, "temporary failure allows a manual retry in the same session")
+    holiday_test_reply(0, {success: false error: "duplicate old callback"})
+    holiday_test(holiday_pending == 1, "old duplicate callback cannot terminate a newer retry")
+    let response = {year: 2030 papers: [] days: [{date: "2030-01-01" name: "Fixture holiday" isOffDay: true}]}
+    holiday_test_reply(1, {success: true body: response.to_json()})
+    holiday_test(holiday_year_known("2030") && !holiday_year_missing("2030"), "successful retry restores coverage and removes its missing marker")
+    holiday_test(holiday_pending == 0 && holiday_status == "", "successful retry clears only its diagnostic")
+    holiday_test(holiday_years_loaded.len() == 2, "successful response ingests a year exactly once")
+    holiday_test(holiday_event_conflict({start: weather_time_stamp("2030-03-12")}) == nil, "an ordinary day is known only after its own year loaded")
+    holiday_test_reply(1, {success: true body: response.to_json()})
+    holiday_test(holiday_years_loaded.len() == 2 && holiday_pending == 0, "duplicate successful completion is ignored")
+
+    holiday_load_year("2031")
+    holiday_test_reply(2, {success: true body: "broken fixture response"})
+    holiday_test(!holiday_year_known("2031") && holiday_status != "", "invalid upstream structure never turns into loaded coverage")
+    holiday_load_year("2032")
+    let other = {year: 2032 papers: [] days: [{date: "2032-01-01" name: "Fixture holiday" isOffDay: true}]}
+    holiday_test_reply(3, {success: true body: other.to_json()})
+    holiday_test(holiday_status != "", "another year's success does not erase a failed year's diagnostic")
+    holiday_load_year("2031")
+    holiday_test(holiday_test_requests.len() == 5, "an invalid response also permits retry")
+    let repaired = {year: 2031 papers: [] days: [{date: "2031-01-01" name: "Fixture holiday" isOffDay: true}]}
+    holiday_test_reply(4, {success: true body: repaired.to_json()})
+    holiday_test(holiday_year_known("2031") && holiday_status == "", "valid retry repairs the failed year independently")
+    holiday_load_year("../2033")
+    holiday_test(holiday_test_requests.len() == 5 && holiday_status != "", "malformed year is refused before filesystem or network access")
+
+    fs.write(holiday_cache_path("2034"), "broken fixture cache")
+    holiday_load_year("2034")
+    holiday_test(holiday_test_requests.len() == 6 && holiday_status != "", "corrupt holiday cache is diagnosed while its replacement loads")
+    let cache_repair = {year: 2034 papers: [] days: [{date: "2034-01-01" name: "Fixture holiday" isOffDay: true}]}
+    holiday_test_reply(5, {success: true body: cache_repair.to_json()})
+    holiday_test(holiday_year_known("2034") && holiday_status == "", "successful replacement repairs the cached year and clears its diagnostic")
+    start_timeout(0.01, || holiday_test_finish())
+}
+
+let fixture_paper_url = "https://www.gov.cn/zhengce/zhengceku/202511/content_7047091.htm"
+
+fn holiday_test_run(){
+    // --- round trip between epoch and local day ----------------------------
+    let epoch = weather_time_stamp("2026-10-02")
+    holiday_test(weather_day_stamp(epoch) == "2026-10-02", "date to epoch and back")
+    holiday_test(weather_time_stamp("2026-01-01") == 1767196800, "new year at local midnight is 2026-01-01T00:00+08:00")
+    holiday_test(weather_time_stamp("2024-02-29") == 1709136000, "leap day round trip")
+
+    // --- catalog validation -----------------------------------------------
+    let catalog = {schema_version: 1 year: "2026" days: [{date: "2026-01-01" is_off_day: true name: "元旦"}] papers: ["https://www.gov.cn/a.htm"]}
+    holiday_test(holiday_catalog_valid(catalog), "minimal catalog accepted")
+    holiday_test(!holiday_catalog_valid({}), "empty catalog refused")
+    holiday_test(!holiday_catalog_valid({schema_version: 1 year: "26" days: catalog["days"] papers: []}), "two digit year refused")
+    let mismatch = test_clone(catalog)
+    mismatch.year = "2027"
+    holiday_test(!holiday_catalog_valid(mismatch), "year must match the days")
+    let bad_paper = test_clone(catalog)
+    bad_paper.papers = ["not a url"]
+    holiday_test(!holiday_catalog_valid(bad_paper), "non-url announcement refused")
+    let nil_flag = test_clone(catalog)
+    nil_flag.days = [{date: "2026-01-01" is_off_day: nil name: "元旦"}]
+    holiday_test(!holiday_catalog_valid(nil_flag), "unknown off-day flag refused rather than coerced")
+    let mixed_years = test_clone(catalog)
+    mixed_years.days = [{date: "2026-01-01" is_off_day: true name: "Fixture"}, {date: "2027-01-01" is_off_day: true name: "Fixture"}]
+    holiday_test(!holiday_catalog_valid(mixed_years), "every entry must belong to the requested catalog year")
+    let duplicate_day = test_clone(catalog)
+    duplicate_day.days = [{date: "2026-01-01" is_off_day: true name: "Fixture"}, {date: "2026-01-01" is_off_day: false name: "Conflicting fixture"}]
+    holiday_test(!holiday_catalog_valid(duplicate_day), "duplicate dates cannot silently overwrite contradictory entries")
+    start_timeout(0.01, || holiday_test_upstream())
+}
+
+fn holiday_test_upstream(){
+    // --- upstream parsing --------------------------------------------------
+    let catalog_2026 = holiday_parse(fixture_holiday_2026, "2026")
+    holiday_test(catalog_2026 != nil, "real upstream file parsed")
+    holiday_test(catalog_2026 != nil && catalog_2026["papers"].len() >= 1, "State Council announcement travels with the catalog")
+    holiday_write_cache(catalog_2026)
+    holiday_test(fs.exists(holiday_cache_path("2026")), "cache written")
+    start_timeout(0.01, || holiday_test_cache())
+}
+fn holiday_test_cache(){
+    // A cold start must be able to rebuild everything from the cache file alone.
+    holiday_test_reset()
+    let reread = holiday_read_cache("2026")
+    holiday_test(reread != nil, "cache document accepted")
+    holiday_test(holiday_days_known() == 39, "cache alone rebuilds every day")
+    let cold = holiday_on("2026-01-01")
+    holiday_test(cold["is_off_day"] == true, "cache alone rebuilds the lookup")
+    holiday_test(holiday_read_cache("2099") == nil, "an uncached year reports nil")
+    holiday_test(holiday_days_known() == 39, "2026 has 39 calendar days")
+    holiday_test(holiday_year_known("2026"), "2026 recorded as loaded")
+    let new_year = holiday_on("2026-01-01")
+    holiday_test(new_year["known"] == true, "a covered date is known")
+    holiday_test(new_year["is_off_day"] == true, "New Year is a holiday")
+    holiday_test(new_year["name"] == "元旦", "holiday name carried")
+    let makeup = nil
+    // Iterating a map yields its values, not its keys.
+    for entry in holiday_by_day {
+        if entry != nil && entry["is_off_day"] == false { makeup = entry }
+    }
+    holiday_test(makeup != nil, "the calendar contains a 补班 day")
+    let makeup_info = holiday_on("2026-01-04")
+    holiday_test(makeup_info["known"] == true, "the 补班 day is covered")
+    holiday_test(makeup_info["is_off_day"] == false, "a 补班 day is a working day")
+    start_timeout(0.01, || holiday_test_refusals())
+}
+fn holiday_test_refusals(){
+    // --- refusals ----------------------------------------------------------
+    holiday_test(holiday_parse(fixture_holiday_empty, "2027") == nil, "unpublished year refused")
+    holiday_test(holiday_parse("not json", "2026") == nil, "unparseable body refused")
+    holiday_test(holiday_parse(fixture_holiday_2026, "2025") == nil, "year mismatch refused")
+    start_timeout(0.01, || holiday_test_ordinary())
+}
+
+fn holiday_test_ordinary(){
+    // --- unknown is an answer, not a guess ---------------------------------
+    holiday_test_reset()
+    holiday_test(holiday_parse(fixture_holiday_2026, "2026") != nil, "2026 reloaded")
+    let ordinary = holiday_on("2026-03-12")
+    holiday_test(ordinary["known"] == false, "an uncovered date is unknown")
+    holiday_test(ordinary["is_off_day"] == nil, "an uncovered date carries no working-day claim")
+    holiday_test(holiday_on("2027-01-01")["known"] == false, "an unpublished year is unknown")
+    holiday_test(holiday_on("2026-13-45")["known"] == false, "an impossible date is refused")
+    holiday_test(holiday_event_conflict({start: weather_time_stamp("2026-03-12")}) == nil, "no rule fires for an ordinary uncovered day")
+    let off = holiday_event_conflict({start: weather_time_stamp("2026-01-01")})
+    holiday_test(off != nil && off["known"] == true, "holiday day recognised")
+    holiday_test(off != nil && off["kind"] == "off_day", "holiday day reported as off_day")
+    holiday_test(off != nil && off["name"] == "元旦", "holiday name reported")
+    let work = holiday_event_conflict({start: weather_time_stamp("2026-01-04")})
+    holiday_test(work != nil && work["kind"] == "makeup_workday", "补班 day reported as a working day")
+    holiday_test(holiday_event_conflict({}) == nil && holiday_event_conflict({start: "later"}) == nil, "malformed event refused without crashing")
+    start_timeout(0.01, || holiday_test_unloaded())
+}
+
+fn holiday_test_unloaded(){
+    // --- an unloaded calendar is explicit ---------------------------------
+    holiday_test_reset()
+    holiday_years_missing.push("2027")
+    let unknown = holiday_event_conflict({start: weather_time_stamp("2027-10-01")})
+    holiday_test(unknown["known"] == false && unknown["kind"] == "", "an unpublished year reports unknown rather than a false")
+    holiday_test(holiday_days_known() == 0, "nothing loaded")
+
+    // --- host admission ----------------------------------------------------
+    holiday_test(holiday_request_allowed(holiday_base + "/2026.json"), "calendar host admitted")
+    holiday_test(!holiday_request_allowed("https://example.invalid/2026.json"), "unlisted host refused")
+    holiday_test(!holiday_request_allowed("http://cdn.jsdelivr.net/x.json"), "plain http refused")
+    holiday_test(holiday_attribution == "MIT, NateScarlet/holiday-cn", "license recorded for display")
+    start_timeout(0.01, || holiday_test_loading_and_retry())
+}
+fn holiday_test_finish(){
+    let report = {passed: holiday_test_passes failed: holiday_test_failures stage: "complete" failure_detail: ""}
+    if holiday_test_failures > 0 {
+        if fs.exists("holiday-failures.txt") { report.failure_detail = fs.read("holiday-failures.txt") }
+    }
+    fs.write("holiday-report.json", report.to_json())
+}
+HostedView{full: View{Label{text: "CFAW holiday calendar tests"}}}
+start_timeout(0.05, || {
+    holiday_test_run()
+})

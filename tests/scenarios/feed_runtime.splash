@@ -1,0 +1,255 @@
+// Actual controller refresh + asynchronous ingestion/list construction.
+// These synthetic inputs stay in the runtime test's isolated storage.
+let feed_test_passed = 0
+let feed_test_failed = 0
+let feed_test_failures = []
+let feed_test_stage = "startup"
+fn feed_test_assert(condition, label){
+    if condition { feed_test_passed = feed_test_passed + 1 }
+    else { feed_test_failed = feed_test_failed + 1 feed_test_failures.push(label) }
+}
+fn feed_test_report(){
+    fs.write("feed-report.json", {stage: feed_test_stage passed: feed_test_passed failed: feed_test_failed failures: feed_test_failures}.to_json())
+}
+fn feed_test_wait_ready(deadline, complete){
+    if time_now() > deadline { feed_test_assert(false, "refresh/list build finished before deadline") feed_test_stage = "complete" feed_test_report() return }
+    if busy || app_feed_build_task != nil || main_render_pending || feed_render_pending { start_timeout(0.02, || feed_test_wait_ready(deadline, complete)) return }
+    complete()
+}
+fn feed_test_run(){
+    records_load()
+    schedules_load()
+    history_load()
+    feed_initialize()
+    weather_initialize()
+    weather_app_ready = true
+    weather_http_request = fn(url, redirects, callback){ start_timeout(0.01, || callback({success: true body: fixture_weather})) }
+    weather_on_update = || weather_render()
+    weather_choose_city("w01")
+    enabled_source_ids = ["bbc" "guardian" "cnbc"]
+    render_main()
+    feed_test_stage = "coalesced source completions"
+    let requests = []
+    news_http_request = fn(url, redirects, callback){ requests.push(callback) }
+    feed_swipe_refresh(0, 90)
+    feed_test_assert(!busy && requests.len() == 0, "downward gesture does not request news")
+    feed_swipe_refresh(0, -90)
+    feed_test_assert(requests.len() == 3 && busy, "application starts bounded refresh")
+    let generation = feed_generation
+    feed_swipe_refresh(0, -90)
+    feed_test_assert(busy && generation == feed_generation && requests.len() == 3, "repeated upward gesture neither cancels nor restarts an active refresh")
+    requests[0]({success: true body: fixture_rss})
+    // Start one construction before the other sources complete, so the newer
+    // evidence must accumulate rather than cancelling it.
+    start_timeout(0.02, || {
+        requests[1]({success: true body: fixture_atom})
+        requests[2]({success: true body: fixture_rss})
+        feed_test_wait_ready(time_now() + 4, || {
+            feed_test_assert(app_feed_rows.len() == 3, "all simultaneously returned evidence is eventually visible")
+            feed_test_assert(!busy && app_feed_build_task == nil, "final completion clears application loading state")
+            let repeated = nil
+            for row in app_feed_rows { if row.news_id == "https://example.org/first" { repeated = row } }
+            feed_test_assert(repeated != nil && repeated.references.len() == 2, "coalesced updates preserve duplicate source provenance")
+            feed_test_failure_and_cancel()
+        })
+    })
+}
+fn feed_test_failure_and_cancel(){
+    feed_test_stage = "failure and cancellation"
+    let requests = []
+    news_http_request = fn(url, redirects, callback){ requests.push(callback) }
+    let previous = app_feed_rows.to_json()
+    refresh_sources(enabled_source_ids)
+    for callback in requests { callback({success: false error: "synthetic offline"}) }
+    feed_test_wait_ready(time_now() + 4, || {
+        feed_test_assert(app_feed_rows.to_json() == previous && !busy, "failed refresh preserves readable cache and ends loading")
+        requests = []
+        refresh_sources(enabled_source_ids)
+        refresh()
+        requests[0]({success: true body: "<rss><channel><item><title>Late synthetic news</title><link>https://example.org/late</link></item></channel></rss>"})
+        start_timeout(0.04, || {
+            feed_test_assert(!busy && app_feed_rows.to_json() == previous, "late reply after application cancellation cannot replace the feed")
+            // A newer source selection must invalidate an old build, while
+            // several requests within one selection share the active build.
+            enabled_source_ids = ["bbc"]
+            let obsolete_called = false
+            rebuild_feed(|| { obsolete_called = true })
+            enabled_source_ids = ["guardian"]
+            rebuild_feed(|| {
+                feed_test_assert(!obsolete_called && app_feed_rows.len() == 1 && app_feed_rows[0].source_id == "guardian", "changed source selection rejects an older list completion")
+                feed_test_capacity_refresh(0)
+            })
+        })
+    })
+}
+fn feed_test_capacity_refresh(round){
+    feed_test_stage = "full capacity refresh " + round
+    if round == 0 {
+        enabled_source_ids = []
+        for source in news_sources { if source.enabled { enabled_source_ids.push(source.id) } }
+        tracking_state = {schema_version: 1 last_checked_at: 0 seen_ids: [] unread_ids: []}
+        tracking_unread_index = {}
+    }
+    news_http_request = fn(url, redirects, callback){
+        let source = nil
+        for s in news_sources { if s.url == url { source = s } }
+        // Input bodies are prepared by the Python harness; generating a large
+        // RSS body with script concatenation would test the fixture's heap use.
+        let body = fixture_capacity_rss[source.id]
+        if source.kind == "hn" { body = fixture_capacity_hn[source.id] }
+        start_timeout(0.03, || callback({success: true body: body}))
+    }
+    refresh_sources(enabled_source_ids)
+    feed_test_wait_ready(time_now() + 12, || {
+        feed_test_assert(app_feed_rows.len() == news_config.max_feed_items && display_rows.len() == app_feed_rows.len(), "full capacity refresh publishes every retained news row")
+        feed_test_assert(!busy && tracking_state.last_checked_at > 0 && tracking_state.unread_ids.len() == 0, "full capacity baseline/repeated refresh finishes tracking without unread duplicates")
+        if round < 11 { start_timeout(0.02, || feed_test_capacity_refresh(round + 1)) }
+        else {
+            let saved = tracking_state.to_json()
+            records_check_tracking(app_feed_rows, user_interests, time_now(), || false, fn(error){ feed_test_assert(false, "cancelled tracking completion is suppressed") })
+            start_timeout(0.05, || {
+                feed_test_assert(tracking_state.to_json() == saved, "cancelled full capacity check leaves tracking untouched")
+                feed_test_presentation()
+            })
+        }
+    })
+}
+fn feed_test_presentation(){
+    feed_test_stage = "single feed presentation"
+    records_add_interest("keyword", "capacity")
+    records_add_interest("category", "tech")
+    for word in ["Synthetic" "news" "arstechnica" "arxiv" "bbc" "guardian" "mit" "techcrunch" "venturebeat"] { records_add_interest("keyword", word) }
+    tracking_state.unread_ids = [app_feed_rows[0].news_id]
+    records_index_unread()
+    render_feed()
+    feed_test_wait_ready(time_now() + 4, || {
+        feed_test_assert(display_rows.len() == news_config.max_feed_items && tracking_new_count() == 1, "single feed retains every news row with eleven rules and one unread item")
+        feed_test_assert(row_match_hint(display_rows[0]) != "" && row_agent_hint(display_rows[0]) == nil, "unanalyzed rule matches are never presented as Agent conclusions")
+        open_story(display_rows[0])
+        close_detail()
+        feed_test_assert(tracking_new_count() == 0, "reading a prioritized story clears its unread state")
+        let saved = fs.read(interest_file.path).parse_json()
+        feed_test_assert(saved.items.len() == 11, "full-capacity presentation uses persisted interest rules")
+        pick_category("tech")
+        set_query("capacity")
+        select_page("schedule")
+        select_page("feed")
+        feed_test_wait_ready(time_now() + 4, || {
+            feed_test_assert(category == "tech" && query == "capacity", "top navigation preserves feed filters")
+            user_interests = [] interest_reset_matchers() records_save_interests()
+            notice("")
+            pick_category("all") set_query("")
+            feed_test_wait_ready(time_now() + 4, || feed_test_priority())
+        })
+    })
+}
+fn feed_test_schedule(){
+    {schedule_id: "fixture-evaluation" version: 1 title: "Synthetic evaluation" content: "Fixture only" location: ""
+        start: "2026-10-10T09:00:00+08:00" end: "2026-10-10T10:00:00+08:00" timezone: "Asia/Shanghai" status: "active" allow_reschedule: false}
+}
+fn feed_test_record_impact(row, request_id){
+    let suggestion = {interest_ids: [user_interests[0].interest_id] evidence_ids: [row.news_id] schedule_id: "fixture-evaluation" schedule_version: 1
+        change_summary: "Synthetic release delay may affect the evaluation" rationale: "Synthetic evidence only" uncertainties: ["Fixture; no real-world claim"] proposed_action: nil}
+    let output = {schema_version: 1 outcome: "suggestions" explanation: "Synthetic impact explanation" suggestions: [suggestion]}
+    let checked = analysis_validate_model_text(output.to_json(), analysis_make_snapshot(row))
+    feed_test_assert(checked.valid, "inline schedule impact passes the actual model-result validator")
+    if checked.valid { feed_test_assert(history_record_analysis(row, request_id, 1, "fixture-turn", checked.result) == "", "inline analysis is persisted through the history owner") }
+}
+fn feed_test_priority(){
+    feed_test_stage = "priority and inline analysis"
+    let capacity = app_feed_rows
+    let alpha = news_normalize({title: "Synthetic alpha" summary: "A" link: "https://example.invalid/feed-alpha"}, news_sources[0], time_now())
+    let beta = news_normalize({title: "Synthetic beta" summary: "B" link: "https://example.invalid/feed-beta"}, news_sources[0], time_now())
+    let gamma = news_normalize({title: "Synthetic gamma" summary: "C" link: "https://example.invalid/feed-gamma"}, news_sources[0], time_now())
+    app_feed_rows = [alpha beta gamma]
+    records_add_interest("keyword", "gamma")
+    render_feed()
+    feed_test_wait_ready(time_now() + 4, || {
+        feed_test_assert(display_rows[0].news_id == gamma.news_id && display_rows[1].news_id == alpha.news_id && display_rows[2].news_id == beta.news_id, "related news moves first while both groups retain their original order")
+        feed_test_assert(app_feed_rows[0].news_id == alpha.news_id && gamma.published_at == nil, "personalized display does not mutate ingestion order or invent publication dates")
+        set_query("alpha")
+        feed_test_wait_ready(time_now() + 4, || {
+            feed_test_assert(display_rows.len() == 1 && display_rows[0].news_id == alpha.news_id, "priority never bypasses the user's search filter")
+            set_query("")
+            user_schedules = [feed_test_schedule()]
+            feed_test_record_impact(beta, "feed-impact")
+            render_feed()
+            feed_test_wait_ready(time_now() + 4, || {
+                let hint = row_agent_hint(beta)
+                feed_test_assert(display_rows[0].news_id == beta.news_id && hint != nil && hint.suggestion_id != nil, "current Agent schedule impact can prioritize news without a literal interest match")
+                feed_test_assert(hint != nil && regex("Synthetic evaluation").test(hint.text), "inline impact names the actual affected schedule")
+                open_feed_hint(beta)
+                feed_test_assert(reading != nil && reading.news_id == beta.news_id && suggestion_focus_id == hint.suggestion_id, "inline impact opens the corresponding news and suggestion")
+                close_detail()
+                let latest = history_latest_analysis(beta.news_id)
+                let index = {} for item in suggestion_history { index[item.suggestion_id] = item }
+                beta.summary = "Changed"
+                feed_test_assert(analysis_feed_hint(beta, latest, index) == nil, "changed news invalidates an old impact hint")
+                beta.summary = "B"
+                user_schedules[0].version = 2
+                feed_test_assert(analysis_feed_hint(beta, latest, index) == nil, "edited schedules invalidate an old impact hint")
+                user_schedules[0].version = 1
+                user_interests[0].enabled = false
+                feed_test_assert(analysis_feed_hint(beta, latest, index) == nil, "changed interests invalidate an old impact hint")
+                user_interests[0].enabled = true
+                let retrieved = beta.retrieved_at beta.retrieved_at = time_now() - news_config.cache_stale_seconds - 1
+                feed_test_assert(analysis_feed_hint(beta, latest, index) == nil, "stale evidence is not presented as current Agent advice")
+                beta.retrieved_at = retrieved
+                suggestion_history[0].state = "dismissed" suggestion_history[0].user_decision = true
+                start_timeout(0.02, || feed_test_decisions(capacity, beta, gamma))
+            })
+        })
+    })
+}
+fn feed_test_decisions(capacity, beta, gamma){
+    feed_test_record_impact(beta, "feed-repeat")
+    render_feed()
+    feed_test_wait_ready(time_now() + 4, || {
+        feed_test_assert(suggestion_history.len() == 1 && row_agent_hint(beta) == nil && display_rows[0].news_id == gamma.news_id, "dismissed advice is neither repeated inline nor promoted after unchanged reanalysis")
+        let result = {outcome: "no_change" explanation: "Synthetic: relevant to gamma, no plan change needed" suggestions: []}
+        history_record_analysis(gamma, "feed-no-change", 1, "fixture-turn", result)
+        render_feed()
+        feed_test_wait_ready(time_now() + 4, || {
+            feed_test_assert(row_agent_hint(gamma) != nil && row_agent_hint(gamma).suggestion_id == nil, "relevant no-change analysis has an explanation without an invented action")
+            history_record_analysis(gamma, "feed-insufficient", 1, "fixture-turn", {outcome: "insufficient_evidence" explanation: "Synthetic: date missing" suggestions: []})
+            render_feed()
+            feed_test_wait_ready(time_now() + 4, || {
+                feed_test_assert(row_agent_hint(gamma) != nil && !row_agent_hint(gamma).priority, "insufficient evidence stays an uncertain explanation, not a schedule proposal")
+                app_feed_rows = capacity
+                user_interests = [] user_schedules = [] analysis_history = [] suggestion_history = []
+                interest_reset_matchers() records_save_interests() history_save()
+                render_feed()
+                feed_test_wait_ready(time_now() + 4, || feed_test_navigation())
+            })
+        })
+    })
+}
+fn feed_test_navigation(){
+    feed_test_stage = "rapid navigation"
+    select_page("schedule")
+    schedule_title_draft = "Synthetic unsaved schedule"
+    let saved_date = schedule_date_draft
+    for id in ["saved" "tracking" "schedule" "feed" "saved" "schedule"] { select_page(id) }
+    feed_test_wait_ready(time_now() + 4, || {
+        feed_test_assert(page == "schedule", "coalesced navigation applies the latest requested page")
+        feed_test_assert(schedule_title_draft == "Synthetic unsaved schedule" && schedule_date_draft == saved_date, "rapid navigation preserves the calendar draft")
+        let hidden_rows = display_rows
+        app_feed_rows = []
+        render_feed()
+        feed_test_wait_ready(time_now() + 4, || {
+            feed_test_assert(display_rows == hidden_rows, "calendar updates skip rebuilding the hidden news list")
+            app_feed_rows = hidden_rows
+            select_page("feed")
+            feed_test_wait_ready(time_now() + 4, || {
+                feed_test_assert(display_rows.len() == news_config.max_feed_items && page == "feed", "returning to browsing rebuilds the current feed")
+                // Leave one explicitly synthetic, validated impact for native UI inspection.
+                records_add_interest("keyword", "fixture-related-intent")
+                user_schedules = [feed_test_schedule()]
+                feed_test_record_impact(app_feed_rows[2], "feed-ui-fixture")
+                render_feed()
+                feed_test_wait_ready(time_now() + 4, || { feed_test_stage = "complete" feed_test_report() })
+            })
+        })
+    })
+}
+start_timeout(0.05, || feed_test_run())

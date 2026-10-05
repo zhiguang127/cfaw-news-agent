@@ -1,0 +1,12 @@
+{
+  "production_boot": true,
+  "fallback_orb_opens_intent": true,
+  "logical_size": [
+    412,
+    892
+  ],
+  "real_model_called": false,
+  "log_has_error": false,
+  "host_kind": "reference_card_host",
+  "patched_rinx_tested": false
+}

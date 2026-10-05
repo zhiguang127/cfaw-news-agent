@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic test fixture; never a production fallback. -->
+<rss version="2.0"><channel><title>Fixture source</title>
+<item><title>Fixture: C++ AI development</title><link>https://example.org/first#section</link><pubDate>Wed, 30 Sep 2026 08:00:00 GMT</pubDate><description><![CDATA[<p>Fixture summary only.</p>]]></description></item>
+<item><title>Fixture: date missing</title><link>https://example.org/undated</link><description>Undated fixture.</description></item>
+</channel></rss>

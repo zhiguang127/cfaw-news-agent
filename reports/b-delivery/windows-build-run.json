@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-05",
+  "build_mode": "All",
+  "build_exit_code": 0,
+  "launch_mode": "Rinx -Diagnostic",
+  "pid": 95592,
+  "diagnostic_port": 50594,
+  "diagnostic_logs": "D:\\Hackathon_agenticapp\\workspace\\cfaw-news-agent-new.2\\.local-state\\diagnostics\\rinx-20261005-061046-c84dbbd6",
+  "windows_build": {
+    "built_on": "2026-10-05",
+    "target": "x86_64-pc-windows-msvc",
+    "profile": "release",
+    "rinx_features": [
+      "agent_chat"
+    ],
+    "binary_sha256": {
+      "rinx": "e37a649cbc1bf4d2bb3c5a5abf7dd12a11a43b1427d273d731a6a4bdc17b169d",
+      "octos": "d22ad2e1a5e342384cee19a0e497043456619f9680e7bbc6793bf8711c1aa721",
+      "hub": "d3b2c5a75861c15133172a536f3f1e1b95669f869fc0eec803ccb1c83e134f29",
+      "card_host": "e52f73bda0b57c58ade4a5919fdf1fffa69355eb0dbb82ed5dbe2878cab78bbe",
+      "rinx_sdf": "acbb3ab25203d431877aa743011f9cc21c0e0e2756f1987b326769a055e16fd8"
+    },
+    "octos_version": "octos 2.0.3-rc.13 (fe08d8e )",
+    "render_patch_artifacts_match": true,
+    "gesture_patch_artifacts_match": true,
+    "log_directory": "build/dependency-update",
+    "note": "Locked source build completed. Rinx SDF login screen responds and paints text. Application import, 430/360 drag and live model acceptance remain separate."
+  },
+  "startup_ui": {
+    "responsive": true,
+    "screen": "Sign in to Rinx",
+    "text_and_logo_visually_verified": true,
+    "logical_size": [
+      1280,
+      800
+    ],
+    "pixel_size": [
+      1920,
+      1200
+    ],
+    "screenshot": "reports/b-delivery/rinx-startup.png"
+  },
+  "package_sha256": "804687985b4585fa89ae9bb9f0d3b3063f2a57c40bf8ada4be90b024ad36839f",
+  "fixes": [
+    "Rust 1.98.0 MSVC installation repaired using officially verified checksums",
+    "Temporary project Git ownership/source caches and local proxy used for downloads",
+    "Pinned system bundle bytes restored after CRLF conversion",
+    "Private Rinx and Hub digest paths canonicalized to slash"
+  ],
+  "hub_store_gate": {
+    "cfaw": "Refused: local development bundle has no listing.json; not published",
+    "upstream_palpo": "Hub inventory refuses Windows assets\\icon.svg; separate upstream portability issue, not patched"
+  },
+  "not_verified": [
+    "CFAW app imported into this Rinx account",
+    "430/360 native long-press drag and restart persistence",
+    "real-model benchmarks and semantic acceptance",
+    "long-running white-screen regression"
+  ]
+}

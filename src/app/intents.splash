@@ -1,0 +1,186 @@
+// Draft edits never overwrite a confirmed topic. Parsing cannot save a topic.
+let intent_open = false
+let intent_draft = nil
+let intent_error = ""
+let intent_save_timer = nil
+let intent_parse_pending = false
+let intent_more = false
+fn intent_mode(){
+    if intent_draft == nil || intent_draft["intent_kind"] == nil { return "news" }
+    return intent_draft.intent_kind
+}
+fn intent_render(){ if detail_kind == "intent" && intent_scene_ready { ui.intent_content.render() } }
+fn intent_begin(topic_id){
+    if tracking_status == "recalling" || tracking_status == "enriching" { analysis_cancel() }
+    tracking_recall_generation = tracking_recall_generation + 1
+    notice("")
+    intent_error = ""
+    if topic_id == nil && topic_records.draft != nil { intent_draft = topic_records.draft.to_json().parse_json() }
+    else { intent_draft = topic_new_draft(topic_id) }
+    intent_more = intent_draft.supplement != "" || intent_draft.question != ""
+    intent_show()
+}
+fn intent_pick_mode(kind){
+    if intent_mode() == kind { return }
+    if kind == "schedule" && (intent_draft.target_topic_id != nil || intent_draft.origin_reminder_id != nil) { return }
+    intent_draft.intent_kind = kind intent_draft.question = ""
+    intent_changed(intent_draft.original_input, false)
+    intent_error = "" intent_render()
+}
+fn intent_pick_timezone(zone){
+    intent_draft.schedule_timezone = zone
+    intent_changed(intent_draft.original_input, false)
+    intent_error = "" intent_render()
+}
+fn intent_changed(value, supplement){
+    if value.to_chars().len() > tracking_config.max_input_chars { intent_error = "输入最多1000字符；超出内容未保存" return }
+    if supplement { intent_draft.supplement = value } else { intent_draft.original_input = value }
+    intent_draft.version = intent_draft.version + 1 intent_draft.state = "editing" intent_draft.understanding = nil
+    intent_draft.schedule_understanding = nil
+    if intent_save_timer != nil { stop_timer(intent_save_timer) }
+    let version = intent_draft.version
+    intent_save_timer = start_timeout(0.4, || {
+        intent_save_timer = nil
+        if intent_draft != nil { if version == intent_draft.version { intent_error = topic_save_draft(intent_draft) if intent_error != "" { intent_render() } } }
+    })
+}
+fn intent_save_local(){
+    if intent_save_timer != nil { stop_timer(intent_save_timer) intent_save_timer = nil }
+    if intent_draft == nil { return "" }
+    topic_save_draft(intent_draft)
+}
+fn intent_submit(){
+    if intent_draft == nil { return }
+    intent_error = ""
+    if intent_draft.original_input.trim() == "" { intent_error = "写下一个想法，让我们从这里开始" intent_render() return }
+    let error = intent_save_local()
+    if error != "" { intent_error = error intent_render() return }
+    // User input takes priority; wait for the host's interrupt acknowledgment.
+    if analysis_busy {
+        if agent_task != nil {
+            if agent_task.kind == "tracking_update" { intent_parse_pending = true analysis_cancel() intent_error = "正在停止新闻检查，确认中断后整理输入" intent_render() return }
+        }
+        intent_error = "已有输入正在整理，请先取消或等待" intent_render() return
+    }
+    let draft = intent_draft.to_json().parse_json()
+    let key = draft.to_json()
+    let current_topic = topic_find(draft.target_topic_id)
+    if current_topic != nil {
+        current_topic = current_topic.to_json().parse_json()
+        current_topic.original_input = nil current_topic.supplement = nil
+        current_topic.created_at = nil current_topic.updated_at = nil current_topic.recall_rules = nil
+    }
+    let snapshot = {intent_kind: intent_mode() original_input: draft.original_input supplement: draft.supplement current_topic: current_topic
+        previous_question: draft.question prompt_revision: tracking_prompt_revision}
+    let kind = "parse_intent" let prompt = intent_prompt
+    if intent_mode() == "schedule" {
+        kind = "parse_schedule_intent" prompt = schedule_intent_prompt
+        let zone = draft["schedule_timezone"]
+        if zone != "Asia/Shanghai" && zone != "America/New_York" { zone = "America/New_York" }
+        snapshot.timezone = zone snapshot.reference_now = analysis_epoch_rfc3339(time_now())
+        snapshot.reference_date = schedule_date_at(schedule_zone_seconds(time_now(), zone))
+        snapshot.prompt_revision = schedule_intent_prompt_revision
+    }
+    intent_error = "正在理解你的想法…"
+    error = agent_task_start(kind, snapshot, prompt + snapshot.to_json(), || {
+        if intent_draft == nil { return false }
+        if !intent_open || intent_draft.to_json() != key { return false }
+        if draft.target_topic_id != nil {
+            let target = topic_find(draft.target_topic_id)
+            if target == nil { return false }
+            if target.version != draft.target_version { return false }
+        }
+        true
+    }, fn(reply){
+        if !reply.success { intent_error = reply.error }
+        else {
+            let next = draft.to_json().parse_json()
+            next.state = reply.result.status next.question = reply.result.question
+            if kind == "parse_schedule_intent" {
+                next.schedule_understanding = reply.result.understanding next.understanding = nil
+                next.schedule_prompt_revision = schedule_intent_prompt_revision
+            } else { next.understanding = reply.result.understanding }
+            next.version = next.version + 1
+            let error = topic_save_draft(next)
+            if error == "" { intent_draft = next intent_error = "" intent_more = next.question != "" || next.supplement != "" } else { intent_error = error }
+        }
+        intent_render()
+    })
+    if error != "" { intent_error = error }
+    intent_render()
+}
+fn intent_after_interrupt(){
+    if !intent_parse_pending { return }
+    intent_parse_pending = false
+    if intent_open && !analysis_needs_reopen { start_timeout(0.01, || intent_submit()) }
+}
+fn intent_confirm(){
+    if intent_draft == nil { return }
+    if intent_mode() == "schedule" { intent_confirm_schedule() return }
+    let error = topic_confirm(intent_draft)
+    if error != "" { intent_error = error intent_render() return }
+    let label = "关注"
+    if intent_mode() == "goal" { label = "目标关注" }
+    let title = intent_draft.understanding.title
+    intent_finish(label + "「" + title + "」已保存；首页将按新关注排序")
+}
+fn intent_finish(message){
+    if intent_save_timer != nil { stop_timer(intent_save_timer) intent_save_timer = nil }
+    intent_parse_pending = false intent_error = "" intent_draft = nil
+    intent_hide()
+    // Publish the changed records immediately, even when no model is available.
+    tracking_ui_update()
+    if page == "schedule" { ui.schedule_list.render() }
+    notice(message)
+    tracking_schedule_check()
+}
+fn intent_confirm_schedule(){
+    if intent_draft.state != "ready" || !schedule_intent_understanding_valid(intent_draft["schedule_understanding"]) { intent_error = "请先取得完整的日程理解" intent_render() return }
+    let plan = intent_draft.schedule_understanding
+    let result = schedule_create_record(plan.title, plan.content, plan.location, plan.start, plan.end, plan.timezone, nil, false, intent_draft.draft_id)
+    if !result.success {
+        intent_error = result.error
+        if result["conflicts"] != nil { intent_error = "与已有日程重叠，请调整时间后重新整理" }
+        intent_render() return
+    }
+    let next = topic_records.to_json().parse_json() next.draft = nil
+    let error = topics_commit(next)
+    if error != "" { intent_error = "日程已保存；草稿清理失败，可重试确认，不会重复创建：" + error intent_render() return }
+    intent_finish("日程「" + plan.title + "」已保存；首页将优先展示行程相关报道")
+}
+fn intent_cancel(){
+    intent_parse_pending = false
+    if agent_task != nil { if analysis_busy && (agent_task.kind == "parse_intent" || agent_task.kind == "parse_schedule_intent") { analysis_cancel() } }
+    let error = intent_save_local()
+    if error != "" { intent_error = error intent_render() return }
+    intent_hide() notice("草稿已保留，可以继续补充")
+    if tracking_check_pending { tracking_schedule_check() }
+}
+fn intent_discard(){
+    let next = topic_records.to_json().parse_json() next.draft = nil
+    let error = topics_commit(next)
+    if error != "" { intent_error = error intent_render() return }
+    intent_parse_pending = false
+    if agent_task != nil { if analysis_busy && (agent_task.kind == "parse_intent" || agent_task.kind == "parse_schedule_intent") { analysis_cancel() } }
+    intent_draft = nil intent_hide()
+}
+fn intent_follow_reminder(id){
+    let reminder = tracking_find_reminder(id)
+    if reminder == nil { notice("提醒已过期，请重新检查") return }
+    let error = tracking_check_reminder(reminder)
+    if error != "" { notice(error) return }
+    let item = schedule_find(reminder.schedule_id)
+    intent_draft = topic_new_draft(nil)
+    intent_draft.original_input = "关注与日程「" + item.title + "」有关的信息：" + reminder.impact_summary
+    if record_string(item["location"]) && item["location"] != "" { intent_draft.original_input = intent_draft.original_input + "；地点：" + item["location"] }
+    intent_draft.origin_reminder_id = id
+    intent_more = false
+    notice("")
+    intent_error = ""
+    intent_show()
+}
+fn topic_toggle_pause(id, version, status){
+    let error = topic_set_status(id, version, status)
+    if error != "" { notice(error) } else { notice("关注状态已保存") tracking_schedule_check() }
+    tracking_ui_update()
+}

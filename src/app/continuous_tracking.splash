@@ -1,0 +1,22 @@
+let foreground_tracking_timer = nil
+fn foreground_tracking_arm(){
+    if foreground_tracking_timer != nil { stop_timer(foreground_tracking_timer) foreground_tracking_timer = nil }
+    if agent_preferences.paused { return }
+    foreground_tracking_timer = start_timeout(agent_preferences.interval_seconds, || {
+        foreground_tracking_timer = nil
+        if !agent_preferences.paused { tracking_schedule_check() foreground_tracking_arm() }
+    })
+}
+fn tracking_preferences_change(paused, important, seconds){
+    let next = agent_preferences.to_json().parse_json()
+    next.paused = paused next.important_only = important next.interval_seconds = seconds
+    let error = agent_preferences_commit(next)
+    if error != "" { notice(error) return }
+    if paused {
+        tracking_check_pending = false
+        if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) tracking_auto_timer = nil }
+        if tracking_status == "recalling" || tracking_status == "enriching" { analysis_cancel() }
+        else if analysis_busy && agent_task != nil { if agent_task.kind == "tracking_update" { analysis_cancel() } }
+    }
+    foreground_tracking_arm() tracking_ui_update()
+}

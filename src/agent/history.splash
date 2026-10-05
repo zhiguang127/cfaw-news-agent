@@ -1,0 +1,292 @@
+// Stage 3 persistent analysis and suggestion history. Storage owns records;
+// this module owns deterministic history transitions and change selection.
+let analysis_history = []
+let suggestion_history = []
+let analysis_history_file = {path: "analysis_history_v1.json" writable: true recovered: false}
+let suggestion_history_file = {path: "suggestions_v1.json" writable: true recovered: false}
+let analysis_history_warning = ""
+let history_dirty = false
+let history_max_analyses = 120
+let history_max_suggestions = 500
+
+fn history_warn(message){ if analysis_history_warning != "" { analysis_history_warning = analysis_history_warning + "；" } analysis_history_warning = analysis_history_warning + message }
+fn history_valid_state(value){ value == "pending" || value == "accepted" || value == "dismissed" || value == "withdrawn" || value == "superseded" || value == "stale" || value == "needs_review" }
+fn history_valid_evidence_version(value){
+    record_object(value) && record_string(value.evidence_id) && record_string(value.content_hash) && record_number(value.observed_at)
+}
+fn history_valid_analysis(value){
+    record_object(value) && record_string(value.analysis_id) && record_string(value.request_id) && record_string(value.news_id) &&
+    record_number(value.created_at) && record_string(value.outcome) && record_string(value.prompt_revision) &&
+    record_array(value.evidence_versions) && record_array(value.suggestion_ids) && record_string(value["explanation"])
+}
+fn history_valid_suggestion(value){
+    record_object(value) && record_string(value.suggestion_id) && record_string(value.deduplication_key) &&
+    record_string(value.state) && history_valid_state(value.state) && record_number(value.created_at) &&
+    record_array(value.interest_ids) && record_array(value.evidence_ids) && record_array(value.evidence_versions) &&
+    record_string(value["news_id"]) && record_string(value["change_summary"]) && record_string(value["rationale"]) && record_array(value["uncertainties"])
+}
+fn history_doc_valid(value, kind){
+    if !record_object(value) || value["schema_version"] != 1 || !record_array(value["items"]) { return false }
+    if kind == "analysis" { for item in value["items"] { if !history_valid_analysis(item) { return false } } }
+    if kind == "suggestion" { for item in value["items"] { if !history_valid_suggestion(item) { return false } } }
+    true
+}
+fn history_read(file, kind){
+    let exists = false
+    try { exists = fs.exists(file.path) } { file.writable = false history_warn(file.path + "：无法检查存储") }
+    if !exists { return nil }
+    let value = nil
+    try { value = fs.read(file.path).parse_json() } { value = nil }
+    if history_doc_valid(value, kind) { return value["items"] }
+    file.writable = false
+    if record_object(value) && value["schema_version"] != 1 {
+        history_warn(file.path + "：不支持的版本，原文件已保留") return nil
+    }
+    try {
+        let backup = fs.read(file.path + ".backup").parse_json()
+        if history_doc_valid(backup, kind) { file.recovered = true history_warn(file.path + "：从备份恢复，损坏原件已保留") return backup.items }
+    } { }
+    history_warn(file.path + "：格式无效，原文件已保留")
+    nil
+}
+fn history_write(file, items, kind){
+    if !file.writable && !file.recovered { return "历史文件不可写，当前仅保留在会话中" }
+    let value = {schema_version: 1 items: items}
+    if !history_doc_valid(value, kind) { return "历史记录校验失败，未保存" }
+    if value.to_json().len() > 200000 { return "历史容量已达上限，用户决定与待处理项已保留；需备份后整理历史文件" }
+    try {
+        if file.recovered { fs.write(file.path + ".backup", value.to_json()) }
+        else {
+            if fs.exists(file.path) {
+                let old = fs.read(file.path).parse_json()
+                if !history_doc_valid(old, kind) { file.writable = false return "历史文件已变化，原文件已保留" }
+                fs.write(file.path + ".backup", old.to_json())
+            }
+            fs.write(file.path, value.to_json())
+        }
+    } { return "历史记录写入失败" }
+    ""
+}
+fn history_load(){
+    analysis_history_warning = ""
+    analysis_history = [] suggestion_history = []
+    let analyses = history_read(analysis_history_file, "analysis")
+    let suggestions = history_read(suggestion_history_file, "suggestion")
+    if analyses != nil { analysis_history = analyses }
+    if suggestions != nil { suggestion_history = suggestions }
+}
+fn history_evidence_version(row){
+    let text = row.title + "\n" + row.summary
+    let hash = text
+    // Stable content identity is derived from the normalized source item.
+    // The raw normalized text is retained as a deterministic fallback because
+    // this runtime has no verified cryptographic hash primitive.
+    let sources = []
+    if record_array(row["references"]) { for ref in row.references { sources.push(ref.source_id) } }
+    {evidence_id: row.news_id content_hash: hash observed_at: row.retrieved_at source_ids: sources
+        evidence_key: {url: row["source_url"] published_at: row["published_at"] timestamp_kind: row["timestamp_kind"] evidence_kind: row["evidence_kind"]}.to_json()}
+}
+fn history_find_suggestion(id){ for item in suggestion_history { if item.suggestion_id == id { return item } } nil }
+fn history_find_analysis(id){ for item in analysis_history { if item.analysis_id == id { return item } } nil }
+fn history_save(){
+    history_dirty = true
+    let s = history_write(suggestion_history_file, suggestion_history, "suggestion")
+    if s != "" { return s }
+    let a = history_write(analysis_history_file, analysis_history, "analysis")
+    if a != "" { return a }
+    history_dirty = false
+    ""
+}
+fn history_retry_save(){
+    for item in analysis_history { item.session_unsaved = false }
+    let error = history_save()
+    if error != "" { for item in analysis_history { item.session_unsaved = true } }
+    error
+}
+fn history_record_analysis(row, request_id, context_version, turn_id, result){
+    if suggestion_history.len() + result.suggestions.len() > history_max_suggestions { return "建议历史容量已满；旧决定已保留，未保存本次分析" }
+    let input_key = analysis_input_key(row)
+    let analysis_id = request_id + "-result"
+    while history_find_analysis(analysis_id) != nil { analysis_id = analysis_id + "-next" }
+    let versions = [history_evidence_version(row)]
+    let suggestion_ids = []
+    for suggestion in result.suggestions {
+        let key = analysis_suggestion_key(suggestion)
+        let business_key = analysis_business_key(suggestion)
+        let suggestion_id = analysis_id + "-" + suggestion_ids.len()
+        let previous = nil
+        for old in suggestion_history {
+            if old.news_id == row.news_id && analysis_business_key(old) == business_key { previous = old }
+        }
+        let state = "pending"
+        let reason = "new_suggestion"
+        let suppress = false
+        if previous != nil {
+            let same_evidence = history_same_versions(previous.evidence_versions, versions)
+            if same_evidence && (previous.state == "dismissed" || previous.state == "accepted" || previous.state == "withdrawn") { suppress = true }
+            if same_evidence && previous.state == "pending" && previous.deduplication_key == key { suppress = true }
+        }
+        for old in suggestion_history {
+            if old.news_id == row.news_id && analysis_business_key(old) == business_key && history_same_versions(old.evidence_versions, versions) {
+                if old.state == "accepted" || old.state == "dismissed" || old.state == "withdrawn" { suppress = true previous = old }
+            }
+        }
+        if !suppress {
+        if previous != nil && (previous.state == "pending" || previous.state == "needs_review") { previous.state = "superseded" previous.updated_at = time_now() reason = "updated_evidence_or_action" }
+        let record = {suggestion_id: suggestion_id deduplication_key: key business_key: business_key state: state created_at: time_now()
+            analysis_id: analysis_id news_id: row.news_id interest_ids: suggestion.interest_ids evidence_ids: suggestion.evidence_ids
+            evidence_versions: versions schedule_id: suggestion.schedule_id schedule_version: suggestion.schedule_version
+            change_summary: suggestion.change_summary rationale: suggestion.rationale uncertainties: suggestion.uncertainties
+            proposed_action: suggestion.proposed_action goal_key: suggestion["goal_key"] news_snapshot: row.to_json().parse_json() decision_reason: reason applied_key: nil}
+        suggestion_history.push(record) suggestion_ids.push(suggestion_id)
+        } else { suggestion_ids.push(previous.suggestion_id) }
+    }
+    if result.outcome == "no_change" {
+        let snapshot = analysis_make_snapshot(row)
+        for old in suggestion_history { if old.news_id == row.news_id && (old.state == "pending" || old.state == "needs_review") {
+            if old.schedule_id == nil || analysis_snapshot_schedule(snapshot, old.schedule_id) != nil { old.state = "withdrawn" }
+            else { old.state = "needs_review" }
+            old.updated_at = time_now()
+        } }
+    }
+    if result.outcome == "insufficient_evidence" {
+        for old in suggestion_history { if old.news_id == row.news_id && old.state == "pending" { old.state = "needs_review" old.updated_at = time_now() } }
+    }
+    while analysis_history.len() >= history_max_analyses { analysis_history.remove(0) }
+    analysis_history.push({input_key: input_key news_snapshot: row.to_json().parse_json() analysis_id: analysis_id request_id: request_id news_id: row.news_id context_version: context_version
+        turn_id: turn_id created_at: time_now() outcome: result.outcome explanation: result.explanation
+        prompt_revision: analysis_prompt_revision evidence_versions: versions suggestion_ids: suggestion_ids})
+    let error = history_save()
+    if error != "" { analysis_history[analysis_history.len() - 1].session_unsaved = true }
+    error
+}
+fn history_same_versions(a, b){
+    if a.len() != b.len() { return false }
+    for first in a {
+        let found = false
+        for second in b { if first.evidence_id == second.evidence_id && first.content_hash == second.content_hash && first["evidence_key"] == second["evidence_key"] { found = true } }
+        if !found { return false }
+    }
+    true
+}
+fn history_update_suggestion_state(id, state){
+    if state == "accepted" { return "请先查看并确认日程变更" }
+    if !history_valid_state(state) { return "不支持的建议状态" }
+    let item = history_find_suggestion(id)
+    if item == nil { return "找不到建议记录" }
+    if item.state == "accepted" { return "已确认的建议不可撤销日程；可在日程页手动修改" }
+    if item.state != "pending" && item.state != "needs_review" { return "建议已处理，请刷新查看状态" }
+    let previous = item.to_json().parse_json()
+    item.state = state item.updated_at = time_now() item.user_decision = true
+    let error = history_save()
+    if error != "" { item.state = previous.state item.updated_at = previous["updated_at"] item.user_decision = previous["user_decision"] }
+    error
+}
+fn history_confirm_suggestion(id){
+    let current = history_find_suggestion(id)
+    if current == nil { return {success: false error: "找不到建议记录"} }
+    if current.state == "accepted" { return {success: true idempotent: true} }
+    if current.state != "pending" { return {success: false error: "建议已处理，不能重复确认"} }
+    // A reload guards against decisions written in another application session.
+    if !suggestion_history_file.writable && !suggestion_history_file.recovered { return {success: false error: "建议历史不可写，日程未更改"} }
+    let reread = history_read(suggestion_history_file, "suggestion")
+    let found = nil
+    if reread != nil { for row in reread { if row.suggestion_id == id { found = row } } }
+    if found == nil { return {success: false error: "建议历史已变化，请重新打开应用"} }
+    if found.state == "accepted" { current.state = "accepted" current.user_decision = true return {success: true idempotent: true} }
+    if found.state != "pending" { return {success: false error: "建议历史已变化，请重新查看"} }
+    if found.proposed_action == nil {
+        if current.proposed_action != nil { return {success: false error: "建议内容已变化，请重新打开应用"} }
+    } else {
+        if current.proposed_action == nil { return {success: false error: "建议内容已变化，请重新打开应用"} }
+        if found.proposed_action.to_json() != current.proposed_action.to_json() { return {success: false error: "建议内容已变化，请重新打开应用"} }
+    }
+    let already_applied = false
+    let schedule_error = schedule_refresh()
+    if schedule_error != "" { return {success: false error: schedule_error} }
+    for schedule in user_schedules {
+        if schedule["origin_suggestion_id"] == id || schedule["last_suggestion_id"] == id { already_applied = true }
+    }
+    if !already_applied {
+        let evidence_error = history_revalidate_evidence(current)
+        if evidence_error != "" { return {success: false error: evidence_error} }
+    }
+    let result = {success: true}
+    let previous_decision = current["user_decision"]
+    if current.proposed_action != nil { result = schedule_apply_action(current.proposed_action, id) }
+    if !result.success { return result }
+    current.state = "accepted"
+    current.updated_at = time_now() current.user_decision = true
+    if current.proposed_action != nil { current.applied_key = id }
+    let error = history_save()
+    if error != "" {
+        // The schedule carries the suggestion marker. A retry discovers the
+        // existing write without creating another entry or incrementing version.
+        current.state = "pending" current.applied_key = nil current.user_decision = previous_decision
+        return {success: false error: "日程已写入，但建议历史保存失败；请重试确认以恢复状态：" + error}
+    }
+    result
+}
+fn history_suggestions_for_news(news_id){
+    let out = []
+    for item in suggestion_history { if item.news_id == news_id { out.push(item) } }
+    out
+}
+fn history_state_label(state){
+    if state == "pending" { return "待处理" }
+    if state == "accepted" { return "已接受" }
+    if state == "dismissed" { return "已忽略" }
+    if state == "withdrawn" { return "已撤回" }
+    if state == "superseded" { return "已被新建议替代" }
+    if state == "stale" { return "已过期" }
+    if state == "needs_review" { return "证据不足，需重新分析" }
+    state
+}
+fn history_outcome_label(outcome){
+    if outcome == "no_change" { return "目前无需调整" }
+    if outcome == "insufficient_evidence" { return "现有证据不足" }
+    if outcome == "suggestions" { return "有建议待核对" }
+    outcome
+}
+fn history_latest_analysis(news_id){
+    let latest = nil
+    for item in analysis_history { if item.news_id == news_id { latest = item } }
+    latest
+}
+fn history_changed_rows(rows){
+    let out = []
+    for row in rows {
+        let old = history_latest_analysis(row.news_id)
+        if old == nil || old["session_unsaved"] == true || old["input_key"] != analysis_input_key(row) { out.push(row) }
+    }
+    out
+}
+// Confirmation uses persisted source caches, never the detail view/bookmark snapshot.
+fn history_revalidate_evidence(item){
+    if item.evidence_versions.len() == 0 { return "旧建议缺少证据版本，请重新分析" }
+    for version in item.evidence_versions {
+        let visible = analysis_current_row(version.evidence_id)
+        if visible != nil && history_evidence_version(visible).content_hash != version.content_hash { return "新闻缓存已更新，请重新分析后确认" }
+        let newest = nil
+        for source in news_sources {
+            if record_array(version["source_ids"]) && version.source_ids.len() > 0 && !record_contains(version.source_ids, source.id) { continue }
+            try {
+                let cache = fs.read("news_cache_v1_" + source.id + ".json").parse_json()
+                if feed_cache_valid(cache, source) { for row in cache.items {
+                    if row.news_id == version.evidence_id && (newest == nil || row.retrieved_at > newest.retrieved_at) { newest = row }
+                } }
+            } { }
+        }
+        if newest == nil { return "证据已不在新闻缓存中，请刷新并重新分析" }
+        if newest["demo_data"] == true { return "演示证据不能用于确认日程" }
+        if time_now() - newest.retrieved_at > news_config.cache_stale_seconds { return "证据超过两小时未刷新，请刷新并重新分析" }
+        if history_evidence_version(newest).content_hash != version.content_hash { return "证据内容已变化，请重新分析后确认" }
+        if version["evidence_key"] == nil || history_evidence_version(newest).evidence_key != version.evidence_key { return "证据日期或来源已变化，或旧建议缺少完整版本；请重新分析" }
+    }
+    for id in item.interest_ids {
+        let enabled = false
+        for interest in user_interests { if interest.interest_id == id && interest.enabled { enabled = true } }
+        if !enabled { return "关联追踪规则已变化，请重新分析" }
+    }
+    ""
+}

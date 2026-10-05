@@ -1,0 +1,246 @@
+// Exchange rates for the base currency, quoted per 1 unit of it.
+//
+// One file per day covers every currency, so tracking N currencies still costs
+// one request per day. A small window of daily files is kept so a rate can be
+// compared with the previous available day; that comparison is what decides
+// whether a traveller is told anything at all, because rates drift a little
+// every single day and an unthresholded change is noise.
+let fx_base = "cny"
+let fx_hosts = ["cdn.jsdelivr.net"]
+let fx_source = "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@"
+let fx_license = "fawazahmed0/exchange-api, not central bank data"
+let fx_window_days = 3
+let fx_max_currencies = 8
+// A traveller is only told about a move larger than this. Below it the daily
+// drift is not information.
+let fx_alert_change_ratio = 0.02
+let fx_attribution = fx_license
+
+// Which currencies matter is the caller's decision, so the currency list is
+// passed in rather than kept as mutable module state. The newest and previous
+// loaded days are kept as scalars rather than by scanning a set.
+//
+// Days are ordered by their timestamp, never by comparing the strings: this
+// runtime returns false for < and > on text, so a lexicographic comparison of
+// two ISO dates silently never fires and every day looks like the oldest.
+let fx_tables_by_date = {}
+let fx_latest_day = ""
+let fx_latest_key = 0
+let fx_prior_day = ""
+let fx_prior_key = 0
+let fx_pending = 0
+let fx_status = ""
+let fx_status_by_date = {}
+let fx_requests_by_date = {}
+let fx_request_counter = 0
+let fx_http_request = |url, redirects, callback| news_http_request(url, redirects, callback)
+
+fn fx_update_status(){
+    fx_status = ""
+    for status in fx_status_by_date {
+        if status["cache_error"] != "" {
+            if fx_status != "" { fx_status = fx_status + "；" }
+            fx_status = fx_status + status["cache_error"]
+        }
+        if status["error"] != "" {
+            if fx_status != "" { fx_status = fx_status + "；" }
+            fx_status = fx_status + status["error"]
+        }
+    }
+}
+fn fx_set_day_status(day, state, error){
+    let cache_error = ""
+    let previous = fx_status_by_date[day]
+    if previous != nil { cache_error = previous["cache_error"] }
+    fx_status_by_date[day] = {state: state error: error cache_error: cache_error}
+    fx_update_status()
+}
+fn fx_cache_error(day, message){
+    let state = "not_loaded"
+    let error = ""
+    let previous = fx_status_by_date[day]
+    if previous != nil { state = previous["state"] error = previous["error"] }
+    fx_status_by_date[day] = {state: state error: error cache_error: message}
+    fx_update_status()
+}
+
+fn fx_request_allowed(url){
+    if !record_string(url) { return false }
+    let parts = url.split("/")
+    parts.len() >= 3 && parts[0] == "https:" && parts[1] == "" && record_contains(fx_hosts, parts[2])
+}
+fn fx_url(day){ fx_source + day + "/v1/currencies/" + fx_base + ".json" }
+fn fx_date_loaded(day){ return fx_tables_by_date[day] != nil }
+fn fx_currency_count(currencies){
+    if !record_array(currencies) { return 0 }
+    let seen = {}
+    let count = 0
+    for code in currencies {
+        if fx_code_valid(code) && seen[code] == nil {
+            seen[code] = true
+            count = count + 1
+        }
+    }
+    count
+}
+
+fn fx_ingest(table, fetched_at){
+    if !fx_table_valid(table) { return false }
+    if table["base"] != fx_base || !record_number(fetched_at) { return false }
+    table.fetched_at = fetched_at
+    let day = table["date"]
+    let key = weather_time_stamp(day)
+    if key > fx_latest_key {
+        fx_prior_day = fx_latest_day
+        fx_prior_key = fx_latest_key
+        fx_latest_day = day
+        fx_latest_key = key
+    } else if key < fx_latest_key && key > fx_prior_key {
+        fx_prior_day = day
+        fx_prior_key = key
+    }
+    fx_tables_by_date[day] = table
+    true
+}
+
+fn fx_newest_date(){ fx_latest_day }
+fn fx_previous_date(){ fx_prior_day }
+fn fx_reset(){
+    fx_tables_by_date = {}
+    fx_latest_day = ""
+    fx_latest_key = 0
+    fx_prior_day = ""
+    fx_prior_key = 0
+    fx_pending = 0
+    fx_status = ""
+    fx_status_by_date = {}
+    fx_requests_by_date = {}
+}
+
+fn fx_cache_path(day){ "fx_v1_" + fx_base + "_" + day + ".json" }
+
+fn fx_read_cache(day){
+    let path = fx_cache_path(day)
+    if !fs.exists(path) { return false }
+    let raw = ""
+    try { raw = fs.read(path) } { raw = "" }
+    if raw == "" { fx_cache_error(day, day + " 汇率缓存读取失败，等待重新获取") return false }
+    let value = nil
+    try { value = raw.parse_json() } { value = nil }
+    if !fx_table_valid(value) { fx_cache_error(day, day + " 汇率缓存格式无效，等待重新获取") return false }
+    if value["date"] != day || value["base"] != fx_base { fx_cache_error(day, day + " 汇率缓存日期或基准币种不符，等待重新获取") return false }
+    if !fx_ingest(value, value["fetched_at"]) { return false }
+    fx_set_day_status(day, "cached", "")
+    true
+}
+
+fn fx_write_cache(table){
+    if table == nil { return }
+    let day = table["date"]
+    let saved = true
+    try { fs.write(fx_cache_path(day), table.to_json()) } { saved = false }
+    if !saved { fx_cache_error(day, day + " 汇率缓存保存失败，本次数据仅在当前会话有效") }
+    else { fx_cache_error(day, "") }
+}
+
+fn fx_fetch_day(day){
+    if fx_date_loaded(day) || fx_requests_by_date[day] != nil { return }
+    let url = fx_url(day)
+    if !fx_request_allowed(url) {
+        fx_set_day_status(day, "error", day + " 汇率数据源域名未获许可")
+        return
+    }
+    fx_pending = fx_pending + 1
+    fx_request_counter = fx_request_counter + 1
+    let request_id = fx_request_counter
+    fx_requests_by_date[day] = request_id
+    fx_set_day_status(day, "loading", "")
+    fx_http_request(url, 0, fn(result){
+        if fx_requests_by_date[day] != request_id { return }
+        fx_requests_by_date[day] = nil
+        fx_pending = fx_pending - 1
+        if fx_pending < 0 { fx_pending = 0 }
+        if !result.success {
+            fx_set_day_status(day, "error", day + " 汇率未发布或获取失败：是否变动未知（" + result["error"] + "）")
+            return
+        }
+        let value = nil
+        try { value = result.body.parse_json() } { value = nil }
+        let table = fx_table_from_upstream(value, fx_base, day)
+        if table == nil {
+            fx_set_day_status(day, "error", day + " 汇率响应不是预期结构：是否变动未知")
+            return
+        }
+        if fx_ingest(table, time_now()) { fx_set_day_status(day, "fresh", "") fx_write_cache(table) }
+    })
+}
+
+// The window ending at the given day. The caller passes the day so a test or a
+// replay can pin it; nothing here reads the runtime clock.
+fn fx_load(today){ fx_load_from(today, fx_window_days) }
+fn fx_load_from(today, days){
+    if !weather_day_valid(today) { fx_status = "汇率查询日期无效" return }
+    if !record_number(days) { fx_status = "汇率查询天数无效" return }
+    if days < 1 || days > fx_window_days || floor(days) != days { fx_status = "汇率查询天数须为 1–" + fx_window_days return }
+    // Restore every cached comparison day before any synchronous or delayed reply.
+    for i in days {
+        let day = weather_day_stamp(weather_time_stamp(today) - i * 86400)
+        if !fx_date_loaded(day) { fx_read_cache(day) }
+    }
+    for i in days {
+        fx_fetch_day(weather_day_stamp(weather_time_stamp(today) - i * 86400))
+    }
+}
+
+// One rate record for one currency, with the change against the previous
+// available day. previous_per_cny and change_ratio stay nil when there is no
+// earlier day: an unchanging rate is a real observation, "no comparison" is not.
+fn fx_rate(currency){
+    let empty = {currency: currency rate_date: "" per_cny: nil previous_per_cny: nil change_ratio: nil fetched_at: 0}
+    if !fx_code_valid(currency) { return empty }
+    let newest = fx_newest_date()
+    if newest == "" { return empty }
+    let table = fx_tables_by_date[newest]
+    let amount = fx_amount(table, currency)
+    if amount == nil {
+        return {currency: currency rate_date: newest per_cny: nil previous_per_cny: nil change_ratio: nil fetched_at: table["fetched_at"]}
+    }
+    let previous = nil
+    let change = nil
+    let older = fx_previous_date()
+    if older != "" {
+        let before = fx_tables_by_date[older]
+        let prior = fx_amount(before, currency)
+        if prior != nil {
+            previous = prior
+            change = (amount - prior) / prior
+        }
+    }
+    {currency: currency rate_date: newest per_cny: amount previous_per_cny: previous change_ratio: change fetched_at: table["fetched_at"]}
+}
+
+// A rule, not a judgement: has any of the given currencies moved more than the
+// threshold since the previous available day? A nil change_ratio means there was
+// nothing to compare against and is reported as unknown, not as "no change".
+// The currency list is an argument: which currencies matter is the caller's
+// decision, and this module keeps no mutable collection of them.
+fn fx_movers(currencies){
+    let out = []
+    if !record_array(currencies) { return out }
+    if fx_currency_count(currencies) > fx_max_currencies { return out }
+    for code in currencies {
+        if !fx_code_valid(code) { continue }
+        let row = fx_rate(code)
+        if row["per_cny"] == nil { continue }
+        if row["change_ratio"] == nil {
+            out.push({currency: code known: false change_ratio: nil per_cny: row["per_cny"] rate_date: row["rate_date"]})
+            continue
+        }
+        let magnitude = row["change_ratio"]
+        if magnitude < 0 { magnitude = 0 - magnitude }
+        if magnitude >= fx_alert_change_ratio {
+            out.push({currency: code known: true change_ratio: row["change_ratio"] per_cny: row["per_cny"] rate_date: row["rate_date"]})
+        }
+    }
+    out
+}

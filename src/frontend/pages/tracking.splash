@@ -1,0 +1,76 @@
+let TrackingHeader = View{visible: false width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 10 bottom: 8} spacing: 6
+    View{width: Fill height: 30 flow: Right align: Align{y: 0.5}
+        tracking_summary := Small{width: Fill text: "我的关注"}
+        manage_tracking_button := LinkButton{visible: false text: "管理关注" on_click: || manage_tracking()}
+    }
+    tracking_analysis_actions := View{width: Fill height: Fit flow: Down spacing: 6 on_render: || {
+        Small{text: analysis_check_status() max_lines: 2}
+        View{width: Fill height: Fit flow: Right spacing: 8
+            if !analysis_has_focus() { SecondaryButton{text: "添加关注" on_click: || intent_begin(nil)} }
+            else if tracking_in_progress() { SecondaryButton{text: "停止检查" on_click: || analysis_cancel()} }
+            else { SecondaryButton{text: "检查关注更新" on_click: || analyze_changes()} }
+            QuietButton{text: "查看分析与建议" on_click: || show_analysis_results()}
+        }
+    }}
+}
+let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
+    ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 12
+        Heading{text: "关注你想持续了解的变化"}
+        Small{text: "用自己的话说明目的、范围和偏好。确认理解后，新闻围绕你的意图展开。"}
+        Primary{text: "表达关注 / 继续草稿" on_click: || intent_begin(nil)}
+        continuous_controls := View{width: Fill height: Fit flow: Down spacing: 6 on_render: || {
+        Section{text: "持续检查"}
+        Small{text: "应用打开时按设定间隔检查，共用同一助手队列。关闭后不运行；当前宿主未提供后台唤醒或系统推送。"}
+        if agent_preferences.paused { SecondaryButton{text: "恢复自动检查" on_click: || tracking_preferences_change(false, agent_preferences.important_only, agent_preferences.interval_seconds)} }
+        else { SecondaryButton{text: "暂停自动检查" on_click: || tracking_preferences_change(true, agent_preferences.important_only, agent_preferences.interval_seconds)} }
+        if agent_preferences.important_only { QuietButton{text: "提醒：仅重要变化（点击显示全部）" on_click: || tracking_preferences_change(agent_preferences.paused, false, agent_preferences.interval_seconds)} }
+        else { QuietButton{text: "提醒：全部变化（点击只看重要）" on_click: || tracking_preferences_change(agent_preferences.paused, true, agent_preferences.interval_seconds)} }
+        Small{text: "检查间隔：" + agent_preferences.interval_seconds / 60 + " 分钟"}
+        View{width: Fill height: Fit flow: Right spacing: 6
+            QuietButton{text: "5分钟" on_click: || tracking_preferences_change(agent_preferences.paused, agent_preferences.important_only, 300)}
+            QuietButton{text: "15分钟" on_click: || tracking_preferences_change(agent_preferences.paused, agent_preferences.important_only, 900)}
+            QuietButton{text: "60分钟" on_click: || tracking_preferences_change(agent_preferences.paused, agent_preferences.important_only, 3600)}
+        }
+        }}
+        Section{text: "我的关注"}
+        interest_list := View{width: Fill height: Fit flow: Down spacing: 4 on_render: || {
+            let has_topics = false
+            for topic in topic_records.topics { if topic_is_user_record(topic) { has_topics = true } }
+            if user_interests.len() == 0 && !has_topics { Small{text: "尚未添加关注。也可在新闻条目上关注来源。"} }
+            for topic in topic_records.topics {
+                if !topic_is_user_record(topic) { continue }
+                Box{
+                    Section{text: topic.title draw_text.color: accent}
+                    if topic["demo_preset"] == true { Small{text: "演示预设 · 可修改或暂停"} }
+                    else if topic["intent_kind"] == "goal" { Small{text: "目标关注 · 围绕下一步决策追踪"} }
+                    else { Small{text: "新闻关注 · 持续了解话题"} }
+                    if topic.purpose != "" { Text{text: topic.purpose} }
+                    Small{text: topic.original_input}
+                    let status_label = "关注中" if topic.status == "paused" { status_label = "已暂停" }
+                    Small{text: "版本 " + topic.version + " · " + status_label}
+                    Small{text: target_check_label("topic", topic.topic_id, topic.version)}
+                    for preference in topic.preferences { Small{text: "偏好：" + preference} }
+                    View{width: Fill height: Fit flow: Right spacing: 8
+                        QuietButton{text: "修改" on_click: || intent_begin(topic.topic_id)}
+                        if topic.status == "active" { QuietButton{text: "暂停" on_click: || topic_toggle_pause(topic.topic_id, topic.version, "paused")} }
+                        else { QuietButton{text: "恢复" on_click: || topic_toggle_pause(topic.topic_id, topic.version, "active")} }
+                    }
+                }
+                Divider{}
+            }
+            for item in user_interests {
+                View{width: Fill height: Fit flow: Right align: Align{y: 0.5} spacing: 8
+                    View{width: Fill height: Fit flow: Down spacing: 2
+                        if item.kind == "category" { Text{text: category_label(item.value)} }
+                        else { Text{text: item.value} }
+                        if item.kind == "keyword" { Small{text: "已保存的关注词"} }
+                        if item.kind == "source" { Small{text: "新闻发布方"} }
+                        if item.kind == "category" { Small{text: "新闻源所属主题"} }
+                    }
+                    QuietButton{text: "取消关注" on_click: || remove_interest(item.interest_id)}
+                }
+                Divider{}
+            }
+        }}
+    }
+}

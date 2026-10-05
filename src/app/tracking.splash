@@ -1,0 +1,358 @@
+// Application owns result publication, reminder decisions and version checks.
+let tracking_recall_generation = 0
+let tracking_recall_seconds = 0
+let tracking_recall_targets = nil
+let tracking_recall_candidates = nil
+let tracking_prompt_work = nil
+let tracking_started_at = 0 let tracking_enrichment_seconds = 0
+let tracking_status = "idle"
+let tracking_message = "确认你的意图后，检查相关变化与日程影响"
+let tracking_auto_timer = nil
+let tracking_check_pending = false
+let tracking_pending_run = nil
+fn tracking_article_key(row){
+    {title: row.title summary: row.summary source_url: row.source_url published_at: row.published_at
+        timestamp_kind: row.timestamp_kind evidence_kind: row.evidence_kind}.to_json()
+}
+fn tracking_current_row(id){
+    let newest = analysis_current_row(id)
+    for row in app_feed_rows {
+        if row.news_id == id {
+            // Source callbacks may precede the asynchronous merged-feed build.
+            if newest != nil { if tracking_article_key(newest) != tracking_article_key(row) { return newest } }
+            return row
+        }
+    }
+    newest
+}
+fn tracking_snapshot_current(snapshot){ tracking_snapshot_current_in(snapshot, tracking_context_key()) }
+fn tracking_snapshot_current_in(snapshot, context_key){
+    if snapshot.context_key != context_key { return false }
+    for topic in snapshot.topics {
+        let current = topic_find(topic.topic_id)
+        if current == nil { return false }
+        if current.to_json() != topic.to_json() { return false }
+    }
+    for schedule in snapshot.schedules {
+        let current = schedule_find(schedule.schedule_id)
+        if current == nil { return false }
+        if current.to_json() != schedule.to_json() { return false }
+    }
+    for evidence in snapshot.evidence {
+        let row = tracking_current_row(evidence.news_id)
+        if row == nil { return false }
+        if tracking_evidence_key(row) != evidence.content_key || row.retrieved_at <= 0 || time_now() - row.retrieved_at > news_config.cache_stale_seconds { return false }
+        if evidence["body_key"] != nil && evidence["body_key"] != "" {
+            if record_number(evidence["body_retrieved_at"]) { if time_now() - evidence.body_retrieved_at > news_config.cache_stale_seconds { return false } }
+            let article = analysis_article_find(row)
+            // Eviction does not erase persisted evidence, but a newly fetched
+            // different body invalidates old advice before confirmation.
+            if article != nil { if article.body_key != evidence.body_key { return false } }
+        }
+    }
+    true
+}
+fn tracking_run_current(run){
+    if run.snapshot.prompt_revision != tracking_prompt_revision { return false }
+    tracking_snapshot_current(run.snapshot)
+}
+fn tracking_latest_item(row){
+    let value = tracking_current_values()[row.news_id]
+    if value == nil { return nil }
+    let evidence = tracking_find(value.run.snapshot.evidence, "news_id", row.news_id)
+    if evidence == nil { return nil }
+    if tracking_evidence_key(row) != evidence.content_key { return nil }
+    value
+}
+fn tracking_reminder_id(impact){
+    "reminder:" + {schedule_id: impact["schedule_id"] goal_key: impact.goal_key}.to_json()
+}
+fn tracking_reminder(item, impact, run){
+    let evidence = []
+    for id in impact.evidence_ids {
+        let source = tracking_find(run.snapshot.evidence, "news_id", id)
+        evidence.push({news_id: id key: source.content_key})
+    }
+    {reminder_id: tracking_reminder_id(impact) goal_key: impact.goal_key schedule_id: impact["schedule_id"]
+        schedule_version: impact.schedule_version event_start: impact.event_start event_end: impact.event_end overlap_reason: impact.overlap_reason news_id: item.news_id impact_summary: impact.impact_summary
+        uncertainties: impact.uncertainties material_change: impact.material_change evidence: evidence run: run}
+}
+fn tracking_evidence_facts(key){
+    let value = nil try { value = key.parse_json() } { return nil }
+    if !record_object(value) { return nil }
+    if !record_string(value["title"]) || !record_string(value["summary"]) { return nil }
+    {title: value["title"] summary: value["summary"]}.to_json()
+}
+fn tracking_reminder_suppressed(reminder){
+    for decision in topic_records.decisions {
+        if decision["kind"] == "insight" { continue }
+        if decision.reminder_id == reminder.reminder_id {
+            if decision.evidence.to_json() == reminder.evidence.to_json() { return true }
+            if reminder.material_change.trim() == "" { return true }
+            // Provenance/date changes invalidate a result, but repeated text
+            // from another URL is not by itself new supporting facts.
+            let new_facts = false
+            for evidence in reminder.evidence {
+                let facts = tracking_evidence_facts(evidence.key)
+                if facts == nil { return true }
+                let repeated = false
+                for old in decision.evidence { if tracking_evidence_facts(old.key) == facts { repeated = true } }
+                if !repeated { new_facts = true }
+            }
+            if !new_facts { return true }
+        }
+    }
+    false
+}
+fn tracking_item_reminders(value){
+    let out = []
+    if value == nil { return out }
+    for impact in value.item.schedule_impacts {
+        let item = schedule_find(impact["schedule_id"])
+        if item != nil {
+            if schedule_active(item) && item.version == impact.schedule_version && schedule_instant(item.end) >= time_now() {
+                let reminder = tracking_reminder(value.item, impact, value.run)
+                if !tracking_reminder_suppressed(reminder) { out.push(reminder) }
+            }
+        }
+    }
+    out
+}
+fn tracking_current_values(){
+    let values = {} let covered = {} let context_key = tracking_context_key()
+    for i in tracking_cache.runs.len() {
+        let run = tracking_cache.runs[tracking_cache.runs.len() - 1 - i]
+        let current = run.snapshot.prompt_revision == tracking_prompt_revision && tracking_snapshot_current_in(run.snapshot, context_key)
+        for item in run.result.items {
+            let remaining = {} let any = false
+            for topic in run.snapshot.topics {
+                let key = item.news_id + ":topic:" + topic.topic_id
+                if covered[key] != true { remaining[topic.topic_id] = true any = true } covered[key] = true
+            }
+            for interest in run.snapshot.legacy_interests {
+                let key = item.news_id + ":interest:" + interest.interest_id
+                if covered[key] != true { remaining[interest.interest_id] = true any = true } covered[key] = true
+            }
+            for schedule in run.snapshot.schedules {
+                let key = item.news_id + ":schedule:" + schedule.schedule_id
+                if covered[key] != true { remaining[schedule.schedule_id] = true any = true } covered[key] = true
+            }
+            if !current || !any { continue }
+            // A later check of another target cannot erase a known relationship.
+            let candidate = item.to_json().parse_json()
+            candidate.topic_ids.retain(|id| remaining[id] == true)
+            candidate.legacy_interest_ids.retain(|id| remaining[id] == true)
+            candidate.schedule_impacts.retain(|impact| remaining[impact["schedule_id"]] == true)
+            if candidate.relevance == "related" && candidate.topic_ids.len() + candidate.legacy_interest_ids.len() == 0 { candidate.relevance = "unrelated" }
+            let value = {item: candidate run: run}
+            let existing = values[item.news_id]
+            if existing == nil { values[item.news_id] = value }
+            else if tracking_item_reminders(existing).len() == 0 {
+                if tracking_item_reminders(value).len() > 0 || (existing.item.relevance != "related" && value.item.relevance == "related") { values[item.news_id] = value }
+            }
+        }
+    }
+    values
+}
+fn tracking_active_reminders(){
+    let reminders = [] let seen = {}
+    for value in tracking_current_values() {
+        for reminder in tracking_item_reminders(value) {
+            if seen[reminder.reminder_id] != true { reminders.push(reminder) seen[reminder.reminder_id] = true }
+        }
+    }
+    reminders
+}
+fn tracking_find_reminder(id){ for item in tracking_active_reminders() { if item.reminder_id == id { return item } } nil }
+fn tracking_check_reminder(reminder){
+    if !tracking_run_current(reminder.run) { return "提醒已过期，关注或依据已变化，请重新检查" }
+    let error = schedule_refresh()
+    if error != "" { return error }
+    let schedule = schedule_find(reminder.schedule_id)
+    if schedule == nil { return "日程已不存在" }
+    if !schedule_active(schedule) || schedule.version != reminder.schedule_version { return "日程版本已变化，请重新检查" }
+    if tracking_reminder_suppressed(reminder) { return "提醒已有决定，请刷新详情" }
+    // Check persisted evidence using the existing cache boundary, not model text.
+    let versions = []
+    for item in reminder.evidence {
+        let row = tracking_current_row(item.news_id)
+        if row == nil { return "依据已离开列表，请刷新" }
+        versions.push(history_evidence_version(row))
+    }
+    history_revalidate_evidence({interest_ids: [] evidence_versions: versions})
+}
+fn tracking_decision(reminder, state){
+    {reminder_id: reminder.reminder_id goal_key: reminder.goal_key schedule_id: reminder.schedule_id
+        schedule_version: reminder.schedule_version state: state decided_at: time_now() evidence: reminder.evidence}
+}
+fn tracking_dismiss(id){
+    let reminder = tracking_find_reminder(id)
+    if reminder == nil { notice("提醒已过期或已有决定") return }
+    let error = tracking_check_reminder(reminder)
+    if error == "" {
+        let next = topic_records.to_json().parse_json()
+        if next.decisions.len() >= tracking_config.max_decisions { error = "决定记录已达上限，未保存" }
+        else { next.decisions.push(tracking_decision(reminder, "dismissed")) error = topics_commit(next) }
+    }
+    if error == "" { notice("已忽略；相同证据不再提醒") } else { notice(error) }
+    tracking_ui_update() tracking_schedule_check()
+}
+fn tracking_publish(snapshot, key, result, task_id){
+    if !tracking_snapshot_current(snapshot) { return "结果已过期，未保存" }
+    for old in tracking_cache.runs { if old.task_id == task_id { return "" } }
+    let next = tracking_cache.to_json().parse_json()
+    next.revision = tracking_cache.revision + 1
+    let run = {task_id: task_id checked_at: time_now() input_key: key snapshot: snapshot result: result}
+    next.runs.push(run)
+    while next.runs.len() > tracking_config.max_runs { next.runs.remove(0) }
+    let error = tracking_store_write(tracking_cache_file, next, tracking_cache_valid)
+    if error == "" { tracking_cache = next tracking_pending_run = nil }
+    else { tracking_pending_run = run }
+    error
+}
+fn tracking_retry_save(){
+    if tracking_pending_run == nil { return }
+    let run = tracking_pending_run
+    let error = tracking_publish(run.snapshot, run.input_key, run.result, run.task_id)
+    if error == "" { tracking_status = run.result.outcome tracking_message = "结果已保存" } else { tracking_message = error }
+    tracking_ui_update()
+}
+fn tracking_prompt_snapshot(snapshot){
+    // Deep-copy once before projection: do not alias mutable domain arrays in
+    // a payload that outlives this callback on the host's script heap.
+    let payload = snapshot.to_json().parse_json()
+    payload.context_key = nil payload.previous_result = nil
+    for topic in payload.topics {
+        topic.original_input = nil topic.supplement = nil topic.recall_rules = nil
+        topic.created_at = nil topic.updated_at = nil
+    }
+    for evidence in payload.evidence { evidence.content_key = nil evidence.body_key = nil }
+    payload.reschedule_enabled = tracking_config.enable_reschedule_proposals
+    for previous in payload.previous_by_target {
+        for insight in previous.insights {
+            insight.summary_truncated = insight.summary.to_chars().len() > 250
+            insight.summary = bm25_prefix(insight.summary, 250)
+            insight.uncertainties = nil insight.evidence_refs = nil insight.next_step = nil insight.reschedule = nil
+        }
+    }
+    // Native decisions retain full fact/version checks; the model receives the
+    // latest state per issue and a labeled excerpt rather than duplicate bodies.
+    let decisions = [] let seen = {}
+    for i in payload.decisions.len() {
+        let d = payload.decisions[payload.decisions.len() - 1 - i]
+        let issue = d["reminder_id"]
+        if d["kind"] == "insight" { issue = d.target_type + ":" + d.target_id + ":" + d.target_version + ":" + d.issue_key }
+        if seen[issue] == true { continue } seen[issue] = true
+        if d["kind"] == "insight" {
+            d.baseline_excerpt = ""
+            if d.evidence_facts.len() > 0 { d.baseline_excerpt = bm25_prefix(d.evidence_facts[0], 800) }
+            d.baseline_truncated = true d.evidence_facts = nil
+        } else { d.evidence = nil }
+        decisions.push(d)
+    }
+    payload.decisions = decisions
+    tracking_prompt_work = payload
+    payload
+}
+
+fn tracking_start(row){
+    if tracking_in_progress() || octos_testing || analysis_needs_reopen { tracking_message = "助手忙碌或中断未确认，请稍后重试" tracking_ui_update() return }
+    if busy { tracking_message = "新闻正在更新，整轮结束后再检查" tracking_ui_update() return }
+    let targets = tracking_targets()
+    tracking_recall_targets = targets
+    if targets.topics.len() + targets.schedules.len() + targets.legacy_interests.len() == 0 { tracking_status = "no_targets" tracking_message = "先保存关注或有效日程" tracking_ui_update() return }
+    let rows = app_feed_rows if row != nil { rows = [row] }
+    tracking_recall_generation = tracking_recall_generation + 1
+    let generation = tracking_recall_generation
+    let context_key = tracking_context_key()
+    let started = time_now()
+    tracking_started_at = started tracking_enrichment_seconds = 0
+    tracking_status = "recalling" tracking_message = "正在寻找与你意图有关的新消息…"
+    check_states_record(targets, "pending", "", false)
+    bm25_recall(rows, targets, || generation == tracking_recall_generation && context_key == tracking_context_key() && !intent_open, fn(candidates){
+        tracking_recall_candidates = candidates
+        tracking_recall_seconds = time_now() - started
+        tracking_status = "enriching" tracking_message = "正在准备有界证据；最多补充两篇来源正文"
+        tracking_ui_update()
+        let enrichment_started = time_now()
+        let enrich_rows = []
+        if row != nil { enrich_rows = candidates.rows }
+        else {
+            for candidate in candidates.rows {
+                if !regex("[0-9]{4}[-/年]").test(candidate.title + " " + candidate.summary) { continue }
+                for schedule in tracking_recall_targets.schedules {
+                    if record_string(schedule["location"]) && schedule.location.trim() != "" {
+                        if regex(literal_pattern(schedule.location)).test(candidate.title + " " + candidate.summary) { enrich_rows.push(candidate) break }
+                    }
+                }
+            }
+        }
+        evidence_enrich(enrich_rows, || generation == tracking_recall_generation && context_key == tracking_context_key() && !intent_open, || {
+            tracking_enrichment_seconds = time_now() - enrichment_started
+            tracking_start_candidates(tracking_recall_candidates, tracking_recall_targets)
+        })
+    })
+    tracking_ui_update()
+}
+fn tracking_start_candidates(candidates, targets){
+    if analysis_busy || octos_testing || analysis_needs_reopen { return }
+    if candidates.rows.len() == 0 {
+        tracking_status = "no_candidates" tracking_message = "无候选新闻，本次未调用助手"
+        if candidates.expired > 0 { tracking_status = "stale" tracking_message = "候选证据已过期，请刷新来源" }
+        check_states_record(targets, if candidates.expired > 0 {"failed"} else {"no_candidates"}, if candidates.expired > 0 {"stale_evidence"} else {""}, candidates.expired == 0)
+        tracking_ui_update() return
+    }
+    let snapshot = tracking_snapshot(candidates.rows, targets) snapshot.omitted_candidates = candidates.omitted_candidates
+    // Shrink whole records, never truncate serialized JSON. Explicit omissions.
+    let payload = tracking_prompt_snapshot(snapshot)
+    while (tracking_prompt + payload.to_json()).to_bytes().len() > tracking_config.max_prompt_bytes && snapshot.evidence.len() > 1 {
+        snapshot.evidence.pop() snapshot.omitted_candidates = snapshot.omitted_candidates + 1 payload = tracking_prompt_snapshot(snapshot)
+    }
+    let key = tracking_input_key(snapshot)
+    let decision_key = topic_records.decisions.to_json()
+    for i in tracking_cache.runs.len() {
+        let run = tracking_cache.runs[tracking_cache.runs.len() - 1 - i]
+        if run.input_key == key && tracking_run_current(run) { tracking_status = "no_change" tracking_message = "输入无变化，复用已保存结果；未再次调用助手" check_states_record(snapshot, "checked", "", true) tracking_ui_update() return }
+    }
+    tracking_status = "running" tracking_message = "正在检查 " + snapshot.evidence.len() + " 条候选；未覆盖目标 " + snapshot.omitted_targets + "，候选 " + snapshot.omitted_candidates
+    let error = agent_task_start("tracking_update", snapshot, tracking_prompt + payload.to_json(), || {
+        if !tracking_snapshot_current(snapshot) { return false }
+        topic_records.decisions.to_json() == decision_key
+    }, fn(reply){
+        if !reply.success {
+            tracking_status = "failed"
+            if reply.category == "stale_context" { tracking_status = "stale" }
+            if reply.category == "cancelled" { tracking_status = "cancelled" notice(reply.error) }
+            else { notice("追踪检查失败：" + reply.error) }
+            tracking_message = reply.error
+        }
+        else {
+            let error = tracking_publish(snapshot, key, reply.result, reply.task_id)
+            if error != "" { tracking_status = "failed" tracking_message = error notice(error) analysis_state = "failed" analysis_error_category = "storage_error" }
+            else { tracking_status = reply.result.outcome tracking_message = reply.result.explanation notice("") }
+        }
+        check_states_record(snapshot, if reply.success && tracking_pending_run == nil {"checked"} else {"failed"}, analysis_error_category, reply.success && tracking_pending_run == nil)
+        tracking_ui_update()
+    })
+    if error != "" { tracking_status = "failed" tracking_message = error }
+    tracking_ui_update()
+}
+fn tracking_schedule_check(){
+    if agent_preferences.paused { return }
+    tracking_check_pending = true
+    if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) }
+    tracking_auto_timer = start_timeout(tracking_config.auto_check_delay_seconds, || {
+        tracking_auto_timer = nil
+        if busy || tracking_in_progress() || octos_testing || analysis_needs_reopen || intent_open { return }
+        tracking_check_pending = false
+        tracking_start(nil)
+    })
+}
+fn tracking_ui_update(){
+    render_feed() render_analysis_controls()
+    if detail_kind == "story" { ui.story_content.render() }
+    if detail_kind == "results" { ui.results_content.render() }
+    if detail_kind == "tracking" { ui.interest_list.render() ui.continuous_controls.render() }
+    if detail_kind == "intent" { intent_render() }
+}
+fn tracking_in_progress(){ analysis_busy || tracking_status == "recalling" || tracking_status == "enriching" }

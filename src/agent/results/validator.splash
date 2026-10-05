@@ -1,0 +1,122 @@
+// Deterministic validation for raw model text. This module has no host or UI
+// side effects and never accepts model-generated correlation metadata.
+fn analysis_failure(category, message){
+    {valid: false usable: false outcome: nil error: category message: message result: nil}
+}
+
+fn analysis_has_id(values, id){
+    for value in values { if value == id { return true } }
+    false
+}
+
+fn analysis_snapshot_interest_ids(snapshot){
+    let ids = []
+    for item in snapshot.interests { ids.push(item.interest_id) }
+    ids
+}
+fn analysis_snapshot_evidence(snapshot, id){
+    for item in snapshot.evidence { if item.evidence_id == id { return item } }
+    nil
+}
+fn analysis_snapshot_schedule(snapshot, id){
+    for item in snapshot.schedules { if item.schedule_id == id { return item } }
+    nil
+}
+
+fn analysis_valid_outcome(value){
+    value == "suggestions" || value == "no_change" || value == "insufficient_evidence"
+}
+
+fn analysis_rfc3339(value){
+    if !record_string(value) { return false }
+    regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$").test(value)
+}
+
+fn analysis_valid_action(action, suggestion, snapshot){
+    if action == nil { return "" }
+    if !record_object(action) { return "proposed_action.kind 无效" }
+    if action.kind != "create" {
+        if action.kind != "reschedule" { return "proposed_action.kind 无效" }
+    }
+    if !record_string(action.title) || action.title.trim() == "" { return "proposed_action 时间或标题无效" }
+    if action.title.len() > 200 { return "日程标题超过200字" }
+    if !schedule_interval(action.start, action.end) { return "proposed_action 时间或标题无效" }
+    if !record_string(action.timezone) || action.timezone.trim() == "" { return "proposed_action 时间或标题无效" }
+    if action.kind == "create" {
+        if suggestion["schedule_id"] != nil || suggestion["schedule_version"] != nil { return "create 不能引用已有日程" }
+    }
+    if action.kind == "reschedule" {
+        if !record_string(action.schedule_id) { return "reschedule 必须引用 schedule_id 与 schedule_version" }
+        if !record_number(action.schedule_version) { return "reschedule 必须引用 schedule_id 与 schedule_version" }
+        if suggestion["schedule_id"] != action.schedule_id || suggestion["schedule_version"] != action.schedule_version { return "reschedule 与建议引用不一致" }
+        let schedule = analysis_snapshot_schedule(snapshot, action.schedule_id)
+        if schedule == nil { return "reschedule 的 schedule 版本不匹配" }
+        if schedule.version != action.schedule_version { return "reschedule 的 schedule 版本不匹配" }
+        if !schedule_active(schedule) || schedule["allow_reschedule"] != true { return "该日程未允许 Agent 改期，或已取消/完成" }
+    }
+    ""
+}
+
+fn analysis_validate_suggestion(suggestion, snapshot){
+    if !record_object(suggestion) { return "suggestion 必须是对象" }
+    if suggestion.to_json().len() > 4000 { return "建议内容过长" }
+    if suggestion["goal_key"] != nil { if !record_string(suggestion.goal_key) || suggestion.goal_key.trim() == "" || suggestion.goal_key.len() > 120 { return "goal_key 无效" } }
+    if !record_array(suggestion["interest_ids"]) { return "interest_ids 必须非空" }
+    if suggestion["interest_ids"].len() == 0 { return "interest_ids 必须非空" }
+    if !record_array(suggestion["evidence_ids"]) { return "evidence_ids 必须非空" }
+    if suggestion["evidence_ids"].len() == 0 { return "evidence_ids 必须非空" }
+    let interest_ids = analysis_snapshot_interest_ids(snapshot)
+    for id in suggestion["interest_ids"] { if !record_string(id) { return "interest_ids 类型错误" } if !analysis_has_id(interest_ids, id) { return "引用了未知 interest_id" } }
+    for id in suggestion["evidence_ids"] {
+        if !record_string(id) { return "evidence_ids 类型错误" }
+        let evidence = analysis_snapshot_evidence(snapshot, id)
+        if evidence == nil { return "引用了未知 evidence_id" }
+        if !record_url(evidence.source_url) { return "证据缺少有效 source_url" }
+    }
+    if suggestion["schedule_id"] != nil {
+        if !record_string(suggestion["schedule_id"]) { return "schedule_id 与 schedule_version 必须成对出现" }
+        if !record_number(suggestion["schedule_version"]) { return "schedule_id 与 schedule_version 必须成对出现" }
+        let schedule = analysis_snapshot_schedule(snapshot, suggestion["schedule_id"])
+        if schedule == nil { return "schedule 引用或版本不匹配" }
+        if schedule.version != suggestion["schedule_version"] { return "schedule 引用或版本不匹配" }
+    } else {
+        if suggestion["schedule_version"] != nil { return "schedule_id 与 schedule_version 必须同时为 null" }
+    }
+    if !record_string(suggestion["change_summary"]) { return "change_summary 必填" }
+    if suggestion["change_summary"].trim() == "" { return "change_summary 必填" }
+    if !record_string(suggestion["rationale"]) { return "rationale 必填" }
+    if suggestion["rationale"].trim() == "" { return "rationale 必填" }
+    if !record_array(suggestion["uncertainties"]) { return "uncertainties 必须是数组" }
+    for uncertainty in suggestion["uncertainties"] { if !record_string(uncertainty) { return "uncertainties 必须是字符串数组" } }
+    let serialized = suggestion.to_json()
+    if !regex("\"proposed_action\"[ ]*:").test(serialized) {
+        return "建议缺少必需字段"
+    }
+    if !regex("\"schedule_id\"[ ]*:").test(serialized) { return "建议缺少必需字段" }
+    if !regex("\"schedule_version\"[ ]*:").test(serialized) { return "建议缺少必需字段" }
+    analysis_valid_action(suggestion["proposed_action"], suggestion, snapshot)
+}
+
+fn analysis_validate_model_text(text, snapshot){
+    if !record_string(text) || text.trim() == "" { return analysis_failure("invalid_json", "模型没有返回文本") }
+    if text.len() > 10000 { return analysis_failure("invalid_schema", "模型输出过长") }
+    let clean = text.trim()
+    if !regex("^\\{").test(clean) || !regex("\\}$").test(clean) { return analysis_failure("invalid_json", "只接受一个完整 JSON 对象") }
+    let output = nil
+    try { output = clean.parse_json() } { output = nil }
+    if !record_object(output) { return analysis_failure("invalid_json", "模型文本不是可解析的 JSON 对象") }
+    if output["schema_version"] != 1 || !analysis_valid_outcome(output["outcome"]) || !record_string(output["explanation"]) || output["explanation"].trim() == "" || !record_array(output["suggestions"]) {
+        return analysis_failure("invalid_schema", "结果缺少必需字段或包含不支持的 outcome")
+    }
+    if output["outcome"] == "suggestions" && output["suggestions"].len() == 0 { return analysis_failure("invalid_schema", "suggestions outcome 必须包含建议") }
+    if output.suggestions.len() > 6 || output.explanation.len() > 2000 { return analysis_failure("invalid_schema", "结果超过容量限制") }
+    if output["outcome"] != "suggestions" && output["suggestions"].len() != 0 { return analysis_failure("invalid_schema", "非 suggestions outcome 不得包含建议") }
+    for suggestion in output["suggestions"] {
+        let error = analysis_validate_suggestion(suggestion, snapshot)
+        if error != "" {
+            if error == "引用了未知 interest_id" || error == "引用了未知 evidence_id" || error == "证据缺少有效 source_url" { return analysis_failure("unknown_reference", error) }
+            return analysis_failure("invalid_schema", error)
+        }
+    }
+    {valid: true usable: true outcome: output["outcome"] error: nil message: "" result: output}
+}

@@ -1,0 +1,132 @@
+// Query-adaptive BM25, k1=1.2 b=.75, positive Robertson IDF.
+// Latin words (case-insensitive) and overlapping Han bigrams; no vectors.
+// Source/category rules are exact recall gates; BM25 ranks title/summary hits.
+let bm25_prefix_matchers = {}
+fn bm25_prefix(value, chars){
+    if value.to_chars().len() <= chars { return value }
+    let matcher = bm25_prefix_matchers["" + chars]
+    if matcher == nil { matcher = regex("^[\\s\\S]{0," + chars + "}") bm25_prefix_matchers["" + chars] = matcher }
+    let result = value.match_str(matcher)
+    if result == nil { return "" }
+    result.value
+}
+fn bm25_query_terms(value){
+    let words = value.match_all(regex("[A-Za-z0-9_]+|[一-龥]+", "g"))
+    let out = []
+    for token_match in words {
+        if regex("^[A-Za-z0-9_]+$").test(token_match.value) { if token_match.value.len() >= 2 { out.push(token_match.value) } }
+        else {
+            let chars = token_match.value.match_all(regex("[一-龥]", "g"))
+            if chars.len() == 1 { out.push(chars[0].value) }
+            for i part in chars { if i + 1 < chars.len() { out.push(part.value + chars[i + 1].value) } }
+        }
+    }
+    out
+}
+fn bm25_terms(targets){
+    let queries = [] let terms = []
+    for topic in targets.topics {
+        // Preferences are for assessment; avoid recalling financing solely
+        // because the user said they want fewer financing stories.
+        for rule in topic.recall_rules { if rule.kind == "keyword" { queries.push(rule.value) } }
+        for value in topic["scope"] { queries.push(value) }
+    }
+    for interest in targets.legacy_interests { if interest.kind == "keyword" { queries.push(interest.value) } }
+    for item in targets.schedules {
+        if item["news_keywords"] != nil { for word in item.news_keywords { queries.push(word) } }
+        if record_string(item["location"]) { queries.push(item["location"]) }
+        queries.push(item.title)
+        if record_string(item["content"]) { queries.push(item["content"]) }
+        queries.push(item.start.split("T")[0])
+    }
+    for query_text in queries {
+        for term in bm25_query_terms(query_text) {
+            let present = false
+            for old in terms { if regex("^" + literal_pattern(old.value) + "$", "i").test(term) { present = true } }
+            if !present && terms.len() < tracking_config.max_bm25_terms {
+                let pattern = literal_pattern(term)
+                if regex("^[A-Za-z0-9_]+$").test(term) { pattern = "(^|[^A-Za-z0-9_])" + pattern + "([^A-Za-z0-9_]|$)" }
+                terms.push({value: term matcher: regex(pattern, "gi") df: 0})
+            }
+        }
+    }
+    terms
+}
+fn bm25_gate(row, targets){
+    for topic in targets.topics { for rule in topic.recall_rules {
+        if rule.kind == "source" && rule.value == row.source { return true }
+        if rule.kind == "category" && rule.value == row.category { return true }
+    } }
+    for rule in targets.legacy_interests {
+        if rule.kind == "source" && rule.value == row.source { return true }
+        if rule.kind == "category" && rule.value == row.category { return true }
+    }
+    false
+}
+fn bm25_recall(rows, targets, current, complete){
+    let work = {rows: rows targets: targets current: current complete: complete terms: bm25_terms(targets)
+        docs: [] index: 0 phase: "index" total_length: 0 total_docs: 0 seen: {} ranked: [] matched: 0 expired: 0}
+    start_timeout(0.01, || bm25_step(work))
+}
+fn bm25_step(work){
+    if !work.current() { return }
+    mod.gc.run()
+    let processed = 0 let started = time_now()
+    while work.index < work.rows.len() && processed < tracking_config.bm25_batch_items && time_now() - started < news_config.work_slice_seconds {
+        let row = work.rows[work.index] work.index = work.index + 1 processed = processed + 1
+        if work.seen[row.news_id] == true { continue } work.seen[row.news_id] = true
+        let body = " " + (row.title + " " + bm25_prefix(row.summary, tracking_config.max_bm25_body_chars)).replace(regex("[^A-Za-z0-9一-龥_]+", "g"), "  ") + " "
+        let words = body.match_all(regex("[A-Za-z0-9_]+|[一-龥]+", "g"))
+        let length = 0
+        for token in words {
+            if regex("^[A-Za-z0-9_]+$").test(token.value) { length = length + 1 }
+            else { length = length + max(1, token.value.to_chars().len() - 1) }
+        }
+        length = max(1, length)
+        let counts = [] let hit = bm25_gate(row, work.targets)
+        for term in work.terms {
+            let tf = body.match_all(term.matcher).len() counts.push(tf)
+            if tf > 0 { term.df = term.df + 1 hit = true }
+        }
+        work.total_docs = work.total_docs + 1 work.total_length = work.total_length + length
+        if hit { work.docs.push({row: row length: length counts: counts gate: bm25_gate(row, work.targets)}) }
+    }
+    if work.index < work.rows.len() { start_timeout(0.01, || bm25_step(work)) return }
+    work.index = 0 start_timeout(0.01, || bm25_rank_step(work))
+}
+fn bm25_rank_step(work){
+    if !work.current() { return }
+    let processed = 0
+    let average = work.total_length / max(1, work.total_docs)
+    while work.index < work.docs.len() && processed < tracking_config.bm25_batch_items {
+        let doc = work.docs[work.index] work.index = work.index + 1 processed = processed + 1
+        let score = 0
+        for i term in work.terms {
+            let tf = doc.counts[i]
+            if tf > 0 {
+                let idf = mod.math.log(1 + (work.total_docs - term.df + 0.5) / (term.df + 0.5))
+                score = score + idf * (tf * (tracking_config.bm25_k1 + 1)) / (tf + tracking_config.bm25_k1 * (1 - tracking_config.bm25_b + tracking_config.bm25_b * doc.length / average))
+            }
+        }
+        if score <= 0 && !doc.gate { continue }
+        let source = news_source(doc.row.source_id)
+        if source != nil && source.category == "travel" && source.kind == "rss" && regex("[0-9]{4}[-/年]").test(doc.row.title + " " + doc.row.summary) {
+            for schedule in work.targets.schedules {
+                if record_string(schedule["location"]) && schedule.location.trim() != "" {
+                    if regex(literal_pattern(schedule.location)).test(doc.row.title + " " + doc.row.summary) { score = score + 2 break }
+                }
+            }
+        }
+        work.matched = work.matched + 1
+        if doc.row.retrieved_at <= 0 || time_now() - doc.row.retrieved_at > news_config.cache_stale_seconds { work.expired = work.expired + 1 continue }
+        let next = [] let placed = false
+        for old in work.ranked { if !placed && score > old.score { next.push({row: doc.row score: score}) placed = true } next.push(old) }
+        if !placed { next.push({row: doc.row score: score}) }
+        while next.len() > tracking_config.max_candidates { next.pop() }
+        work.ranked = next
+    }
+    if work.index < work.docs.len() { start_timeout(0.01, || bm25_rank_step(work)) return }
+    let rows = [] for item in work.ranked { rows.push(item.row) }
+    work.complete({rows: rows matched: work.matched expired: work.expired omitted_candidates: max(0, work.matched - work.expired - rows.len())
+        retrieval: "BM25 Latin words / Han bigrams; source/category gates; title+bounded summary; stable ties"})
+}

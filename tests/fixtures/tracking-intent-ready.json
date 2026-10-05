@@ -1,0 +1,1 @@
+{"schema_version":1,"status":"ready","question":"","understanding":{"title":"开源 Agent 选型（固定测试）","purpose":"为本地知识库选框架","scope":["Agent frameworks","开源离线部署"],"preferences":["融资消息少一点","优先资源占用证据"],"recall_rules":[{"kind":"keyword","value":"Agent"},{"kind":"keyword","value":"开源"}]}}

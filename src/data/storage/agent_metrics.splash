@@ -1,0 +1,26 @@
+// Diagnostic owner: bounded metadata only, no input, prompt, bodies or secrets.
+let agent_metrics = {schema_version: 1 revision: 0 samples: []}
+let agent_launch_id = "launch-" + time_now()
+let agent_launch_calls = {}
+let agent_metrics_origin = "live_host"
+let agent_metrics_flush_timer = nil
+fn agent_metrics_load(){
+    if !fs.exists("agent_metrics_v1.json") { return }
+    try {
+        let value = fs.read("agent_metrics_v1.json").parse_json()
+        if record_object(value) && value["schema_version"] == 1 && record_array(value["samples"]) && value.samples.len() <= 120 && record_number(value["revision"]) { agent_metrics = value }
+        else { agent_last_error = "诊断记录不可读，业务记录保留" }
+    } { agent_last_error = "诊断记录读取失败，业务记录保留" }
+}
+fn agent_metrics_record(sample){
+    agent_metrics.samples.push(sample)
+    while agent_metrics.samples.len() > 120 { agent_metrics.samples.remove(0) }
+    agent_metrics.revision = agent_metrics.revision + 1
+    if agent_metrics_flush_timer == nil {
+        agent_metrics_flush_timer = start_timeout(0.01, || {
+            agent_metrics_flush_timer = nil
+            try { fs.write("agent_metrics_v1.json", agent_metrics.to_json()) }
+            { agent_last_error = "诊断耗时记录写入失败；业务记录不受影响" }
+        })
+    }
+}

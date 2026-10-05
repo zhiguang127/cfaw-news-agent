@@ -1,0 +1,59 @@
+let reschedule_preview = nil
+fn reschedule_keep_original(){
+    if reschedule_preview == nil { return }
+    if insight_decide(reschedule_preview, "handled") {
+        reschedule_preview = nil notice("已记录继续原计划") ui.results_content.render()
+    }
+}
+fn schedule_action_state_label(state){ if state == "applied" { return "已改期" } if state == "undone" { return "已撤回" } "已确认，待保存或恢复" }
+fn reschedule_validate(proposal, insight, snapshot){
+    if proposal == nil { return true }
+    if insight.target_type != "schedule" || !record_object(proposal) { return false }
+    let s = tracking_find(snapshot.schedules, "schedule_id", insight.target_id)
+    if s == nil || s["time_precision"] == "day" || s["allow_reschedule"] != true { return false }
+    if !schedule_interval(proposal["start"], proposal["end"]) || proposal["timezone"] != s.timezone || !tracking_text(proposal["reason"], 400) || proposal.reason.trim() == "" { return false }
+    if !schedule_intent_time_valid(proposal.start, s.timezone) || !schedule_intent_time_valid(proposal.end, s.timezone) { return false }
+    if !insight_refs_valid(proposal["evidence_refs"], insight.evidence_ids, snapshot) || proposal.evidence_refs.len() == 0 { return false }
+    let start = bm25_prefix(proposal.start, 16) let end = bm25_prefix(proposal.end, 16)
+    let supports_start = false let supports_end = false let supports_place = false
+    if !record_string(s["location"]) || s.location.trim() == "" { return false }
+    for ref in proposal.evidence_refs {
+        if regex(literal_pattern(start)).test(ref.quote) { supports_start = true }
+        if regex(literal_pattern(end)).test(ref.quote) { supports_end = true }
+        if regex(literal_pattern(s.location)).test(ref.quote) { supports_place = true }
+    }
+    supports_start && supports_end && supports_place
+}
+fn reschedule_begin(value){
+    if !tracking_run_current(value.run) || value.insight["reschedule"] == nil { notice("提案已过期，请重新检查") return }
+    reschedule_preview = value ui.results_content.render()
+}
+fn reschedule_confirm(){
+    if reschedule_preview == nil { return }
+    let value = reschedule_preview let p = value.insight.reschedule
+    let id = "change:" + value.run.task_id + ":" + value.insight.issue_key
+    let existing = schedule_action_find(id)
+    if existing == nil {
+        if !tracking_run_current(value.run) || !reschedule_validate(p, value.insight, value.run.snapshot) { notice("提案依据或版本已变化，未保存") return }
+        if schedule_actions.items.len() >= 32 { notice("改期历史已满，请先备份；未修改日程") return }
+        let s = schedule_find(value.insight.target_id)
+        let next = schedule_actions.to_json().parse_json()
+        next.items.push({action_id: id state: "prepared" original: s.to_json().parse_json() start: p.start end: p.end created_at: time_now()
+            reason: p.reason evidence_refs: p.evidence_refs uncertainties: value.insight.uncertainties snapshot: value.run.snapshot.to_json().parse_json() insight: value.insight.to_json().parse_json()})
+        let error = schedule_actions_commit(next) if error != "" { notice(error) return }
+    }
+    let error = reschedule_resume(id)
+    if error == "" { reschedule_preview = nil notice("已确认并保存应用内改期") } else { notice(error) }
+    render_main() tracking_ui_update()
+}
+fn reschedule_undo(id){ let error = schedule_action_undo(id) if error == "" { notice("已撤回改期，保留完整历史") } else { notice(error) } render_main() tracking_ui_update() }
+fn reschedule_resume(id){
+    let a = schedule_action_find(id) if a == nil { return "改期记录不存在" }
+    let error = schedule_refresh() if error != "" { return error }
+    let current = schedule_find(a.original.schedule_id)
+    if a.state == "prepared" && current != nil && current["last_suggestion_id"] != id {
+        if a["snapshot"] == nil || a["insight"] == nil { return "缺少原提案证据，请重新检查；未修改日程" }
+        if !tracking_snapshot_current(a.snapshot) || !reschedule_validate(a.insight.reschedule, a.insight, a.snapshot) { return "提案证据或目标已过期，请重新检查；未修改日程" }
+    }
+    schedule_action_apply(id)
+}

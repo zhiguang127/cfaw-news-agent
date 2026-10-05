@@ -1,0 +1,95 @@
+let IntentPanel = View{width: Fill height: Fill flow: Down on_render: || {
+    intent_content := ScrollYView{width: Fill height: Fill flow: Down padding: Inset{left: 24 right: 24 top: 12 bottom: 24} spacing: 14 on_render: || {
+        if intent_draft != nil {
+            let mode = intent_mode()
+            if intent_draft.state != "ready" {
+                View{width: Fill height: 80 align: Align{x: 0.5 y: 0.5}
+                    AIOrb{width: 80 height: 80 enabled: false}
+                }
+                Heading{text: "想做什么，\n从这里开始。" draw_text.color: #x253657 draw_text.text_style.font_size: 28}
+                Text{text: "一个想法、一份关注，或一段安排。\n说给我听，一起把它变成下一步。" draw_text.color: #x74829b draw_text.text_style.font_size: 13}
+            } else {
+                Heading{text: "为你整理好了。" draw_text.color: #x253657 draw_text.text_style.font_size: 25}
+                Small{text: "看看理解是否准确，再由你确认。"}
+            }
+            View{width: Fill height: 38 flow: Right spacing: 7
+                if mode == "goal" { IntentModeActive{text: "我想做…" on_click: || intent_pick_mode("goal")} }
+                else { IntentMode{text: "我想做…" on_click: || intent_pick_mode("goal")} }
+                if mode == "news" { IntentModeActive{text: "关注新闻" on_click: || intent_pick_mode("news")} }
+                else { IntentMode{text: "关注新闻" on_click: || intent_pick_mode("news")} }
+                if intent_draft.target_topic_id == nil && intent_draft.origin_reminder_id == nil {
+                    if mode == "schedule" { IntentModeActive{text: "安排日程" on_click: || intent_pick_mode("schedule")} }
+                    else { IntentMode{text: "安排日程" on_click: || intent_pick_mode("schedule")} }
+                }
+            }
+            if mode == "goal" { Small{text: "围绕要达成的目标追踪消息，例如选 Agent 框架；保存为目标关注。"} }
+            else if mode == "news" { Small{text: "持续了解一个话题，例如 Agent 新进展；保存为新闻关注。"} }
+            else { Small{text: "保存有明确日期和时间的安排，新闻会结合这段日程检查影响。"} }
+            let placeholder = "想关注什么新闻？有哪些内容想多看、少看？"
+            if mode == "goal" { placeholder = "想做什么、为什么做？我会帮你关注相关的新消息。" }
+            if mode == "schedule" { placeholder = "说说你的安排：日期、几点开始和结束、在哪里做什么。" }
+            intent_input := IntentInput{text: intent_draft.original_input empty_text: placeholder on_change: |value| intent_changed(value, false)}
+            if mode == "schedule" {
+                View{width: Fill height: 30 flow: Right spacing: 6 align: Align{y: 0.5}
+                    Small{width: Fit text: "默认时区"}
+                    if intent_draft["schedule_timezone"] == "Asia/Shanghai" { Pill{text: "北京时间" on_click: || intent_pick_timezone("Asia/Shanghai")} }
+                    else { QuietButton{text: "北京时间" on_click: || intent_pick_timezone("Asia/Shanghai")} }
+                    if intent_draft["schedule_timezone"] != "Asia/Shanghai" { Pill{text: "美国东部" on_click: || intent_pick_timezone("America/New_York")} }
+                    else { QuietButton{text: "美国东部" on_click: || intent_pick_timezone("America/New_York")} }
+                }
+            }
+            if intent_draft.question != "" { Text{text: intent_draft.question draw_text.color: #x425bd0} }
+            if intent_more {
+                IntentInput{height: 76 text: intent_draft.supplement empty_text: "继续补充，或回答 AI 的问题…" on_change: |value| intent_changed(value, true)}
+            } else { LinkButton{width: Fit text: "+ 补充细节" on_click: || {intent_more = true intent_render()}} }
+            if intent_draft.origin_reminder_id != nil { Small{text: "确认关注范围后保存；日程保持原安排。"} }
+            if intent_error != "" { Text{text: intent_error max_lines: 4 draw_text.color: #x637399 draw_text.text_style.font_size: 12} }
+            if intent_draft.state == "ready" {
+                Box{draw_bg.color: #xffffffc8 draw_bg.border_radius: 16.0
+                    Section{text: "待确认的理解" draw_text.color: #x425bd0}
+                    if mode == "schedule" && intent_draft["schedule_understanding"] != nil {
+                        let plan = intent_draft.schedule_understanding
+                        Heading{text: plan.title draw_text.text_style.font_size: 18}
+                        Text{text: schedule_display_time(plan.start, plan.timezone) + "\n→ " + schedule_display_time(plan.end, plan.timezone)}
+                        Small{text: schedule_zone_label(plan.timezone)}
+                        if plan.location != "" { Small{text: "地点 · " + plan.location} }
+                        if plan.content != "" { Text{text: plan.content} }
+                        if schedule_conflicts(plan, nil).len() > 0 { Small{text: "与已有日程重叠，请调整时间后重新整理。" draw_text.color: accent} }
+                        IntentSend{text: "确认日程并保存" on_click: || intent_confirm()}
+                    } else if intent_draft.understanding != nil {
+                        let idea = intent_draft.understanding
+                        Heading{text: idea.title draw_text.text_style.font_size: 18}
+                        if idea.purpose != "" { Text{text: idea.purpose} }
+                        for scope_text in idea["scope"] { Text{text: "关注 · " + scope_text} }
+                        for preference in idea.preferences { Small{text: "偏好 · " + preference} }
+                        if intent_draft.target_topic_id != nil {
+                            let old = topic_find(intent_draft.target_topic_id)
+                            if old != nil { Small{text: "修改前 · " + old.title + "（版本 " + old.version + "）"} }
+                        }
+                        if mode == "goal" {
+                            Small{text: "保存后收起面板，首页按目标关注优先展示相关消息；具体安排请用「安排日程」。"}
+                            IntentSend{text: "确认目标关注并保存" on_click: || intent_confirm()}
+                        } else {
+                            Small{text: "保存后收起面板，首页按新关注排序。"}
+                            IntentSend{text: "确认关注并保存" on_click: || intent_confirm()}
+                        }
+                    }
+                }
+            }
+            if analysis_busy {
+                SecondaryButton{text: "取消请求" on_click: || {intent_parse_pending = false analysis_cancel()}}
+            } else if intent_draft.state == "ready" {
+                LinkButton{width: Fit text: "重新整理" on_click: || intent_submit()}
+            } else if intent_error != "" {
+                IntentSend{text: "重试整理" on_click: || intent_submit()}
+            } else {
+                IntentSend{text: "整理我的想法 ↗" on_click: || intent_submit()}
+            }
+            View{width: Fill height: Fit flow: Right spacing: 8 align: Align{x: 0.5}
+                QuietButton{text: "取消并保留草稿" on_click: || intent_cancel()}
+                QuietButton{text: "丢弃草稿" on_click: || intent_discard()}
+            }
+            Small{text: "理解由 AI 整理，保存由你决定。" align: Align{x: 0.5} draw_text.color: #x8c97ac}
+        }
+    }}
+}}

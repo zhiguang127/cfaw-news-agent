@@ -1,0 +1,21 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index cd9cc8e..a4a049c 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -826,6 +826,8 @@ dependencies = [
+  "makepad-live-id",
+  "makepad-micro-serde",
+  "makepad-script",
++ "rustls",
++ "webpki-roots",
+  "windows",
+ ]
+ 
+@@ -1191,6 +1193,7 @@ name = "octoscript-ui-l0"
+ version = "0.1.0"
+ dependencies = [
+  "blake3",
++ "serde",
+  "serde_json",
+ ]
+ 

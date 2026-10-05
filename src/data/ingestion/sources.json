@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "reference": "https://github.com/koala73/worldmonitor/blob/main/src/config/feeds.ts",
+  "redirect_hosts": ["feeds.arstechnica.com", "arstechnica.com", "rss.arxiv.org", "news.mit.edu"],
+  "sources": [
+    {"id":"airchina","label":"国航 · 民航出行","category":"travel","language":"zh","kind":"rss","enabled":true,"url":"https://www.airchinagroup.com/cnah/include/xwzx/news_rss.xml"},
+    {"id":"hn","label":"Hacker News","category":"tech","language":"en","kind":"hn","enabled":true,"url":"https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=20"},
+    {"id":"techmeme","label":"TechMeme","category":"tech","language":"en","kind":"digest","enabled":true,"url":"https://www.techmeme.com/feed.xml"},
+    {"id":"verge","label":"The Verge","category":"tech","language":"en","kind":"rss","enabled":true,"url":"https://www.theverge.com/rss/index.xml"},
+    {"id":"ars","label":"Ars Technica","category":"tech","language":"en","kind":"rss","enabled":true,"url":"https://feeds.arstechnica.com/arstechnica/technology-lab"},
+    {"id":"venturebeat","label":"VentureBeat AI","category":"ai","language":"en","kind":"rss","enabled":true,"url":"https://venturebeat.com/category/ai/feed/"},
+    {"id":"mit","label":"MIT Research","category":"ai","language":"en","kind":"rss","enabled":true,"url":"https://news.mit.edu/rss/research"},
+    {"id":"arxiv_ai","label":"arXiv AI","category":"ai","language":"en","kind":"rss","enabled":true,"url":"https://export.arxiv.org/rss/cs.AI"},
+    {"id":"bbc","label":"BBC World","category":"world","language":"en","kind":"rss","enabled":true,"url":"https://feeds.bbci.co.uk/news/world/rss.xml"},
+    {"id":"guardian","label":"Guardian World","category":"world","language":"en","kind":"rss","enabled":true,"url":"https://www.theguardian.com/world/rss"},
+    {"id":"cnbc","label":"CNBC","category":"finance","language":"en","kind":"rss","enabled":true,"url":"https://www.cnbc.com/id/100003114/device/rss/rss.html"},
+    {"id":"jin10","label":"金十资讯 · Google News","category":"china","language":"zh","kind":"google","enabled":true,"url":"https://news.google.com/rss/search?q=site%3Ajin10.com%20when%3A1d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"},
+    {"id":"miit","label":"工信部 · Google News","category":"china","language":"zh","kind":"google","enabled":true,"url":"https://news.google.com/rss/search?q=site:miit.gov.cn+when:7d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"},
+    {"id":"techcrunch","label":"TechCrunch","category":"tech","language":"en","kind":"rss","enabled":false,"url":"https://techcrunch.com/feed/"},
+    {"id":"arxiv_ml","label":"arXiv ML","category":"ai","language":"en","kind":"rss","enabled":false,"url":"https://export.arxiv.org/rss/cs.LG"},
+    {"id":"reuters","label":"Reuters World · Google News","category":"world","language":"en","kind":"google","enabled":false,"url":"https://news.google.com/rss/search?q=site:reuters.com+world+when:1d&hl=en-US&gl=US&ceid=US:en"},
+    {"id":"ap","label":"AP News · Google News","category":"world","language":"en","kind":"google","enabled":false,"url":"https://news.google.com/rss/search?q=site:apnews.com+when:1d&hl=en-US&gl=US&ceid=US:en"},
+    {"id":"mofcom","label":"商务部 · Google News","category":"china","language":"zh","kind":"google","enabled":false,"url":"https://news.google.com/rss/search?q=site:mofcom.gov.cn+when:7d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"}
+  ]
+}

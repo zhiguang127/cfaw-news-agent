@@ -1,0 +1,54 @@
+// Read-only reader; bounded paragraphs can also populate the separate evidence
+// cache. Each Agent run preserves exactly the paragraphs it actually received.
+let article_hosts = ["www.airchinagroup.com", "www.theverge.com", "arstechnica.com", "venturebeat.com", "news.mit.edu", "arxiv.org", "www.bbc.com", "www.bbc.co.uk", "www.theguardian.com", "www.cnbc.com", "techcrunch.com", "www.techmeme.com", "news.ycombinator.com"]
+let article_config = {max_paragraphs: 80 max_text_bytes: 24000}
+let article_state = {generation: 0 state: "idle" paragraphs: [] error: "" truncated: false}
+let article_http_request = |url, redirects, callback| news_http_request(url, redirects, callback)
+fn article_url_allowed(url){
+    if !record_string(url) { return false }
+    let parts = url.split("/")
+    parts.len() >= 3 && parts[0] == "https:" && parts[1] == "" && record_contains(article_hosts, parts[2])
+}
+fn article_extract(body){
+    let doc = body.parse_html()
+    // Restrict extraction to article/main containers. Never present navigation,
+    // consent pages or the entire HTML document as a news article.
+    let values = []
+    for selector in ["article p.text" "main p.text" "div.article-body p.text" "div.article-content p.text" "div.entry-content p.text"] {
+        let found = doc.query(selector)
+        if record_string(found) { found = [found] }
+        if record_array(found) && found.len() > 0 { values = found break }
+    }
+    let paragraphs = [] let count = 0 let truncated = false
+    for value in values {
+        if !record_string(value) || value.trim() == "" { continue }
+        let text = value.trim()
+        if paragraphs.len() >= article_config.max_paragraphs || count + text.to_bytes().len() > article_config.max_text_bytes { truncated = true break }
+        paragraphs.push(text) count = count + text.to_bytes().len()
+    }
+    {paragraphs: paragraphs truncated: truncated}
+}
+fn article_cancel(){ article_state.generation = article_state.generation + 1 }
+fn article_load(row, complete){
+    article_cancel()
+    let generation = article_state.generation
+    article_state.state = "loading" article_state.paragraphs = [] article_state.error = "" article_state.truncated = false
+    if !article_url_allowed(row.source_url) {
+        article_state.state = "unavailable"
+        article_state.error = "此来源暂不支持正文阅读，以下保留来源摘要。可复制原文地址查看。"
+        complete() return
+    }
+    article_http_request(row.source_url, 0, fn(reply){
+        if generation != article_state.generation || article_state.state != "loading" { return }
+        if !reply.success { article_state.state = "failed" article_state.error = "正文读取失败：" + reply.error complete() return }
+        let result = nil
+        try { result = article_extract(reply.body) } { result = nil }
+        if result == nil || result.paragraphs.len() == 0 {
+            article_state.state = "unavailable" article_state.error = "来源网页未提供可读取的正文，以下保留来源摘要。"
+        } else {
+            article_state.state = "ready" article_state.paragraphs = result.paragraphs article_state.truncated = result.truncated
+            analysis_article_store(row, result, "")
+        }
+        complete()
+    })
+}

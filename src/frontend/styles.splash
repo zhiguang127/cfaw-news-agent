@@ -1,0 +1,49 @@
+let ink = #x202126
+let secondary = #x666873
+let accent = #x6655d8
+let line = #xeaeaf0
+let soft = #xf2f1fa
+let white = #xffffff
+let Text = Label{width: Fill padding: 0 draw_text.color: ink draw_text.text_style.font_size: 14 draw_text.text_style.line_spacing: 1.15}
+let Small = Text{draw_text.color: secondary draw_text.text_style.font_size: 11}
+let Heading = Text{draw_text.text_style: theme.font_bold{font_size: 20 line_spacing: 1.2}}
+let Section = Text{draw_text.text_style: theme.font_bold{font_size: 13 line_spacing: 1.2}}
+let Divider = SolidView{width: Fill height: 1 draw_bg.color: line}
+let QuietButton = ButtonFlat{height: 30 padding: Inset{left: 7 right: 7} margin: 0
+    draw_bg +: {color: #x00000000 color_hover: #x00000008 color_down: #x00000010 border_size: 0.0 border_radius: 6.0}
+    draw_text +: {color: secondary color_hover: ink color_down: ink text_style: theme.font_regular{font_size: 11}}
+}
+let LinkButton = QuietButton{draw_text +: {color: accent color_hover: accent color_down: accent}}
+let HintButton = LinkButton{width: Fill height: 28 align: Align{x: 0.0} padding: 0
+    draw_text +: {text_style +: {font_size: 12}}
+}
+let Pill = LinkButton{height: 30 padding: Inset{left: 10 right: 10}
+    draw_bg +: {color: #xf0f1fa color_hover: #xe7e9f7 color_down: #xdfe2f1 border_radius: 15.0}
+}
+let Primary = QuietButton{height: 40 padding: Inset{left: 14 right: 14}
+    draw_bg +: {color: ink color_hover: #x353741 color_down: #x454752 border_radius: 9.0}
+    draw_text +: {color: white color_hover: white color_down: white text_style +: {font_size: 13}}
+}
+let SecondaryButton = QuietButton{height: 40 padding: Inset{left: 12 right: 12}
+    draw_bg +: {color: soft color_hover: #xececf2 color_down: #xe4e4eb border_radius: 9.0}
+    draw_text +: {color: ink color_hover: ink color_down: ink text_style +: {font_size: 13}}
+}
+let Nav = QuietButton{width: Fill height: 42
+    draw_text +: {text_style +: {font_size: 13}}
+}
+let NavActive = Nav{
+    draw_bg +: {color: soft color_hover: soft color_down: #xececf2 border_radius: 10.0}
+    draw_text +: {color: ink color_hover: ink color_down: ink}
+}
+let Filter = Nav{height: 36}
+let FilterActive = Filter{
+    draw_text +: {color: ink color_hover: ink color_down: ink}
+    draw_bg +: {color: soft color_hover: soft color_down: #xececf2 border_radius: 8.0}
+}
+let Box = RoundedView{width: Fill height: Fit flow: Down padding: 16 spacing: 10
+    show_bg: true draw_bg.color: soft draw_bg.border_radius: 12.0}
+let Search = TextInput{width: Fill height: 32 empty_text: "搜索新闻"
+    draw_bg +: {color: soft color_hover: soft color_focus: soft color_empty: soft
+        border_color: #x00000000 border_color_hover: #x00000000 border_color_focus: #x00000000 border_color_empty: #x00000000 border_radius: 8.0}
+    draw_text +: {color: ink color_hover: ink color_focus: ink color_empty: secondary color_empty_hover: secondary text_style +: {font_size: 12}}
+}

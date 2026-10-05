@@ -1,0 +1,49 @@
+{
+  "capabilities": [
+    "storage",
+    "net",
+    "images",
+    "octos.session.open",
+    "octos.turn.start",
+    "octos.turn.interrupt"
+  ],
+  "compute": {
+    "instruction_budget": 16000000,
+    "memory_bytes": 33554432
+  },
+  "id": "dev.cfaw.news",
+  "integrity": {
+    "bundle_blake3": "34da488882edccf7d85cd8bd04d2a046df49cf966560af5e9f60ed47844872c5"
+  },
+  "name": "CFAW News",
+  "network": {
+    "hosts": [
+      "api.open-meteo.com",
+      "arstechnica.com",
+      "arxiv.org",
+      "cdn.jsdelivr.net",
+      "export.arxiv.org",
+      "feeds.arstechnica.com",
+      "feeds.bbci.co.uk",
+      "hn.algolia.com",
+      "news.google.com",
+      "news.mit.edu",
+      "news.ycombinator.com",
+      "rss.arxiv.org",
+      "techcrunch.com",
+      "venturebeat.com",
+      "www.airchinagroup.com",
+      "www.bbc.co.uk",
+      "www.bbc.com",
+      "www.cnbc.com",
+      "www.techmeme.com",
+      "www.theguardian.com",
+      "www.theverge.com"
+    ]
+  },
+  "schema": 1,
+  "storage": {
+    "max_bytes": 8388608
+  },
+  "version": "1.0.0"
+}

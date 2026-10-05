@@ -1,0 +1,29 @@
+let SourcesPage = View{visible: false width: Fill height: Fill flow: Down
+    ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 12
+        Heading{text: "选择新闻来源"}
+        Small{text: "来源不可用时，已有缓存继续可读。"}
+        source_list := View{width: Fill height: Fit flow: Down spacing: 8 on_render: || {
+            for source in news_sources {
+                View{width: Fill height: Fit flow: Down spacing: 4
+                    View{width: Fill height: 30 flow: Right align: Align{y: 0.5} spacing: 6
+                        Section{width: Fill text: source.label}
+                        if source_enabled(source.id) { LinkButton{text: "已启用" on_click: || toggle_source(source.id)} }
+                        else { QuietButton{text: "启用" on_click: || toggle_source(source.id)} }
+                    }
+                    Small{text: category_label(source.category) + " · " + source.language}
+                    Small{text: source_status_text(source)}
+                    Divider{}
+                }
+            }
+        }}
+        QuietButton{text: "连接诊断" on_click: || { settings_show_diagnostics = !settings_show_diagnostics ui.diagnostics_controls.render() }}
+        diagnostics_controls := View{width: Fill height: Fit flow: Down spacing: 8 on_render: || {
+            if settings_show_diagnostics {
+                Section{text: "分析服务连接"}
+                Small{text: "新闻详情和跟踪页可发起分析。此测试仅检查连接，不分析新闻或日程。"}
+                SecondaryButton{text: "测试连接" on_click: || test_octos()}
+                octos_status := Text{text: octos_message}
+            }
+        }}
+    }
+}
