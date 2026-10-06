@@ -34,6 +34,7 @@ fn news_record_valid(r){
     if !record_string(r["category"]) || !record_string(r["feed_url"]) || !record_string(r["evidence_kind"]) || !record_string(r["language"]) { return false }
     if r["timestamp_kind"] != "published" && r["timestamp_kind"] != "submitted" { return false }
     if r["published_at"] != nil && !record_number(r["published_at"]) { return false }
+    if r["image_url"] != nil && (!record_string(r["image_url"]) || r["image_url"].len() > 4096 || !regex("^https://[^/ ]+").test(r["image_url"])) { return false }
     if !record_number(r["retrieved_at"]) || !record_array(r["references"]) { return false }
     if r["references"].len() == 0 || r["references"].len() > 30 { return false }
     for ref in r["references"] {
@@ -415,6 +416,9 @@ fn news_normalize(item, source, retrieved_at){
     if record_string(item["source"]) && item.source != "" { publisher = item.source }
     let summary = ""
     if record_string(item["summary"]) { summary = item.summary }
+    let image_url = nil
+    // RSS images are optional and untrusted; only retain bounded HTTPS URLs.
+    if record_string(item["image"]) && item.image.len() <= 4096 && regex("^https://[^/ ]+").test(item.image) { image_url = item.image }
     let published_at = nil
     if record_number(item["published"]) && item.published > 0 { published_at = item.published }
     let kind = "rss_summary"
@@ -425,7 +429,7 @@ fn news_normalize(item, source, retrieved_at){
     }
     let row = {news_id: news_identity(item.link) evidence_id: news_identity(item.link) content_version: item.title.trim() + "\n" + summary title: item.title.trim() source: publisher
         source_id: source.id source_url: item.link feed_url: source.url category: source.category
-        language: source.language summary: summary published_at: published_at retrieved_at: retrieved_at
+        language: source.language summary: summary image_url: image_url published_at: published_at retrieved_at: retrieved_at
         evidence_kind: kind timestamp_kind: timestamp_kind
         references: [{source_id: source.id source: publisher source_url: item.link feed_url: source.url}]}
     if !news_record_valid(row) { return nil }
@@ -6045,34 +6049,75 @@ let Search = TextInput{width: Fill height: 32 empty_text: "搜索新闻"
 // END src/frontend/styles.splash
 
 // BEGIN src/frontend/components/news_list.splash
-let NewsList = ScrollYView{width: Fill height: Fill flow: Down on_render: || {
-    for i row in display_rows {
-        let agent_hint = row_agent_hint(row)
-        let cache_note = row_cache_note(row)
-        GestureView{width: Fill height: Fit flow: Down on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
-            View{width: Fill height: Fit flow: Right spacing: 10 padding: Inset{left: 18 right: 18 top: 12 bottom: 8}
-                RoundedView{width: 32 height: 32 show_bg: true draw_bg.color: soft draw_bg.border_radius: 16.0 align: Align{x: 0.5 y: 0.5}
-                    Label{text: news_avatar(row) draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 12}}
-                }
-                View{width: Fill height: Fit flow: Down spacing: 4
-                    Small{text: news_meta(row) draw_text.text_style: theme.font_bold{font_size: 11 line_spacing: 1.15}}
-                    GestureView{width: Fill height: Fit on_tap: |x, y| open_story(row) on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
-                        Text{text: row.title max_lines: 3 draw_text.text_style.font_size: 14}
-                    }
-                    if agent_hint != nil {
-                        HintButton{height: 24 text: agent_hint.text + " ›" on_click: || open_feed_hint(row)}
-                    }
-                    if cache_note != "" { Small{text: cache_note} }
-                    View{width: Fill height: 28 flow: Right spacing: 10
-                        if records_has_interest("source", row.source) { LinkButton{text: "已跟踪" on_click: || toggle_follow(row)} }
-                        else { QuietButton{text: "关注来源" on_click: || toggle_follow(row)} }
-                        if records_is_bookmarked(row.news_id) { LinkButton{text: "已收藏" on_click: || toggle_save(row)} }
-                        else { QuietButton{text: "收藏" on_click: || toggle_save(row)} }
-                        QuietButton{text: "查看" on_click: || open_story(row)}
+let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{left: 14 right: 14 top: 8 bottom: 14} spacing: 10 on_render: || {
+    let featured_rows = []
+    let image_rows = []
+    let text_rows = []
+    for row in display_rows {
+        if record_string(row["image_url"]) && row.image_url != "" {
+            if featured_rows.len() < 3 { featured_rows.push(row) }
+            else { image_rows.push(row) }
+        } else { text_rows.push(row) }
+    }
+    if featured_rows.len() > 0 {
+        Section{text: "今日热点" padding: Inset{left: 2 top: 2}}
+        ScrollXView{width: Fill height: 170 flow: Right spacing: 10 padding: Inset{bottom: 4}
+            for row in featured_rows {
+                GestureView{width: 286 height: 158 on_tap: |x, y| open_story(row)
+                    RoundedView{width: Fill height: Fill flow: Down padding: 8 spacing: 6
+                        show_bg: true draw_bg.color: white draw_bg.border_size: 1.0 draw_bg.border_color: line draw_bg.border_radius: 14.0
+                        Image{width: Fill height: 98 fit: ImageFit.CropToFill src: http_resource(row.image_url)}
+                        Small{text: news_meta(row) max_lines: 1 draw_text.text_style.font_size: 10}
+                        Text{text: row.title max_lines: 2 draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 13 line_spacing: 1.15}}
                     }
                 }
             }
-            Divider{}
+        }
+    }
+    let ordered_rows = []
+    for row in image_rows { ordered_rows.push(row) }
+    for row in text_rows { ordered_rows.push(row) }
+    for row in ordered_rows {
+        let agent_hint = row_agent_hint(row)
+        let cache_note = row_cache_note(row)
+        let has_image = record_string(row["image_url"]) && row.image_url != ""
+        GestureView{width: Fill height: Fit flow: Down on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
+            RoundedView{width: Fill height: Fit flow: Down padding: 14 spacing: 9
+                show_bg: true draw_bg.color: white draw_bg.border_size: 1.0 draw_bg.border_color: line draw_bg.border_radius: 14.0
+                View{width: Fill height: Fit flow: Right spacing: 7 align: Align{y: 0.5}
+                    RoundedView{width: 22 height: 22 show_bg: true draw_bg.color: soft draw_bg.border_radius: 11.0 align: Align{x: 0.5 y: 0.5}
+                        Label{text: news_avatar(row) draw_text.color: secondary draw_text.text_style: theme.font_bold{font_size: 10}}
+                    }
+                    Small{width: Fill text: news_meta(row) max_lines: 1 draw_text.text_style: theme.font_regular{font_size: 11 line_spacing: 1.1}}
+                }
+                View{width: Fill height: Fit flow: Right spacing: 12 align: Align{y: 0.0}
+                    View{width: Fill height: Fit flow: Down spacing: 7
+                        GestureView{width: Fill height: Fit on_tap: |x, y| open_story(row) on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
+                            Text{text: row.title max_lines: 3 draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 16 line_spacing: 1.2}}
+                        }
+                        View{width: Fit height: 20 flow: Right
+                            RoundedView{width: Fit height: 20 padding: Inset{left: 7 right: 7 top: 2 bottom: 2} show_bg: true draw_bg.color: #xffffef draw_bg.border_radius: 10.0
+                                Small{text: category_label(row.category) draw_text.color: #x8d742d draw_text.text_style: theme.font_regular{font_size: 10}}
+                            }
+                        }
+                    }
+                    if has_image {
+                        Image{width: 104 height: 82 fit: ImageFit.CropToFill src: http_resource(row.image_url)}
+                    }
+                }
+                if agent_hint != nil {
+                    HintButton{height: 22 text: agent_hint.text + " ›" on_click: || open_feed_hint(row)}
+                }
+                if cache_note != "" { Small{text: cache_note max_lines: 2}}
+                View{width: Fill height: 26 flow: Right spacing: 8 align: Align{y: 0.5}
+                    if records_has_interest("source", row.source) { LinkButton{text: "已跟踪" on_click: || toggle_follow(row)} }
+                    else { QuietButton{text: "关注来源" on_click: || toggle_follow(row)} }
+                    if records_is_bookmarked(row.news_id) { LinkButton{text: "已收藏" on_click: || toggle_save(row)} }
+                    else { QuietButton{text: "收藏" on_click: || toggle_save(row)} }
+                    View{width: Fill height: 1}
+                    QuietButton{text: "查看" on_click: || open_story(row)}
+                }
+            }
         }
     }
 }}
@@ -6988,28 +7033,23 @@ let WeatherPage = View{visible: false width: Fill height: Fill flow: Down
 HostedView{width: Fill height: Fill
     full: View{width: Fill height: Fill flow: Overlay
     app_shell := View{width: Fill height: Fill flow: Down show_bg: true draw_bg.color: white
-        View{width: Fill height: 62 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 14} spacing: 8
+        View{width: Fill height: 56 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 14} spacing: 8
             menu_button := MenuToggle{}
             menu_badge := Small{visible: false width: Fit text: "•" draw_text.color: accent}
             View{width: Fill height: Fit flow: Down spacing: 2
                 Label{text: "cfaw-news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18} max_lines: 1}
                 Small{text: "NEWS THAT MOVES YOU" draw_text.color: accent draw_text.text_style.font_size: 8}
             }
+        }
+        View{width: Fill height: 54 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 14 top: 4 bottom: 4} spacing: 8
+            search_box := View{width: Fill height: Fit flow: Down
+                search := Search{height: 36 on_change: |text| set_query(text)}
+            }
             weather_widget := WeatherHeaderWidget{}
         }
         Divider{}
         menu_panel := MenuPanel{}
         main := View{width: Fill height: Fill flow: Down
-            navigation := View{width: Fill height: 46 flow: Right padding: Inset{left: 18 right: 18 top: 3 bottom: 3} spacing: 8
-                View{width: Fill height: 40 flow: Overlay
-                    feed_tab_active := RoundedView{width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 10.0}
-                    feed_tab := Nav{height: 40 text: "首页" draw_text +: {color: ink color_focus: ink} on_click: || select_page("feed")}
-                }
-                View{width: Fill height: 40 flow: Overlay
-                    schedule_tab_active := RoundedView{visible: false width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 10.0}
-                    schedule_tab := Nav{height: 40 text: "日程" draw_text +: {color: ink color_focus: ink} on_click: || select_page("schedule")}
-                }
-            }
             pending_suggestions := HintButton{visible: false height: 28 margin: Inset{left: 18 right: 18} text: "" on_click: || show_analysis_results()}
             feed_filters := FeedFilters{}
             feed_context := FeedContext{}
@@ -7049,8 +7089,18 @@ HostedView{width: Fill height: Fill
             feedback := Small{text: "" max_lines: 2}
             QuietButton{text: "关闭" on_click: || notice("")}
         }
-        search_box := View{width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 10 bottom: 12}
-            search := Search{height: 36 on_change: |text| set_query(text)}
+        navigation := View{width: Fill height: 58 flow: Down show_bg: true draw_bg.color: white
+            Divider{}
+            View{width: Fill height: 52 flow: Right padding: Inset{left: 18 right: 18 top: 4 bottom: 6} spacing: 8
+                View{width: Fill height: 42 flow: Overlay
+                    feed_tab_active := RoundedView{width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 12.0}
+                    feed_tab := Nav{height: 42 text: "首页" draw_text +: {color: ink color_focus: ink} on_click: || select_page("feed")}
+                }
+                View{width: Fill height: 42 flow: Overlay
+                    schedule_tab_active := RoundedView{visible: false width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 12.0}
+                    schedule_tab := Nav{height: 42 text: "日程" draw_text +: {color: ink color_focus: ink} on_click: || select_page("schedule")}
+                }
+            }
         }
     }
     floating_ai := View{width: Fill height: Fill flow: Overlay

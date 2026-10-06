@@ -15,6 +15,7 @@ fn news_record_valid(r){
     if !record_string(r["category"]) || !record_string(r["feed_url"]) || !record_string(r["evidence_kind"]) || !record_string(r["language"]) { return false }
     if r["timestamp_kind"] != "published" && r["timestamp_kind"] != "submitted" { return false }
     if r["published_at"] != nil && !record_number(r["published_at"]) { return false }
+    if r["image_url"] != nil && (!record_string(r["image_url"]) || r["image_url"].len() > 4096 || !regex("^https://[^/ ]+").test(r["image_url"])) { return false }
     if !record_number(r["retrieved_at"]) || !record_array(r["references"]) { return false }
     if r["references"].len() == 0 || r["references"].len() > 30 { return false }
     for ref in r["references"] {
