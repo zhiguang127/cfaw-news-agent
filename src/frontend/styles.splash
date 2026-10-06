@@ -8,6 +8,11 @@ let Text = Label{width: Fill padding: 0 draw_text.color: ink draw_text.text_styl
 let Small = Text{draw_text.color: secondary draw_text.text_style.font_size: 11}
 let Heading = Text{draw_text.text_style: theme.font_bold{font_size: 20 line_spacing: 1.2}}
 let Section = Text{draw_text.text_style: theme.font_bold{font_size: 13 line_spacing: 1.2}}
+let ReaderText = Text{draw_text.text_style.font_size: 17 draw_text.text_style.line_spacing: 1.45}
+let ReaderParagraph = ReaderText{justify: true margin: Inset{bottom: 14} draw_text.text_style.line_spacing: 1.35}
+let ReaderHeading = Text{margin: Inset{top: 12 bottom: 2} draw_text.text_style: theme.font_bold{font_size: 21 line_spacing: 1.3}}
+let ReaderCaption = Small{draw_text.text_style.font_size: 12 draw_text.text_style.line_spacing: 1.35}
+let ReaderImage = Image{width: Fill height: Fit fit: ImageFit.Horizontal}
 let Divider = SolidView{width: Fill height: 1 draw_bg.color: line}
 let QuietButton = ButtonFlat{height: 30 padding: Inset{left: 7 right: 7} margin: 0
     draw_bg +: {color: #x00000000 color_hover: #x00000008 color_down: #x00000010 border_size: 0.0 border_radius: 6.0}

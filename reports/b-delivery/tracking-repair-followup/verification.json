@@ -1,0 +1,16 @@
+{
+  "date": "2026-10-06",
+  "native_repair_checks": 23,
+  "native_repair_failed": 0,
+  "insights_checks": 33,
+  "insights_failed": 0,
+  "intent_recovery": "passed on standalone rerun",
+  "assembly_unit_tests": 5,
+  "assembly_check": "passed",
+  "zip_matches_bundle": true,
+  "prompt_revision": "tracking-v2.1",
+  "real_minimax_verification": "not performed",
+  "manifest_integrity": {
+    "bundle_blake3": "b211288451853b8ac91709ff78537779ccd5e81a4d1484d9333a325adb6f24db"
+  }
+}

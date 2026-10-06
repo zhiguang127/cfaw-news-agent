@@ -29,18 +29,22 @@ fn insight_previous_for(snapshot){
     for target in insight_targets(snapshot) { let old = insight_previous(target) if old != nil { previous.push(old) } }
     previous
 }
-fn insight_refs_valid(refs, ids, snapshot){
-    if !record_array(refs) || refs.len() > 8 { return false }
+fn insight_refs_error(refs, ids, snapshot){
+    if !record_array(refs) || refs.len() > 8 { return "evidence_refs 须为数组，最多8项；无正文引用时填 []" }
     for ref in refs {
-        if !record_object(ref) || !record_contains(ids, ref["news_id"]) { return false }
+        if !record_object(ref) { return "evidence_refs 中每项须为引用对象" }
+        if !record_contains(ids, ref["news_id"]) { return "引用的 news_id 不在该变化的 evidence_ids 中" }
         let evidence = tracking_find(snapshot.evidence, "news_id", ref.news_id)
-        if evidence == nil || !record_array(evidence["paragraphs"]) { return false }
+        if evidence == nil { return "引用的 news_id 不属于本次候选新闻" }
+        if !record_array(evidence["paragraphs"]) || evidence.paragraphs.len() == 0 { return "引用新闻没有提供正文段落；不得引用摘要为正文，请填 evidence_refs:[]" }
         let paragraph = tracking_find(evidence.paragraphs, "paragraph_id", ref["paragraph_id"])
-        if paragraph == nil || !tracking_text(ref["quote"], 400) || ref.quote.trim() == "" { return false }
-        if !regex(literal_pattern(ref.quote)).test(paragraph.text) { return false }
+        if paragraph == nil { return "paragraph_id 不属于该新闻提供的段落，请使用原段落标识" }
+        if !tracking_text(ref["quote"], 400) || ref.quote.trim() == "" { return "quote 须为非空原文字符串，最多400字符" }
+        if !regex(literal_pattern(ref.quote)).test(paragraph.text) { return "quote 与指定段落原文不一致；不得翻译、改写或拼接引文" }
     }
-    true
+    ""
 }
+fn insight_refs_valid(refs, ids, snapshot){ insight_refs_error(refs, ids, snapshot) == "" }
 fn insights_validate(value, snapshot){
     if !record_array(value["insights"]) || value.insights.len() > 6 { return tracking_invalid("invalid_schema", "每个目标最多3项变化") }
     let counts = {} let seen = {}
@@ -48,10 +52,19 @@ fn insights_validate(value, snapshot){
         if !record_object(insight) { return tracking_invalid("invalid_schema", "目标变化必须为对象") }
         let target = insight_target(snapshot, insight["target_type"], insight["target_id"])
         if target == nil || target.target_version != insight["target_version"] { return tracking_invalid("invalid_reference", "目标变化引用或版本失效") }
-        if !tracking_text(insight["issue_key"], 120) || insight.issue_key.trim() == "" || !tracking_text(insight["summary"], 600) || insight.summary.trim() == "" { return tracking_invalid("invalid_schema", "变化标识和摘要必填") }
+        if !record_string(insight["issue_key"]) { return tracking_invalid("invalid_schema", "insights.issue_key 必须为非空字符串") }
+        if insight.issue_key.trim() == "" { return tracking_invalid("invalid_schema", "insights.issue_key 缺少变化标识") }
+        if !tracking_text(insight.issue_key, 120) { return tracking_invalid("invalid_schema", "insights.issue_key 超过120个字符") }
+        if !record_string(insight["summary"]) { return tracking_invalid("invalid_schema", "insights.summary 必须为非空字符串") }
+        if insight.summary.trim() == "" { return tracking_invalid("invalid_schema", "insights.summary 缺少变化摘要") }
+        if !tracking_text(insight.summary, 600) { return tracking_invalid("invalid_schema", "insights.summary 超过600个字符，请简写") }
         if !record_contains(["new" "updated" "withdrawn" "unchanged"], insight["change_kind"]) || !record_contains(["none" "watch" "review" "unknown"], insight["decision_effect"]) { return tracking_invalid("invalid_schema", "变化或决策影响类别无效") }
         if insight["next_step"] != nil { if !tracking_text(insight.next_step, 400) || insight.next_step.trim() == "" { return tracking_invalid("invalid_schema", "核实建议无效") } }
-        if !tracking_text(insight["material_change"], 400) || !tracking_strings(insight["uncertainties"], 6, 300) || !tracking_refs(insight["evidence_ids"], snapshot.evidence, "news_id", false) || !insight_refs_valid(insight["evidence_refs"], insight.evidence_ids, snapshot) { return tracking_invalid("invalid_reference", "变化证据/段落引用无效") }
+        if !tracking_text(insight["material_change"], 400) { return tracking_invalid("invalid_schema", "material_change 须为字符串，无新增依据时填空字符串，最多400字符") }
+        if !tracking_strings(insight["uncertainties"], 6, 300) { return tracking_invalid("invalid_schema", "uncertainties 须为字符串数组，最多6项，每项最多300字符") }
+        if !tracking_refs(insight["evidence_ids"], snapshot.evidence, "news_id", false) { return tracking_invalid("invalid_reference", "insights.evidence_ids 须包含本次候选新闻标识，不得为空、重复或使用原文地址代替 E 标识") }
+        let refs_error = insight_refs_error(insight["evidence_refs"], insight.evidence_ids, snapshot)
+        if refs_error != "" { return tracking_invalid("invalid_reference", refs_error) }
         if target.mode == "goal" && insight.decision_effect == "review" && insight["next_step"] == nil { return tracking_invalid("invalid_schema", "目标决策变化须给出具体核实项") }
         if insight["proposed_action"] != nil { return tracking_invalid("invalid_schema", "目标变化不授权执行动作") }
         if !reschedule_validate(insight["reschedule"], insight, snapshot) { return tracking_invalid("invalid_reference", "改期时间、权限或原句证据不足") }

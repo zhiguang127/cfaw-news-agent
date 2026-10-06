@@ -3,7 +3,7 @@
 fn presets_initialize(now){
     let next = topic_records.to_json().parse_json()
     let topic = topic_find("preset-agent-development-v1")
-    if topic == nil && next.topics.len() < tracking_config.max_topics {
+    if topic == nil && topic_visible_count(next.topics) < tracking_config.max_topics && next.topics.len() < tracking_config.max_topic_records {
         let preset = {topic_id: "preset-agent-development-v1" version: 1 intent_kind: "news" demo_preset: true
             title: "Agent 领域发展" purpose: "了解 Agent 领域的新进展"
             original_input: "演示预设：关注 Agent 领域新闻" supplement: ""

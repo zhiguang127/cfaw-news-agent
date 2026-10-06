@@ -23,6 +23,13 @@ fn feed_read_cache(source){
         if fs.exists(path) {
             let cached = fs.read(path).parse_json()
             if feed_cache_valid(cached, source) {
+                let real_items = []
+                for row in cached.items { if !news_is_demo(row) { real_items.push(row) } }
+                if real_items.len() != cached.items.len() {
+                    cached.items = real_items
+                    if real_items.len() == 0 { cached.retrieved_at = 0 }
+                    try { fs.write(path, cached.to_json()) } { records_warn("演示新闻已移除，但缓存清理保存失败") }
+                }
                 feed_rows_by_source[source.id] = cached.items
                 feed_data_revision = feed_data_revision + 1
                 feed_status_by_source[source.id] = {state: "cached" retrieved_at: cached.retrieved_at error: "" count: cached.items.len()}

@@ -1,0 +1,53 @@
+{
+  "checks": [
+    "same-value input notification preserves delayed reply; preview and explicit confirm persist one goal",
+    "management shows saved goal; tracking counts it and distinguishes no matching news from no focus",
+    "real edit rejects old reply with concrete reason and leaves saved topic unchanged"
+  ],
+  "records": {
+    "open": true,
+    "state": "failed",
+    "error": "\u8f93\u5165\u6587\u5b57\u5df2\u4fee\u6539\uff0c\u672c\u6b21\u7ed3\u679c\u672a\u91c7\u7528\uff1b\u672a\u65b0\u589e\u6216\u4fee\u6539\u5173\u6ce8\u3002\u8bf7\u6309\u5f53\u524d\u8f93\u5165\u91cd\u65b0\u6574\u7406\u3002",
+    "draft": {
+      "draft_id": "draft-1791269318.6596744",
+      "version": 2,
+      "target_topic_id": "topic-draft-1791269311.3598351",
+      "target_version": 1,
+      "original_input": "\u6211\u60f3\u4e86\u89e3\u6700\u65b0 AI \u8fdb\u5c55\u5982\u4f55\u5e2e\u52a9\u6211\u7684\u5de5\u4f5c\u3001\u5b66\u4e60\u548c\u65e5\u5e38\u751f\u6d3b\uff08\u56fa\u5b9a\u6d4b\u8bd5\u4fee\u6539\uff09",
+      "supplement": "",
+      "understanding": null,
+      "state": "editing",
+      "question": "",
+      "origin_reminder_id": null,
+      "intent_kind": "goal",
+      "schedule_understanding": null,
+      "schedule_timezone": "America/New_York"
+    },
+    "topics": [
+      {
+        "title": "AI \u65e5\u5e38\u5e94\u7528\uff08\u56fa\u5b9a\u6d4b\u8bd5\uff09",
+        "purpose": "\u4e86\u89e3\u5de5\u4f5c\u4e0e\u5b66\u4e60\u4e2d\u7684 AI \u65b0\u8fdb\u5c55",
+        "scope": [
+          "AI \u65b0\u529f\u80fd",
+          "\u5de5\u4f5c\u3001\u5b66\u4e60\u4e0e\u65e5\u5e38\u5e94\u7528"
+        ],
+        "preferences": [],
+        "recall_rules": [
+          {
+            "kind": "keyword",
+            "value": "AI"
+          }
+        ],
+        "topic_id": "topic-draft-1791269311.3598351",
+        "version": 1,
+        "original_input": "\u6211\u60f3\u4e86\u89e3\u6700\u65b0 AI \u8fdb\u5c55\u5982\u4f55\u5e2e\u52a9\u6211\u7684\u5de5\u4f5c\u3001\u5b66\u4e60\u548c\u65e5\u5e38\u751f\u6d3b",
+        "supplement": "",
+        "created_at": 1791269315.4724183,
+        "updated_at": 1791269315.4724195,
+        "status": "active",
+        "intent_kind": "goal",
+        "demo_preset": false
+      }
+    ]
+  }
+}

@@ -5,6 +5,7 @@ fn check_states_valid(v){
     if !record_object(v) || v["schema_version"] != 1 || !record_number(v["revision"]) || !record_array(v["items"]) || v.items.len() > 28 { return false }
     for item in v.items {
         if !record_contains(["topic" "schedule"], item["target_type"]) || !record_string(item["target_id"]) || !record_number(item["target_version"]) || !record_number(item["watermark"]) || !record_number(item["attempt_at"]) || !record_string(item["status"]) || !record_string(item["category"]) { return false }
+        if item["reason"] != nil && !tracking_text(item.reason, 600) { return false }
     }
     true
 }
@@ -18,6 +19,9 @@ fn check_states_load(){
 }
 fn check_state_find(kind, id, version){ for item in check_states.items { if item.target_type == kind && item.target_id == id && item.target_version == version { return item } } nil }
 fn check_states_record(targets, status, category, checked){
+    check_states_record_reason(targets, status, category, checked, "")
+}
+fn check_states_record_reason(targets, status, category, checked, reason){
     let next = check_states.to_json().parse_json()
     for target in insight_targets(targets) {
         let old = check_state_find(target.target_type, target.target_id, target.target_version)
@@ -25,7 +29,7 @@ fn check_states_record(targets, status, category, checked){
         if checked { watermark = time_now() }
         next.items.retain(|v| v.target_type != target.target_type || v.target_id != target.target_id)
         next.items.push({target_type: target.target_type target_id: target.target_id target_version: target.target_version
-            watermark: watermark attempt_at: time_now() status: status category: category})
+            watermark: watermark attempt_at: time_now() status: status category: category reason: if status == "failed" {bm25_prefix(reason, 600)} else {""}})
     }
     while next.items.len() > 28 { next.items.remove(0) }
     next.revision = check_states.revision + 1

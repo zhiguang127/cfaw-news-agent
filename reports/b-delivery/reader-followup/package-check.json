@@ -1,0 +1,13 @@
+{
+  "digest": "b53fc27b2370836998ee826df1b3a7eccef44c096f5d5ac0eb7589851d8595f0",
+  "assembly_tests": 5,
+  "assembly_check": "passed",
+  "zip_bundle_bytes": "match",
+  "native_host": "D:\\Hackathon_agenticapp\\Rinx-main",
+  "native_reports": [
+    "430x860",
+    "800x1050",
+    "430x860-live"
+  ],
+  "account_or_model_calls": false
+}

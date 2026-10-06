@@ -1,9 +1,14 @@
+// Keep unadmitted RSS thumbnails from aborting the whole list render.
+fn news_thumbnail_allowed(row){ record_string(row["image_url"]) && article_image_allowed(row.image_url) }
+let news_thumbnail_resource = |url| http_resource(url)
 let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{left: 14 right: 14 top: 8 bottom: 14} spacing: 10 on_render: || {
     let featured_rows = []
     let image_rows = []
     let text_rows = []
+    let ordered_rows = []
     for row in display_rows {
-        if record_string(row["image_url"]) && row.image_url != "" {
+        if page == "saved" { ordered_rows.push(row) }
+        else if news_thumbnail_allowed(row) {
             if featured_rows.len() < 3 { featured_rows.push(row) }
             else { image_rows.push(row) }
         } else { text_rows.push(row) }
@@ -15,7 +20,7 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{le
                 GestureView{width: 286 height: 158 on_tap: |x, y| open_story(row)
                     RoundedView{width: Fill height: Fill flow: Down padding: 8 spacing: 6
                         show_bg: true draw_bg.color: white draw_bg.border_size: 1.0 draw_bg.border_color: line draw_bg.border_radius: 14.0
-                        Image{width: Fill height: 98 fit: ImageFit.CropToFill src: http_resource(row.image_url)}
+                        Image{width: Fill height: 98 fit: ImageFit.CropToFill src: news_thumbnail_resource(row.image_url)}
                         Small{text: news_meta(row) max_lines: 1 draw_text.text_style.font_size: 10}
                         Text{text: row.title max_lines: 2 draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 13 line_spacing: 1.15}}
                     }
@@ -23,13 +28,12 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{le
             }
         }
     }
-    let ordered_rows = []
     for row in image_rows { ordered_rows.push(row) }
     for row in text_rows { ordered_rows.push(row) }
     for row in ordered_rows {
         let agent_hint = row_agent_hint(row)
         let cache_note = row_cache_note(row)
-        let has_image = record_string(row["image_url"]) && row.image_url != ""
+        let has_image = news_thumbnail_allowed(row)
         GestureView{width: Fill height: Fit flow: Down on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
             RoundedView{width: Fill height: Fit flow: Down padding: 14 spacing: 9
                 show_bg: true draw_bg.color: white draw_bg.border_size: 1.0 draw_bg.border_color: line draw_bg.border_radius: 14.0
@@ -51,7 +55,7 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{le
                         }
                     }
                     if has_image {
-                        Image{width: 104 height: 82 fit: ImageFit.CropToFill src: http_resource(row.image_url)}
+                        Image{width: 104 height: 82 fit: ImageFit.CropToFill src: news_thumbnail_resource(row.image_url)}
                     }
                 }
                 if agent_hint != nil {

@@ -1,0 +1,70 @@
+{
+  "checks": [
+    "restored draft bound to cancelled v3/v4 target becomes a new topic, keeps input, and never resurrects old target",
+    "actual active-target version change rejects stale reply, explicit reload allows new preview and confirmation"
+  ],
+  "records": {
+    "open": false,
+    "state": "succeeded",
+    "error": "",
+    "draft": null,
+    "topics": [
+      {
+        "title": "\u5177\u8eab\u667a\u80fd\uff08\u56fa\u5b9a\u6d4b\u8bd5\uff09",
+        "purpose": "\u6301\u7eed\u4e86\u89e3\u5177\u8eab\u667a\u80fd\u9886\u57df\u53d1\u5c55",
+        "scope": [
+          "\u5177\u8eab\u667a\u80fd",
+          "\u673a\u5668\u4eba\u4e0e\u4eba\u5de5\u667a\u80fd"
+        ],
+        "preferences": [],
+        "recall_rules": [
+          {
+            "kind": "keyword",
+            "value": "\u5177\u8eab\u667a\u80fd"
+          },
+          {
+            "kind": "keyword",
+            "value": "robotics"
+          }
+        ],
+        "topic_id": "topic-draft-1791290198.706396",
+        "version": 4,
+        "original_input": "\u65e7\u5173\u6ce8\uff08\u56fa\u5b9a\u6d4b\u8bd5\uff09",
+        "supplement": "",
+        "created_at": 1791290198.706507,
+        "updated_at": 1791290198.7299924,
+        "status": "cancelled",
+        "intent_kind": "news",
+        "demo_preset": false
+      },
+      {
+        "title": "\u5177\u8eab\u667a\u80fd\uff08\u56fa\u5b9a\u6d4b\u8bd5\uff09",
+        "purpose": "\u6301\u7eed\u4e86\u89e3\u5177\u8eab\u667a\u80fd\u9886\u57df\u53d1\u5c55",
+        "scope": [
+          "\u5177\u8eab\u667a\u80fd",
+          "\u673a\u5668\u4eba\u4e0e\u4eba\u5de5\u667a\u80fd"
+        ],
+        "preferences": [],
+        "recall_rules": [
+          {
+            "kind": "keyword",
+            "value": "\u5177\u8eab\u667a\u80fd"
+          },
+          {
+            "kind": "keyword",
+            "value": "robotics"
+          }
+        ],
+        "topic_id": "topic-draft-1791290198.73913",
+        "version": 3,
+        "original_input": "\u5173\u6ce8\u5177\u8eab\u667a\u80fd\u9886\u57df",
+        "supplement": "",
+        "created_at": 1791290202.0503438,
+        "updated_at": 1791290209.6509545,
+        "status": "active",
+        "intent_kind": "news",
+        "demo_preset": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+// Short model-facing labels are scoped to one immutable candidate snapshot.
+// Unknown labels stay unknown and are rejected by the existing validators.
+fn tracking_evidence_label(id, snapshot){
+    for i evidence in snapshot.evidence { if evidence.news_id == id { return "E" + (i + 1) } }
+    id
+}
+fn tracking_evidence_id(label, snapshot){
+    for i evidence in snapshot.evidence { if label == "E" + (i + 1) { return evidence.news_id } }
+    label
+}
+fn tracking_expand_ids(ids, snapshot){
+    if !record_array(ids) { return ids }
+    let out = [] for id in ids { out.push(tracking_evidence_id(id, snapshot)) } out
+}
+fn tracking_expand_refs(refs, snapshot){
+    if !record_array(refs) { return }
+    for ref in refs { if record_object(ref) { ref.news_id = tracking_evidence_id(ref["news_id"], snapshot) } }
+}
+fn tracking_expand_evidence(value, snapshot){
+    if !tracking_snapshot_valid(snapshot) { return }
+    if record_array(value["items"]) {
+        for item in value.items {
+            if !record_object(item) { continue }
+            item.news_id = tracking_evidence_id(item["news_id"], snapshot)
+            item.evidence_ids = tracking_expand_ids(item["evidence_ids"], snapshot)
+            if record_array(item["schedule_impacts"]) {
+                for impact in item.schedule_impacts { if record_object(impact) {
+                    impact.evidence_ids = tracking_expand_ids(impact["evidence_ids"], snapshot)
+                    tracking_expand_refs(impact["evidence_refs"], snapshot)
+                } }
+            }
+        }
+    }
+    if record_array(value["insights"]) {
+        for insight in value.insights { if record_object(insight) {
+            insight.evidence_ids = tracking_expand_ids(insight["evidence_ids"], snapshot)
+            tracking_expand_refs(insight["evidence_refs"], snapshot)
+            if record_object(insight["reschedule"]) { tracking_expand_refs(insight.reschedule["evidence_refs"], snapshot) }
+        } }
+    }
+}

@@ -13,7 +13,7 @@
   },
   "id": "dev.cfaw.news",
   "integrity": {
-    "bundle_blake3": "72c113bb0883df4666b47c0b012b9ae7db4b1b2982c580380e45c9872d087f88"
+    "bundle_blake3": "dfe907839184fa7193e111ac6b0161fe77c5fe64529e5c83bfd40e02666d513b"
   },
   "name": "CFAW News",
   "network": {
@@ -21,11 +21,16 @@
       "api.open-meteo.com",
       "arstechnica.com",
       "arxiv.org",
+      "cdn.arstechnica.net",
       "cdn.jsdelivr.net",
+      "cdn.vox-cdn.com",
+      "duet-cdn.vox-cdn.com",
       "export.arxiv.org",
       "feeds.arstechnica.com",
       "feeds.bbci.co.uk",
       "hn.algolia.com",
+      "i.guim.co.uk",
+      "ichef.bbci.co.uk",
       "news.google.com",
       "news.mit.edu",
       "news.ycombinator.com",

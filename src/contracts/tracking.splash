@@ -27,7 +27,7 @@ fn topic_valid(value){
     if value["demo_preset"] != nil && value.demo_preset != true && value.demo_preset != false { return false }
     if !tracking_text(value["topic_id"], 120) || value["topic_id"] == "" || !record_number(value["version"]) || value["version"] < 1 || floor(value["version"]) != value["version"] { return false }
     if !tracking_text(value["original_input"], tracking_config.max_input_chars) || !tracking_text(value["supplement"], tracking_config.max_input_chars) { return false }
-    if value["status"] != "active" && value["status"] != "paused" { return false }
+    if value["status"] != "active" && value["status"] != "paused" && value["status"] != "cancelled" { return false }
     record_number(value["created_at"]) && record_number(value["updated_at"])
 }
 fn topic_draft_valid(value){

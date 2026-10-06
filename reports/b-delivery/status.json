@@ -4,7 +4,7 @@
   "scope": "new.2 B01-B08",
   "application_source": "D:\\Hackathon_agenticapp\\workspace\\cfaw-news-agent-new.2",
   "package": "D:\\Hackathon_agenticapp\\workspace\\cfaw-news-agent-new.2\\build\\cfaw-news.zip",
-  "package_sha256": "804687985b4585fa89ae9bb9f0d3b3063f2a57c40bf8ada4be90b024ad36839f",
+  "package_sha256": "36e783772c5f93f66227c8a43e02db7efe12b7329c08283552bbbbf5e14a02af",
   "unsigned": true,
   "published": false,
   "assembly_tests": {
@@ -26,7 +26,7 @@
     892
   ],
   "native_rinx_build": "passed_release_all_windows_tools",
-  "gesture_native_execution": "not_run",
+  "gesture_native_execution": "passed_pointer_jitter_before_hold_drag_snap_click_and_fresh_process_restore",
   "live_model_benchmark": "not_run",
   "local_300ms_measurement": "not_run",
   "median_20_percent_improvement": "not_measured",
@@ -224,5 +224,17 @@
     }
   },
   "native_rinx_startup": "passed_sdf_login_screen_responsive_and_visually_verified",
-  "windows_followup": "reports/b-delivery/windows-build-run.json"
+  "windows_followup": "reports/b-delivery/windows-build-run.json",
+  "mobile_ui_followup": "reports/b-delivery/ui-followup",
+  "mobile_ui_actual_viewports": [
+    [
+      760,
+      898
+    ],
+    [
+      320,
+      708
+    ]
+  ],
+  "phone_canvas": "reverted_at_user_request; fills host content"
 }

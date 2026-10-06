@@ -23,14 +23,9 @@ fn boot_loaded(){
     start_timeout(0.01, || feed_restore_cache(enabled_source_ids, 0, feed_generation, || {
         rebuild_feed(|| {
             render_main()
-            let demo_cache = false
-            for row in app_feed_rows { if row["demo_data"] == true { demo_cache = true } }
-            if demo_cache { notice("演示缓存仅供测试，非实时新闻；手动刷新可尝试获取真实来源。") }
-            else {
-                tracking_schedule_check()
-                let ids = feed_refresh_needed_ids(enabled_source_ids, time_now())
-                start_timeout(0.01, || refresh_sources(ids))
-            }
+            tracking_schedule_check()
+            let ids = feed_refresh_needed_ids(enabled_source_ids, time_now())
+            start_timeout(0.01, || refresh_sources(ids))
         })
     }))
 }

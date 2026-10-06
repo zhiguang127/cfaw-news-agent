@@ -1,0 +1,24 @@
+{
+  "final_directory": "D:\\Hackathon_agenticapp\\workspace\\cfaw-news-agent-new.3",
+  "unit_tests": 19,
+  "news_checks": 60,
+  "insights_checks": 33,
+  "repair_checks": 23,
+  "wide_ui_checks": 11,
+  "narrow_ui_checks": 11,
+  "intent_context": "passed",
+  "intent_recovery": "passed",
+  "assembly": "passed",
+  "source_merge_audit": "passed",
+  "zip_matches_bundle": true,
+  "bundle_blake3": "9938e51810775b5a91ee80f62df06bab54a2e4699823516d4676fe29a280666f",
+  "real_model_verified": false,
+  "external_thumbnail_downloads_verified": false,
+  "integration_changes": [
+    "merged main view",
+    "unioned image CDN grants",
+    "unadmitted thumbnail fallback",
+    "updated standalone reader test fixtures",
+    "native UI test accepts existing probe and scrolls clipped controls"
+  ]
+}

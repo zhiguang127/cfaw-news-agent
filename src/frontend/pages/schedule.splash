@@ -5,10 +5,10 @@ let SchedulePage = View{visible: false width: Fill height: Fill flow: Down
         if schedule_warning != "" { Small{text: schedule_warning draw_text.color: accent} }
         schedule_list := View{width: Fill height: Fit flow: Down spacing: 8 on_render: || {
             let has_schedules = false
-            for item in user_schedules { if schedule_is_user_record(item) { has_schedules = true } }
+            for item in user_schedules { if schedule_is_user_record(item) && item["status"] != "cancelled" { has_schedules = true } }
             if !has_schedules { Small{text: "暂无日程。添加安排后，Agent 可结合内容与地点分析影响。"} }
             for item in user_schedules {
-                if !schedule_is_user_record(item) { continue }
+                if !schedule_is_user_record(item) || item["status"] == "cancelled" { continue }
                 View{width: Fill height: Fit flow: Down spacing: 3
                     Text{text: item.title}
                     if item["demo_preset"] == true { Small{text: "演示预设 · 可编辑或取消"} }
@@ -28,9 +28,9 @@ let SchedulePage = View{visible: false width: Fill height: Fill flow: Down
                         QuietButton{text: "检查相关消息" on_click: || tracking_start(nil)}
                     }
                     QuietButton{text: "编辑" on_click: || schedule_begin_edit(item.schedule_id)}
-                    if schedule_active(item) {
+                    if item["status"] != "cancelled" {
                         View{width: Fill height: Fit flow: Right spacing: 8
-                            QuietButton{text: "标记完成" on_click: || schedule_change_status(item.schedule_id, item.version, "completed")}
+                            if schedule_active(item) { QuietButton{text: "标记完成" on_click: || schedule_change_status(item.schedule_id, item.version, "completed")} }
                             QuietButton{text: "取消日程" on_click: || schedule_change_status(item.schedule_id, item.version, "cancelled")}
                         }
                     }
@@ -97,8 +97,8 @@ let SchedulePage = View{visible: false width: Fill height: Fill flow: Down
             if schedule_next_day { Search{text: schedule_end_date_draft empty_text: "结束日期：年-月-日" on_change: |value| {schedule_end_date_draft = value}} }
             if schedule_edit_error != "" { Small{text: schedule_edit_error draw_text.color: accent} }
             if schedule_allow_draft { Pill{text: "✓ 允许 Agent 提议改期" on_click: || {schedule_allow_draft = false ui.schedule_editor.render()}} }
-            else { SecondaryButton{text: "允许 Agent 提议改期（未开启）" on_click: || {schedule_allow_draft = true ui.schedule_editor.render()}} }
-            Small{text: "默认不允许改期；开启后仍须你确认，Agent 才能保存变更。"}
+            else { SecondaryButton{text: "允许 Agent 提议改期" on_click: || {schedule_allow_draft = true ui.schedule_editor.render()}} }
+            Small{text: "Agent 可提议改期；保存变更前仍须你确认。"}
             View{width: Fill height: Fit flow: Right spacing: 8
                 Primary{text: "保存日程" on_click: || schedule_save_draft()}
                 if schedule_edit_id != nil { QuietButton{text: "新建" on_click: || schedule_begin_new()} }

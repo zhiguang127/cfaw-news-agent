@@ -113,6 +113,20 @@ fn records_load(){
     let tracking = records_read(tracking_file, "tracking")
     if tracking != nil { tracking_state = tracking }
     records_index_unread()
+    user_bookmarks.retain(|row| !news_is_demo(row))
+    records_clean_demo_bookmarks(bookmark_file.path)
+    records_clean_demo_bookmarks(bookmark_file.path + ".backup")
+}
+fn records_clean_demo_bookmarks(path){
+    // Clean both snapshots so recovery cannot resurrect removed demo news.
+    try {
+        if !fs.exists(path) { return }
+        let value = fs.read(path).parse_json()
+        if !records_document_valid(value, "bookmarks") { return }
+        let count = value.items.len()
+        value.items.retain(|row| !news_is_demo(row))
+        if count != value.items.len() { fs.write(path, value.to_json()) }
+    } { records_warn("演示收藏已隐藏，但本地清理保存失败") }
 }
 fn records_migrate_bookmarks(){
     if !fs.exists("saved.json") { return false }

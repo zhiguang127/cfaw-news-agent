@@ -43,6 +43,7 @@ ORDER = [
     'src/agent/results/change.splash',
     'src/agent/runtime/connectivity.splash',
     'src/agent/prompts/tracking.splash',
+    'src/agent/results/references.splash',
     'src/agent/results/tracking.splash',
     'src/agent/results/insights.splash',
     'src/agent/runtime/tracking.splash',
@@ -150,7 +151,7 @@ def requested_hosts(root=ROOT):
     cities = city_catalog(root)
     cities_script(cities)  # Validate the configured endpoint before admitting it.
     hosts.add(urlsplit(cities['endpoint']).hostname)
-    for module, name in (('holidays', 'holiday_hosts'), ('fx', 'fx_hosts'), ('articles', 'article_hosts')):
+    for module, name in (('holidays', 'holiday_hosts'), ('fx', 'fx_hosts'), ('articles', 'article_hosts'), ('articles', 'article_image_hosts')):
         source = (root / f'src/data/ingestion/{module}.splash').read_text(encoding='utf-8')
         declaration = re.search(r'\blet\s+' + name + r'\s*=\s*(\[[^\]]*\])', source)
         if not declaration:

@@ -1,0 +1,17 @@
+{
+  "passed": [
+    {
+      "portrait_canvas": [
+        185,
+        151,
+        430,
+        860
+      ]
+    },
+    "long press, continuous drag, edge snap, no accidental open, persisted position",
+    "short click opens and close returns to moved position",
+    "bookmark categories filter independently",
+    "visible refresh starts requests, second click cancels",
+    "fresh native process restores saved orb position"
+  ]
+}

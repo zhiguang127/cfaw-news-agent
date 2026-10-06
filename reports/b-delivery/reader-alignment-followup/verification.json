@@ -1,0 +1,10 @@
+{
+  "bundle_blake3": "bc49f30ef7e043a47f67b2496495f063846ee39cc4d3091a58e29bfbedb6a303",
+  "assembly_tests": 5,
+  "assembly_check": "passed",
+  "zip_bundle_bytes": "match",
+  "host_executable": "target/release/rinx-reader.exe",
+  "host_sha256": "0dff7d95690add6d374b71cc54b1afa5dc2300fd000da2e1fe01138331dc3f72",
+  "startup_smoke": "passed with isolated existing data directory",
+  "original_link": "clicked real MIT article; Windows dispatch accepted"
+}

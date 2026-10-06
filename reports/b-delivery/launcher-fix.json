@@ -1,0 +1,9 @@
+{
+  "date": "2026-10-06",
+  "cause": "patch_gesture_host.py LF converted to CRLF; compiled artifact hashes unchanged",
+  "repair": "restored exact recorded script bytes; added editor and Git newline rules",
+  "gesture_check_exit": 0,
+  "render_check_exit": 0,
+  "launch_exit": 0,
+  "started_pid": 38624
+}

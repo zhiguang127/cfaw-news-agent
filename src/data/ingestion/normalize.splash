@@ -87,6 +87,7 @@ fn news_sort(rows){
     return rows
 }
 fn news_append_unique(out, indexed, row){
+    if news_is_demo(row) { return false }
     let existing_index = indexed[row.news_id]
     if existing_index != nil {
         let existing = out[existing_index]

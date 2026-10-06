@@ -2,11 +2,32 @@ let orb_drag_armed = false let orb_dragging = false
 let orb_drag_x = 1.0 let orb_drag_y = 0.86
 let orb_x = 1.0 let orb_y = 0.86
 let orb_viewport_width = 430 let orb_viewport_height = 860
-let orb_native_supported = GestureView["long_press_seconds"] != nil
+let orb_press_generation = 0 let orb_pointer_down = false
+let orb_pan_started = false let orb_pending_dx = 0 let orb_pending_dy = 0
+// Rust live fields are not enumerable on the script prototype. Testing that
+// prototype returned nil even on the patched host and disabled all dragging.
+// The project launcher verifies the pinned host's gesture artifact instead.
+let orb_native_supported = true
 fn orb_viewport(width, height){ orb_viewport_width = width orb_viewport_height = height }
-fn orb_load(){ orb_x = agent_preferences.orb_x orb_y = agent_preferences.orb_y ui.orb_position.render() if !orb_native_supported { notice("当前宿主尚无长按拖动支持；小球仍可点击，移动需加载修补后的 Rinx") } }
-fn orb_long_press(x, y){ orb_drag_armed = true intent_orb_press() }
-fn orb_release(){ orb_drag_armed = false orb_dragging = false intent_orb_press() }
+fn orb_load(){ orb_x = agent_preferences.orb_x orb_y = agent_preferences.orb_y ui.orb_position.render_style() if !orb_native_supported { notice("当前宿主尚无长按拖动支持；小球仍可点击，移动需加载修补后的 Rinx") } }
+fn orb_press(){
+    intent_orb_press()
+    orb_press_generation = orb_press_generation + 1
+    let generation = orb_press_generation
+    orb_pointer_down = true orb_pan_started = false
+    orb_drag_armed = false orb_dragging = false
+    orb_pending_dx = 0 orb_pending_dy = 0
+    orb_drag_x = orb_x orb_drag_y = orb_y
+    // Native mouse pan may begin before its hold timer fires. Keep this hold
+    // alive across pointer jitter, but cancel it on release or a newer press.
+    start_timeout(0.4, || {
+        if generation != orb_press_generation || !orb_pointer_down { return }
+        orb_long_press(0, 0)
+        if orb_pan_started { orb_pan(orb_pending_dx, orb_pending_dy, 1, orb_viewport_width, orb_viewport_height) }
+    })
+}
+fn orb_long_press(x, y){ if orb_pointer_down { orb_drag_armed = true intent_orb_press() } }
+fn orb_release(){ orb_press_generation = orb_press_generation + 1 orb_pointer_down = false orb_drag_armed = false orb_dragging = false orb_pan_started = false intent_orb_press() }
 fn orb_tap(x, y){
     if orb_dragging || orb_drag_armed { return }
     intent_orb_press()
@@ -15,9 +36,11 @@ fn orb_tap(x, y){
 fn orb_pan(dx, dy, phase, width, height){
     // Native callback provides the actual window viewport; no assumed 430px.
     intent_orb_press()
+    if !orb_pointer_down { return }
+    if phase == 0 { orb_pan_started = true }
+    orb_pending_dx = dx orb_pending_dy = dy
     if !orb_drag_armed { return }
-    if phase == 0 { orb_drag_x = orb_x orb_drag_y = orb_y orb_dragging = true }
-    if !orb_dragging { return }
+    orb_dragging = true
     orb_x = min(1.0, max(0.0, orb_drag_x + dx / max(1.0, orb_viewport_width - 108)))
     orb_y = min(1.0, max(0.0, orb_drag_y + dy / max(1.0, orb_viewport_height - 208)))
     if phase == 2 {
@@ -27,5 +50,6 @@ fn orb_pan(dx, dy, phase, width, height){
         if error != "" { notice(error) }
         orb_drag_armed = false orb_dragging = false
     }
-    ui.orb_position.render()
+    // Preserve the GestureView and its pointer capture throughout the drag.
+    ui.orb_position.render_style()
 }

@@ -1,0 +1,106 @@
+let repair_checks = [] let repair_failures = []
+let repair_case = 0 let repair_calls = 0 let repair_current = true
+let repair_snapshot = nil let repair_good = nil
+fn repair_assert(value, label){ if value { repair_checks.push(label) } else { repair_failures.push(label) } }
+fn repair_next(){
+    repair_case = repair_case + 1 repair_calls = 0 repair_current = true
+    if repair_case > 9 {
+        repair_assert(tracking_cache.runs.len() == 1, "only validated result persisted")
+        check_states_load()
+        let state = check_state_find("topic", repair_snapshot.topics[0].topic_id, 1)
+        repair_assert(state != nil && state.watermark > 0 && regex("quote").test(state.reason), "failed check preserves last success and persists precise reason")
+        fs.write("repair-report.json", {stage: "complete" passed: repair_checks.len() failed: repair_failures.len() checks: repair_checks failures: repair_failures}.to_json()) return
+    }
+    let prompt = tracking_prompt + tracking_prompt_snapshot(repair_snapshot).to_json()
+    agent_task_start("tracking_update", repair_snapshot, prompt, || repair_current, fn(reply){
+        if repair_case <= 4 {
+            repair_assert(reply.success && repair_calls == 2 && agent_task.repair_count == 1, "malformed first response repaired: " + repair_case)
+            if repair_case == 1 {
+                repair_assert(tracking_publish(repair_snapshot, tracking_input_key(repair_snapshot), reply.result, reply.task_id) == "", "repaired result passes persistence validation")
+                check_states_record_reason(repair_snapshot, "checked", "", true, "")
+            }
+        } else if repair_case == 5 || repair_case == 9 {
+            repair_assert(!reply.success && repair_calls == 2 && reply.result == nil, "second invalid response rejected: " + repair_case)
+            if repair_case == 5 { repair_assert(regex("summary").test(reply.error), "error identifies missing summary") }
+            if repair_case == 9 { repair_assert(reply.category == "invalid_reference", "fabricated paragraph remains rejected") }
+            check_states_record_reason(repair_snapshot, "failed", reply.category, false, reply.error)
+        } else if repair_case == 6 {
+            repair_assert(!reply.success && reply.category == "stale_context" && repair_calls == 1, "changed context prevents repair turn")
+        } else if repair_case == 7 {
+            repair_assert(!reply.success && reply.category == "cancelled" && reply.result == nil, "cancel prevents repaired result publication")
+        } else if repair_case == 8 {
+            repair_assert(!reply.success && reply.category == "timeout" && reply.result == nil, "timeout interrupts repair instead of resetting deadline")
+        }
+        // Let a delayed response arrive before starting the next case.
+        start_timeout(0.5, || repair_next())
+    })
+}
+start_timeout(0.1, || {
+    records_load() schedules_load() topics_load() agent_preferences_load() feed_initialize()
+    let draft = topic_new_draft(nil) draft.original_input = "关注具身智能"
+    draft.state = "ready" draft.understanding = "{\"title\": \"具身智能\", \"purpose\": \"\", \"scope\": [\"机器人\"], \"preferences\": [], \"recall_rules\": [{\"kind\": \"keyword\", \"value\": \"机器人\"}]}".parse_json()
+    draft.intent_kind = "news"
+    let setup_error = topic_confirm(draft)
+    fs.write("setup.txt", setup_error)
+    if setup_error != "" { return }
+    let topic = topic_records.topics[0]
+    let row = news_normalize({title: "机器人能力更新（固定测试）" summary: "机器人能力仍需验证。" link: "https://www.example.com/robot"}, news_sources[0], time_now())
+    app_feed_rows = [row]
+    repair_snapshot = tracking_snapshot([row], {topics: [topic] schedules: [] legacy_interests: [] omitted_targets: 0})
+    repair_snapshot.evidence[0].paragraphs = [{paragraph_id: "p1" text: "机器人能力仍需验证。"}]
+    let insight = {target_type: "topic" target_id: topic.topic_id target_version: topic.version issue_key: "robot-capability" change_kind: "new" summary: "机器人能力更新，适用范围待验证。" decision_effect: "watch" next_step: nil material_change: "" uncertainties: ["适用范围未知"] evidence_ids: [row.news_id] evidence_refs: [{news_id: row.news_id paragraph_id: "p1" quote: "机器人能力仍需验证。"}] compared_run_id: nil reschedule: nil}
+    repair_good = {schema_version: 2 outcome: "update" explanation: "固定测试，依据摘要与段落。" items: [{news_id: row.news_id relevance: "related" topic_ids: [topic.topic_id] legacy_interest_ids: [] why_related: "涉及机器人" evidence_ids: [row.news_id] uncertainties: [] schedule_impacts: []}] insights: [insight]}
+    repair_assert(tracking_parse(repair_good.to_json(), "tracking_update", repair_snapshot).valid, "baseline v2.2 fixture valid")
+    let payload = tracking_prompt_snapshot(repair_snapshot)
+    repair_assert(payload.evidence[0].news_id == "E1" && payload.evidence[0].can_quote_body && payload.evidence[0].allowed_paragraph_ids[0] == "p1", "model receives scoped short news label and paragraph allowlist")
+    repair_assert(repair_snapshot.evidence[0].news_id == row.news_id, "payload projection does not mutate native news IDs")
+    let labeled = repair_good.to_json().parse_json()
+    labeled.items[0].news_id = "E1" labeled.items[0].evidence_ids = ["E1"]
+    labeled.insights[0].evidence_ids = ["E1"] labeled.insights[0].evidence_refs[0].news_id = "E1"
+    let expanded = tracking_parse(labeled.to_json(), "tracking_update", repair_snapshot)
+    repair_assert(expanded.valid && expanded.result.items[0].news_id == row.news_id && expanded.result.insights[0].evidence_refs[0].news_id == row.news_id, "short labels expand before strict validation and publication")
+    labeled.insights[0].evidence_ids = ["E99"]
+    repair_assert(!tracking_parse(labeled.to_json(), "tracking_update", repair_snapshot).valid, "unknown label is rejected rather than guessed")
+    let wrong = repair_good.to_json().parse_json() wrong.insights[0].material_change = nil
+    repair_assert(tracking_parse(wrong.to_json(), "tracking_update", repair_snapshot).error == "invalid_schema", "material-change formatting is not mislabeled as reference failure")
+    wrong = repair_good.to_json().parse_json() wrong.insights[0].uncertainties = nil
+    repair_assert(tracking_parse(wrong.to_json(), "tracking_update", repair_snapshot).error == "invalid_schema", "uncertainty formatting is not mislabeled as reference failure")
+    wrong = repair_good.to_json().parse_json() wrong.insights[0].evidence_refs[0].paragraph_id = "p9"
+    repair_assert(regex("paragraph_id").test(tracking_parse(wrong.to_json(), "tracking_update", repair_snapshot).message), "bad paragraph ID gets precise correction feedback")
+    let summary_only = repair_snapshot.to_json().parse_json() summary_only.evidence[0].paragraphs = []
+    repair_assert(regex("没有提供正文").test(tracking_parse(repair_good.to_json(), "tracking_update", summary_only).message), "summary-only news cannot fabricate a body citation")
+    wrong = repair_good.to_json().parse_json() wrong.insights[0].evidence_refs = []
+    repair_assert(tracking_parse(wrong.to_json(), "tracking_update", summary_only).valid, "honest summary-only result with real evidence IDs needs no invented body citation")
+    wrong.insights[0].evidence_ids = []
+    repair_assert(!tracking_parse(wrong.to_json(), "tracking_update", summary_only).valid, "empty evidence IDs still rejected")
+    check_states = {schema_version: 1 revision: 0 items: [{target_type: "topic" target_id: topic.topic_id target_version: 1 watermark: 0 attempt_at: 1 status: "failed" category: "invalid_reference"}]}
+    repair_assert(check_states_valid(check_states) && regex("尚未完成首次成功检查").test(target_check_label("topic", topic.topic_id, 1)), "legacy status stays readable and explains never-successful checks")
+    let long = "" for i in 601 { long = long + "字" }
+    let oversized = repair_good.to_json().parse_json() oversized.insights[0].summary = long
+    repair_assert(regex("600").test(tracking_parse(oversized.to_json(), "tracking_update", repair_snapshot).message), "Chinese summary length error is precise")
+    analysis_host_has = fn(name){ true }
+    analysis_host_request = fn(name, data, callback){
+        if name != "octos.turn.start" { callback({is_ok: true data: {}}) return }
+        repair_calls = repair_calls + 1
+        let output = repair_good.to_json().parse_json()
+        output.items[0].news_id = "E1" output.items[0].evidence_ids = ["E1"]
+        output.insights[0].evidence_ids = ["E1"] output.insights[0].evidence_refs[0].news_id = "E1"
+        if repair_calls == 1 || repair_case == 5 || repair_case == 9 {
+            if repair_case == 2 { output.insights[0].summary = long }
+            else if repair_case == 3 { output.insights[0].issue_key = nil }
+            else if repair_case == 4 || repair_case == 9 { output.insights[0].evidence_refs[0].quote = "不存在的原文" }
+            else { output.insights[0].summary = nil }
+        }
+        if repair_calls == 2 {
+            repair_assert(regex("OUTPUT CORRECTION").test(data.text), "correction prompt includes validator feedback: " + repair_case)
+            if repair_case == 7 { start_timeout(0.02, || analysis_cancel()) }
+            if repair_case == 8 { start_timeout(0.02, || analysis_timeout()) }
+        }
+        start_timeout(0.15, || {
+            callback({is_ok: true data: {text: output.to_json()}})
+            if repair_case == 6 { repair_current = false }
+        })
+    }
+    agent_progress_handler = fn(stage) {}
+    repair_next()
+})

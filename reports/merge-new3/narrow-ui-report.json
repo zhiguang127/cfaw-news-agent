@@ -1,0 +1,22 @@
+{
+  "passed": [
+    {
+      "restored_host_filling_layout": [
+        20,
+        132,
+        390,
+        708
+      ]
+    },
+    "merged image-card branch renders; search above feed, navigation below; no Chinese category tab",
+    "schedule page hides news refresh; completed project discussion can be cancelled and versioned",
+    "paused topic can be cancelled; hidden immediately and versioned on disk",
+    "return-to-top button is at the bottom right",
+    "mouse jitter before long press, continuous drag, edge snap, no accidental open, persisted position",
+    "short click opens and close returns to moved position",
+    "bookmark categories filter independently",
+    "visible refresh starts requests, second click cancels",
+    "fresh native process restores saved orb position",
+    "cancelled schedules and topics stay hidden after native restart"
+  ]
+}

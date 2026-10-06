@@ -1,0 +1,15 @@
+{
+  "checks": [
+    "failed-source refresh completes without partial-source banner; Chinese category absent, article retained",
+    "bookmark category removed; original Chinese bookmark remains under all",
+    "tracking entry shows current change and pending suggestion, excludes historical and handled records",
+    "menu entry also excludes archives through page bottom; backing record counts unchanged"
+  ],
+  "records": {
+    "analyses": 1,
+    "suggestions": 2,
+    "runs": 1,
+    "actions": 1,
+    "bookmarks": 1
+  }
+}

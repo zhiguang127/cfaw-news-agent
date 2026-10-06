@@ -226,13 +226,24 @@ fn tracking_prompt_snapshot(snapshot){
         topic.original_input = nil topic.supplement = nil topic.recall_rules = nil
         topic.created_at = nil topic.updated_at = nil
     }
-    for evidence in payload.evidence { evidence.content_key = nil evidence.body_key = nil }
+    payload.reference_format = "evidence-labels-v1"
+    for i evidence in payload.evidence {
+        evidence.content_key = nil evidence.body_key = nil
+        evidence.news_id = "E" + (i + 1)
+        evidence.allowed_paragraph_ids = []
+        if record_array(evidence["paragraphs"]) {
+            for paragraph in evidence.paragraphs { evidence.allowed_paragraph_ids.push(paragraph.paragraph_id) }
+        }
+        evidence.can_quote_body = evidence.allowed_paragraph_ids.len() > 0
+    }
     payload.reschedule_enabled = tracking_config.enable_reschedule_proposals
     for previous in payload.previous_by_target {
         for insight in previous.insights {
             insight.summary_truncated = insight.summary.to_chars().len() > 250
             insight.summary = bm25_prefix(insight.summary, 250)
             insight.uncertainties = nil insight.evidence_refs = nil insight.next_step = nil insight.reschedule = nil
+            // Previous-run evidence is not a current candidate citation pool.
+            insight.evidence_ids = nil
         }
     }
     // Native decisions retain full fact/version checks; the model receives the
@@ -305,7 +316,7 @@ fn tracking_start_candidates(candidates, targets){
     let snapshot = tracking_snapshot(candidates.rows, targets) snapshot.omitted_candidates = candidates.omitted_candidates
     // Shrink whole records, never truncate serialized JSON. Explicit omissions.
     let payload = tracking_prompt_snapshot(snapshot)
-    while (tracking_prompt + payload.to_json()).to_bytes().len() > tracking_config.max_prompt_bytes && snapshot.evidence.len() > 1 {
+    while (tracking_prompt + payload.to_json()).to_bytes().len() > tracking_config.max_prompt_bytes - 2048 && snapshot.evidence.len() > 1 {
         snapshot.evidence.pop() snapshot.omitted_candidates = snapshot.omitted_candidates + 1 payload = tracking_prompt_snapshot(snapshot)
     }
     let key = tracking_input_key(snapshot)
@@ -331,7 +342,7 @@ fn tracking_start_candidates(candidates, targets){
             if error != "" { tracking_status = "failed" tracking_message = error notice(error) analysis_state = "failed" analysis_error_category = "storage_error" }
             else { tracking_status = reply.result.outcome tracking_message = reply.result.explanation notice("") }
         }
-        check_states_record(snapshot, if reply.success && tracking_pending_run == nil {"checked"} else {"failed"}, analysis_error_category, reply.success && tracking_pending_run == nil)
+        check_states_record_reason(snapshot, if reply.success && tracking_pending_run == nil {"checked"} else {"failed"}, analysis_error_category, reply.success && tracking_pending_run == nil, if reply.success {tracking_message} else {reply.error})
         tracking_ui_update()
     })
     if error != "" { tracking_status = "failed" tracking_message = error }

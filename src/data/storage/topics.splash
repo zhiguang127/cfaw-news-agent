@@ -8,10 +8,11 @@ let topic_warning = ""
 let tracking_storage_write = |path, text| fs.write(path, text)
 fn topic_document_valid(value){
     if !record_object(value) || value["schema_version"] != 2 || !record_number(value["revision"]) { return false }
-    if !record_array(value["topics"]) || value["topics"].len() > tracking_config.max_topics || !topic_draft_valid(value["draft"]) { return false }
+    if !record_array(value["topics"]) || value["topics"].len() > tracking_config.max_topic_records || !topic_draft_valid(value["draft"]) { return false }
     if !record_array(value["decisions"]) || value["decisions"].len() > tracking_config.max_decisions { return false }
     let ids = {}
     for item in value["topics"] { if !topic_valid(item) || ids[item.topic_id] == true { return false } ids[item.topic_id] = true }
+    if topic_visible_count(value.topics) > tracking_config.max_topics { return false }
     for item in value["decisions"] {
         if item["kind"] == "insight" {
             if !record_contains(["topic" "schedule"], item["target_type"]) || !tracking_text(item["target_id"], 200) || !record_number(item["target_version"]) || !tracking_text(item["issue_key"], 120) || !record_contains(["watch" "handled" "dismissed"], item["state"]) || !record_number(item["decided_at"]) || !tracking_strings(item["evidence_facts"], 8, 16000) { return false }
@@ -91,6 +92,11 @@ fn topics_commit(next){
     error
 }
 fn topic_find(id){ for item in topic_records.topics { if item.topic_id == id { return item } } nil }
+fn topic_visible_count(topics){
+    let count = 0
+    for item in topics { if item.status != "cancelled" { count = count + 1 } }
+    count
+}
 fn topic_new_draft(id){
     let draft = {draft_id: "draft-" + time_now() version: 1 target_topic_id: nil target_version: nil
         original_input: "" supplement: "" understanding: nil state: "editing" question: "" origin_reminder_id: nil
@@ -121,8 +127,12 @@ fn topic_confirm(draft){
     let current = topic_find(draft.target_topic_id)
     if draft.target_topic_id != nil {
         if current == nil { return "原关注已不存在，请重新打开" }
+        if current.status == "cancelled" { return "原关注已取消，请将输入作为新关注保存" }
         if current.version != draft.target_version { return "原关注版本已变化，请重新打开修改" }
-    } else if topic_records.topics.len() >= tracking_config.max_topics { return "已达到20个专题上限，原关注保留" }
+    } else {
+        if topic_visible_count(topic_records.topics) >= tracking_config.max_topics { return "已达到20个专题上限，原关注保留" }
+        if topic_records.topics.len() >= tracking_config.max_topic_records { return "本地关注记录已达上限，原记录保留" }
+    }
     let next = topic_records.to_json().parse_json()
     let topic = draft.understanding.to_json().parse_json()
     topic.topic_id = "topic-" + draft.draft_id topic.version = 1

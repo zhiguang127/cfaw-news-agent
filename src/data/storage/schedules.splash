@@ -154,7 +154,7 @@ fn schedule_create(title, start, end, timezone, suggestion_id){
     schedule_create_details(title, "", "", start, end, timezone, suggestion_id)
 }
 fn schedule_create_details(title, content, location, start, end, timezone, suggestion_id){
-    schedule_create_options(title, content, location, start, end, timezone, suggestion_id, false)
+    schedule_create_options(title, content, location, start, end, timezone, suggestion_id, true)
 }
 fn schedule_create_options(title, content, location, start, end, timezone, suggestion_id, allow){
     schedule_create_record(title, content, location, start, end, timezone, suggestion_id, allow, nil)

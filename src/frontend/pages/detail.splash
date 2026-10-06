@@ -1,12 +1,15 @@
-let StoryPage = View{visible: false width: Fill height: Fill flow: Down
-    story_content := ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 14 on_render: || {
+let StoryContent = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{left: 20 right: 20 top: 24 bottom: 40} align: Align{x: 0.5} on_render: || {
         if reading != nil {
-            Small{text: news_meta(reading)}
-            Heading{text: reading.title}
-            if reading["demo_data"] == true { Small{text: "演示缓存 · 非实时新闻" draw_text.color: accent} }
+            reader_column := View{width: Fill max_width: 720 height: Fit flow: Down spacing: 18
+            ReaderCaption{text: news_meta(reading)}
+            Heading{text: reading.title draw_text.text_style.font_size: 26 draw_text.text_style.line_spacing: 1.3}
+            if article_original_allowed(reading.source_url) {
+                original_article := LinkLabel{text: "打开图文原文" url: reading.source_url open_in_place: false
+                    draw_text.color: accent draw_text.text_style.font_size: 14}
+            }
             if reading.evidence_kind == "hn_submission" { Small{text: "HN 提交记录；提交时间不等于原文发布时间"} }
-            else if article_state.state == "ready" { Small{text: "来源网页正文 · 阅读模式" draw_text.color: accent} }
-            else { Small{text: "来源提供的新闻摘要"} }
+            else if article_state.state == "ready" { ReaderCaption{text: "来源网页 · 图文阅读模式" draw_text.color: accent} }
+            else if reading.summary != "" { ReaderCaption{text: "来源提供的新闻摘要"} }
             Divider{}
             if insight_evidence_view != nil {
                 if insight_evidence_view.news_id == reading.news_id {
@@ -30,17 +33,39 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
             if article_state.state == "loading" { Small{text: "正在读取来源网页正文…" draw_text.color: accent} }
             if article_state.error != "" { Small{text: article_state.error} }
             if article_state.state == "ready" {
-                for paragraph in article_state.paragraphs { Text{text: paragraph draw_text.text_style.font_size: 16 draw_text.text_style.line_spacing: 1.55} }
-                if article_state.truncated { Small{text: "正文过长，阅读模式仅展示部分段落。"} }
-                Small{text: "阅读模式可能省略原网页的图片、表格和其他内容。Agent 使用的证据以分析中的段落引用为准。"}
+                if article_state.blocks.len() > 0 {
+                    for block in article_state.blocks {
+                        if block.kind == "image" {
+                            View{width: Fill height: Fit flow: Down spacing: 7
+                                if block.state == "ready" { ReaderImage{src: block.resource} }
+                                else { View{width: Fill height: 150 show_bg: true draw_bg.color: soft align: Center
+                                    if block.state == "loading" { ReaderCaption{width: Fit text: "正在加载原文配图…"} }
+                                    else { ReaderCaption{width: Fill text: "配图暂未加载，可打开图文原文查看。"} }
+                                } }
+                                if block.text != "" { ReaderCaption{text: block.text} }
+                            }
+                        } else if block.kind == "heading" { ReaderHeading{text: block.text} }
+                        else if block.kind == "list" { View{width: Fill height: Fit flow: Right spacing: 10
+                            ReaderText{width: 14 text: "•"} ReaderText{text: block.text}
+                        } }
+                        else if block.kind == "quote" { View{width: Fill height: Fit padding: 14 show_bg: true draw_bg.color: soft
+                            ReaderText{text: block.text draw_text.color: secondary}
+                        } }
+                        else if block.kind == "caption" { ReaderCaption{text: block.text} }
+                        else { ReaderParagraph{text: block.text} }
+                    }
+                } else { for paragraph in article_state.paragraphs { ReaderParagraph{text: paragraph} } }
+                if article_state.truncated { ReaderCaption{text: "阅读模式展示部分内容；完整文章请打开图文原文。"} }
             } else {
-            if reading.summary == "" { Text{text: "来源未提供摘要，请通过条目链接查看。" draw_text.color: secondary} }
-            else { Text{text: reading.summary draw_text.text_style.font_size: 16 draw_text.text_style.line_spacing: 1.55} }
+            if reading.summary == "" { ReaderText{text: "此来源未提供摘要。点击上方“打开图文原文”查看文章和图片。" draw_text.color: secondary} }
+            else { ReaderParagraph{text: reading.summary} }
             }
             Small{text: "新闻列表抓取于 " + age_label(reading.retrieved_at)}
-            Section{text: "原文地址"}
+            ReaderCaption{text: "原文地址（可复制）"}
             Search{text: reading.source_url empty_text: "可复制原文地址"}
-            if article_state.state == "failed" { LinkButton{text: "重试读取正文" on_click: || article_load(reading, || ui.story_content.render())} }
+            if article_state.state == "failed" || (article_state.state == "unavailable" && article_url_allowed(reading.source_url)) {
+                LinkButton{text: "重试读取正文" on_click: || article_load(reading, || ui.story_content.render())}
+            }
             if news_source(reading.source_id) != nil {
                 Small{text: "抓取来源：" + news_source(reading.source_id).label}
                 if news_source(reading.source_id).kind == "google" { Small{text: "通过 Google News 聚合；条目可能保留聚合跳转链接。"} }
@@ -62,12 +87,6 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
             let tracked = tracking_latest_item(reading)
             if tracked == nil {
                 Small{text: "尚无当前有效的 Agent 追踪结果；旧结果可能已过期。"}
-            let latest = history_latest_analysis(reading.news_id)
-            if latest != nil {
-                Small{text: "最近分析：" + history_outcome_label(latest.outcome) + " · " + age_label(latest.created_at)}
-                Text{text: latest.explanation}
-                if latest["session_unsaved"] == true { Small{text: "本次结果尚未完整保存，请到建议页重试保存。" draw_text.color: accent} }
-            }
             } else {
                 Text{text: tracked.item.why_related}
                 let relevance_label = "关系尚不确定"
@@ -104,14 +123,17 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
                 }
             }
             Divider{}
-            Section{text: "历史分析 / 新检查"}
+            Section{text: "分析检查"}
             Small{text: "本轮检查关注关系及已有日程影响；提醒不修改日程。"}
             agent_status := Small{text: analysis_status_for_news(reading.news_id)}
-            let saved_suggestions = history_suggestions_for_news(reading.news_id)
+            let saved_suggestions = []
+            for suggestion in history_suggestions_for_news(reading.news_id) {
+                if suggestion.state == "pending" || suggestion.state == "needs_review" { saved_suggestions.push(suggestion) }
+            }
             if saved_suggestions.len() > 0 {
                 Divider{}
                 Section{text: "分析与建议"}
-                if saved_suggestions.len() > 30 { Small{text: "显示最近30条建议；较早待处理项可从菜单的分析与建议入口打开。"} }
+                if saved_suggestions.len() > 30 { Small{text: "显示30条待处理建议；其余待处理项可从菜单的分析与建议入口打开。"} }
                 for i saved in saved_suggestions {
                     if i >= saved_suggestions.len() - 30 || saved.suggestion_id == suggestion_focus_id {
                     Small{text: history_state_label(saved.state)}
@@ -165,6 +187,10 @@ let StoryPage = View{visible: false width: Fill height: Fill flow: Down
                 if records_is_bookmarked(reading.news_id) { SecondaryButton{text: "已收藏" on_click: || toggle_save(reading)} }
                 else { SecondaryButton{text: "收藏" on_click: || toggle_save(reading)} }
             }
+            }
         }
     }}
+let StoryPage = View{visible: false width: Fill height: Fill flow: Down
+    story_content := StoryContent{}
+    on_render: || { story_content := StoryContent{} }
 }

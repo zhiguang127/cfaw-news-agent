@@ -26,6 +26,14 @@ fn test_run(){
     test_assert(rows[0].published_at == 1790755200 && rows[1].published_at == nil, "published date and unknown date preserved")
     test_assert(rows[0].summary == "Fixture summary only.", "RSS HTML summary stripped")
     test_assert(rows[0].news_id == "https://example.org/first", "fragment removed from stable identity")
+    let imaged = news_normalize({title: "Image fixture" link: "https://example.org/image" image: "https://ichef.bbci.co.uk/fixture.png"}, source, 100)
+    test_assert(news_record_valid(imaged) && imaged.image_url == "https://ichef.bbci.co.uk/fixture.png", "optional HTTPS thumbnail preserved and validated")
+    let unsafe_image = news_normalize({title: "Image fixture" link: "https://example.org/image" image: "http://example.org/fixture.png"}, source, 100)
+    test_assert(news_record_valid(unsafe_image) && unsafe_image.image_url == nil, "insecure thumbnail omitted without discarding article")
+    imaged.image_url = 3
+    test_assert(!news_record_valid(imaged), "invalid stored thumbnail type rejected")
+    let legacy_image_row = test_clone(rows[0]) legacy_image_row.image_url = nil
+    test_assert(news_record_valid(legacy_image_row), "legacy news without thumbnail remains valid")
     test_assert(!news_record_valid({}) && news_normalize({title: "Incomplete fixture"}, source, 100) == nil, "incomplete records refused without crashing")
     test_assert(!records_document_valid({schema_version: 1 items: rows}, "bookmarks"), "bookmark without saved timestamp refused")
     let atom = news_parse(fixture_atom, source, 100)
@@ -35,17 +43,27 @@ fn test_run(){
     test_assert(article_extract("<html><p>Cookie consent only</p></html>").paragraphs.len() == 0, "reader refuses non-article page text")
     test_assert(article_url_allowed("https://www.bbc.com/news/fixture") && !article_url_allowed("https://www.bbc.com@evil.example/fixture") && !article_url_allowed("javascript:alert(1)"), "reader confines source pages to configured HTTPS hosts")
     let old_article_request = article_http_request
+    // The standalone data suite omits app/tracking; use its data fingerprint
+    // at the reader cache boundary while exercising stale/duplicate replies.
+    let old_article_key = analysis_article_key
+    analysis_article_key = fn(row){ tracking_evidence_key(row) }
     let article_replies = []
     article_http_request = fn(url, redirects, callback){ article_replies.push(callback) }
     let obsolete_article_callbacks = 0
-    article_load({source_url: "https://www.bbc.com/news/first"}, || { obsolete_article_callbacks = obsolete_article_callbacks + 1 })
-    article_load({source_url: "https://www.bbc.com/news/second"}, || {})
+    article_load(news_normalize({title: "First reader fixture" link: "https://www.bbc.com/news/first"}, source, 100), || { obsolete_article_callbacks = obsolete_article_callbacks + 1 })
+    article_load(news_normalize({title: "Second reader fixture" link: "https://www.bbc.com/news/second"}, source, 100), || {})
     article_replies[0]({success: true body: "<article><p>Old article</p></article>"})
     test_assert(article_state.state == "loading" && article_state.paragraphs.len() == 0 && obsolete_article_callbacks == 0, "late article cannot replace a newer reader request")
     article_replies[1]({success: true body: "<article><p>Current article</p></article>"})
     article_replies[1]({success: true body: "<article><p>Duplicate callback</p></article>"})
     test_assert(article_state.paragraphs[0] == "Current article", "reader ignores duplicate completions")
+    test_assert(news_http_verification({"x-amzn-waf-action": ["captcha"]}) && news_http_verification({"X-Amzn-Waf-Action": ["challenge"]}), "AWS verification headers recognized for captcha and challenge")
+    test_assert(!news_http_verification({}) && !news_http_verification(nil) && !news_http_verification({"x-amzn-waf-action": ["other"]}), "ordinary responses not mistaken for verification")
+    article_load(news_normalize({title: "Protected reader fixture" link: "https://arstechnica.com/protected"}, source, 100), || {})
+    article_replies[2]({success: false error: "Verification" category: "verification"})
+    test_assert(article_state.state == "unavailable" && article_state.paragraphs.len() == 0 && article_state.error == "网站要求人机验证，应用暂时无法读取正文。请点击“打开图文原文”在浏览器阅读。", "verification displays browser fallback without fabricated body")
     article_http_request = old_article_request
+    analysis_article_key = old_article_key
     test_stage = "HN JSON decode"
     let hn_data = fixture_hn.parse_json()
     test_assert(record_object(hn_data) && record_array(hn_data.hits), "HN JSON object and hits validated")
@@ -134,6 +152,21 @@ fn test_run(){
     start_timeout(0.02, || {
     test_stage = "refresh cancellation and callbacks"
     feed_load_cache()
+    let demo = test_clone(rows[0]) demo.demo_data = true
+    fs.write("news_cache_v1_bbc.json", {schema_version: 1 source_id: "bbc" retrieved_at: 100 items: [demo rows[1]]}.to_json())
+    feed_read_cache(source)
+    test_assert(feed_rows_by_source["bbc"].len() == 1 && feed_rows_by_source["bbc"][0].news_id == rows[1].news_id, "mixed cache removes demo and preserves real news")
+    test_assert(fs.read("news_cache_v1_bbc.json").parse_json().items.len() == 1, "clean cache persists after reload")
+    fs.write("news_cache_v1_bbc.json", {schema_version: 1 source_id: "bbc" retrieved_at: 100 items: [demo]}.to_json())
+    feed_read_cache(source)
+    test_assert(feed_rows_by_source["bbc"].len() == 0 && feed_refresh_needed_ids(["bbc"], 101).len() == 1, "demo-only cache is empty and requests real refresh")
+    test_assert(news_merge([[demo rows[1]]]).len() == 1, "merge cannot expose demo news")
+    let saved_demo = test_clone(demo) saved_demo.bookmarked_at = 1
+    let saved_real = test_clone(rows[1]) saved_real.bookmarked_at = 1
+    fs.write(bookmark_file.path, {schema_version: 1 items: [saved_demo saved_real]}.to_json())
+    fs.write(bookmark_file.path + ".backup", {schema_version: 1 items: [saved_demo]}.to_json())
+    records_load()
+    test_assert(user_bookmarks.len() == 1 && fs.read(bookmark_file.path).parse_json().items.len() == 1 && fs.read(bookmark_file.path + ".backup").parse_json().items.len() == 0, "demo bookmarks and recovery backup cleaned with real bookmark preserved")
     let requests = []
     let request = fn(url, redirects, callback){ requests.push({url: url callback: callback}) }
     let updates = 0

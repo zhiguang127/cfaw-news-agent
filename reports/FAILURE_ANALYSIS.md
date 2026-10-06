@@ -4,7 +4,7 @@
 
 当前证据指向四条问题路径：MSDF 字体模式触发整窗停止绘制、单次刷新处理超过 64 ms、脚本堆预算耗尽后的回调连锁错误，以及快速切页时 Windows D3D11 缓冲区计账滞留后静默跳过绘制。第 7 节记录最新缓冲区复现和本地宿主修补；各自的验证范围不能合并为所有白屏已根治或真实导入流程已验收。
 
-本报告记录本次诊断结果；当前运行方式和验收状态分别以 [README](../README.md)、[Windows 开发说明](../docs/windows-development.md) 和 [验收记录](../docs/acceptance.md) 为准。上游问题的可审阅英文草稿见 [RINX_WHITE_SCREEN_ISSUE.md](RINX_WHITE_SCREEN_ISSUE.md)，尚未发布。
+本报告记录本次诊断结果；当前运行方式和验收状态分别以 [README](../README.md)、[Windows 开发说明](../docs/windows-development.md) 和 [验收记录](../docs/acceptance.md) 为准。
 
 ## 1. 整个宿主窗口变白：MSDF 路径是已验证触发条件
 
@@ -48,7 +48,7 @@ Windows 临时入口 [rinx_sdf.rs](../scripts/native/rinx_sdf.rs) 使用 `rinx::
 
 应用目前的临时处理是在 `render_feed()` 中合并重复请求，安排一个短定时器；定时器先执行 `mod.gc.run()`，随后调用 `render_feed_now()`，保留 32 MiB 上限。该接口在目标 Splash isolate 中可用。选择独立事件是为了避免在列表生成中途，或同一 UI 回调仍有临时待处理参数时同步收集。当前线程状态、Widget 的 source 与函数引用由 VM 标记根保留。这是应用侧回收时机绕过，不是宿主 GC 根因补丁，也不能保证任意超过额度的真实存活数据都可运行。
 
-[feed_runtime.splash](../tests/scenarios/feed_runtime.splash) 已扩展为 12 轮满容量刷新，每轮 13 个启用来源、最终保留 240 条新闻；还检查来源合并、失败保留缓存、取消／迟到结果和重复新闻的未读状态。[测试报告](../.test-state/runtime-102207b54f35/combined-report.json) 为 **34 通过、0 失败**。最新参考宿主的截图交互记录位于 `.test-state/runtime-102207b54f35/`；它不能替代目标 Rinx 实测。
+[feed_runtime.splash](../tests/scenarios/feed_runtime.splash) 已扩展为 12 轮满容量刷新，每轮 13 个启用来源、最终保留 240 条新闻；还检查来源合并、失败保留缓存、取消／迟到结果和重复新闻的未读状态。测试报告（本地历史证据，未随仓库分发） 为 **34 通过、0 失败**。最新参考宿主的截图交互记录位于 `.test-state/runtime-102207b54f35/`；它不能替代目标 Rinx 实测。
 
 修改 GC 时机后没有重启 Rinx 做实机复测，遵照用户明确不需要重新启动 GUI 验证的要求。固定输入回归通过不等于实时抓取、长时间驻留或整个宿主渲染问题全部通过。
 
@@ -62,7 +62,7 @@ Windows 临时入口 [rinx_sdf.rs](../scripts/native/rinx_sdf.rs) 使用 `rinx::
 
 英文 issue 文件仅为待审阅草稿，没有发送或创建上游 issue。可分享材料为原始 Notes bundle、公开标题构成的 `notes.json` 和必要的正常／纯白 PNG。诊断产物留在 Git 忽略目录；不复制完整 Rinx 日志、登录状态、Matrix 账号字段、模型配置或用户数据到报告或 issue 附件。
 
-最短原始复现对照为 [25 秒正常截图](../.test-state/rinx-import-a57080da4a06/run-25.png) 与 [40 秒纯白截图](../.test-state/rinx-import-a57080da4a06/run-40.png)。Rinx 1.1.0 对照为 [25 秒正常](../.test-state/rinx-import-6b6fe998ab32/run-25.png) 与 [40 秒纯白](../.test-state/rinx-import-6b6fe998ab32/run-40.png)。这些链接指向本次工作区的本地产物，不表示附件已发布或上传。
+最短原始复现对照为 25 秒正常截图（本地历史证据，未随仓库分发） 与 40 秒纯白截图（本地历史证据，未随仓库分发）。Rinx 1.1.0 对照为 25 秒正常（本地历史证据，未随仓库分发） 与 40 秒纯白（本地历史证据，未随仓库分发）。这些链接指向本次工作区的本地产物，不表示附件已发布或上传。
 
 ## 6. 快速切页后内容区变白（2026-10-04）
 

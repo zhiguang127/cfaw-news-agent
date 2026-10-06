@@ -35,13 +35,13 @@ let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
         Section{text: "我的关注"}
         interest_list := View{width: Fill height: Fit flow: Down spacing: 4 on_render: || {
             let has_topics = false
-            for topic in topic_records.topics { if topic_is_user_record(topic) { has_topics = true } }
+            for topic in topic_records.topics { if topic_is_user_record(topic) && topic.status != "cancelled" { has_topics = true } }
             if user_interests.len() == 0 && !has_topics { Small{text: "尚未添加关注。也可在新闻条目上关注来源。"} }
             for topic in topic_records.topics {
-                if !topic_is_user_record(topic) { continue }
+                if !topic_is_user_record(topic) || topic.status == "cancelled" { continue }
                 Box{
                     Section{text: topic.title draw_text.color: accent}
-                    if topic["demo_preset"] == true { Small{text: "演示预设 · 可修改或暂停"} }
+                    if topic["demo_preset"] == true { Small{text: "演示预设 · 可修改、暂停或取消"} }
                     else if topic["intent_kind"] == "goal" { Small{text: "目标关注 · 围绕下一步决策追踪"} }
                     else { Small{text: "新闻关注 · 持续了解话题"} }
                     if topic.purpose != "" { Text{text: topic.purpose} }
@@ -54,6 +54,7 @@ let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
                         QuietButton{text: "修改" on_click: || intent_begin(topic.topic_id)}
                         if topic.status == "active" { QuietButton{text: "暂停" on_click: || topic_toggle_pause(topic.topic_id, topic.version, "paused")} }
                         else { QuietButton{text: "恢复" on_click: || topic_toggle_pause(topic.topic_id, topic.version, "active")} }
+                        QuietButton{text: "取消关注" on_click: || topic_toggle_pause(topic.topic_id, topic.version, "cancelled")}
                     }
                 }
                 Divider{}

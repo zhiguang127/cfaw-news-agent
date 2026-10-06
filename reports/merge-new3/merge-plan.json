@@ -1,0 +1,542 @@
+{
+  "base_commit": "bce7ede3616e87ec664bfdca1ec3bed25c4f3c34",
+  "original_new3_backup": "D:\\Hackathon_agenticapp\\workspace\\merge-backups\\new.3-before-merge-20261006-202248.zip",
+  "changes": [
+    {
+      "path": ".editorconfig",
+      "action": "copy B addition"
+    },
+    {
+      "path": ".gitattributes",
+      "action": "copy B addition"
+    },
+    {
+      "path": "README.md",
+      "action": "copy B change"
+    },
+    {
+      "path": "docs/b-delivery.md",
+      "action": "copy B change"
+    },
+    {
+      "path": "docs/competition-illustrated-introduction-plan.md",
+      "action": "copy B addition"
+    },
+    {
+      "path": "docs/intent-context-fix.md",
+      "action": "copy B addition"
+    },
+    {
+      "path": "docs/mobile-fixes.md",
+      "action": "copy B addition"
+    },
+    {
+      "path": "docs/presentation-cleanup.md",
+      "action": "copy B addition"
+    },
+    {
+      "path": "docs/reader-improvements.md",
+      "action": "copy B addition"
+    },
+    {
+      "path": "docs/tracking-analysis-fix.md",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/cancellation-followup/article-smoke.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/cancellation-followup/host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/cancellation-followup/report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/cancellation-followup/restart.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/cancellation-followup/screen.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/intent-context-followup/host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/intent-context-followup/intent.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/intent-context-followup/manage-tracking.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/intent-context-followup/real-edit-rejected.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/intent-context-followup/report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/intent-context-followup/tracking-domain-host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/intent-context-followup/tracking-domain-report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/intent-context-followup/tracking.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/intent-recovery-followup/context-regression-report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/intent-recovery-followup/host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/intent-recovery-followup/new-topic.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/intent-recovery-followup/recovered.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/intent-recovery-followup/report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/intent-recovery-followup/version-conflict.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/launcher-fix.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/live-benchmark-progress.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/mobile-fixes/360x860-host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/mobile-fixes/360x860-report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/mobile-fixes/360x860-restart.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/mobile-fixes/360x860-screen.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/mobile-fixes/800x1050-host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/mobile-fixes/800x1050-report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/mobile-fixes/800x1050-restart.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/mobile-fixes/800x1050-screen.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/430x860-live/host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/430x860-live/reader.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/430x860-live/report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/430x860-zh/fallback.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/430x860-zh/host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/430x860-zh/reader.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/430x860-zh/report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/430x860/fallback.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/430x860/host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/430x860/reader.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/430x860/report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/800x1050/fallback.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/800x1050/host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/800x1050/reader.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/800x1050/report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/host-startup.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-alignment-followup/verification.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-followup/430x860-live/host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-followup/430x860-live/reader.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-followup/430x860-live/report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-followup/430x860/fallback.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-followup/430x860/host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-followup/430x860/reader.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-followup/430x860/report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-followup/800x1050/fallback.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-followup/800x1050/host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-followup/800x1050/reader.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-followup/800x1050/report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/reader-followup/package-check.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/results-visibility-followup/bookmarks.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/results-visibility-followup/feed.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/results-visibility-followup/host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/results-visibility-followup/menu-results.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/results-visibility-followup/report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/results-visibility-followup/tracking-results.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/schedule-default-followup/host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/schedule-default-followup/insights-report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/schedule-default-followup/reader/host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/schedule-default-followup/reader/report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/schedule-default-followup/report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/schedule-default-followup/selected.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/schedule-default-followup/unselected.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/status.json",
+      "action": "copy B change"
+    },
+    {
+      "path": "reports/b-delivery/tracking-repair-followup/insights-report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/tracking-repair-followup/native-repair-report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/tracking-repair-followup/verification.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/ui-followup/360x860/host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/ui-followup/360x860/report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/ui-followup/360x860/restart.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/ui-followup/360x860/screen.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/ui-followup/800x1050/host.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/ui-followup/800x1050/report.json",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/ui-followup/800x1050/restart.log",
+      "action": "copy B addition"
+    },
+    {
+      "path": "reports/b-delivery/ui-followup/800x1050/screen.png",
+      "action": "copy B addition"
+    },
+    {
+      "path": "scripts/assemble.py",
+      "action": "copy B change"
+    },
+    {
+      "path": "scripts/build_rinx_main_reader.ps1",
+      "action": "copy B addition"
+    },
+    {
+      "path": "scripts/launch_mobile_rinx.ps1",
+      "action": "copy B addition"
+    },
+    {
+      "path": "scripts/patch_reader_host.py",
+      "action": "copy B addition"
+    },
+    {
+      "path": "scripts/test_intent_context.py",
+      "action": "copy B addition"
+    },
+    {
+      "path": "scripts/test_intent_recovery.py",
+      "action": "copy B addition"
+    },
+    {
+      "path": "scripts/test_live_agent_benchmark.py",
+      "action": "copy B addition"
+    },
+    {
+      "path": "scripts/test_mobile_fixes.py",
+      "action": "copy B addition"
+    },
+    {
+      "path": "scripts/test_reader_ui.py",
+      "action": "copy B addition"
+    },
+    {
+      "path": "scripts/test_results_visibility.py",
+      "action": "copy B addition"
+    },
+    {
+      "path": "scripts/test_tracking_repair.py",
+      "action": "copy B addition"
+    },
+    {
+      "path": "src/agent/prompts/tracking.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/agent/results/insights.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/agent/results/tracking.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/agent/runtime/tracking.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/app/config.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/app/controller.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/app/insights.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/app/intents.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/app/orb_drag.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/app/presets.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/app/startup.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/app/tracking.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/contracts/news.splash",
+      "action": "preserve A change"
+    },
+    {
+      "path": "src/contracts/tracking.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/data/ingestion/articles.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/data/ingestion/normalize.splash",
+      "action": "preserve A change"
+    },
+    {
+      "path": "src/data/storage/schedules.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/data/storage/topics.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/frontend/app_view.splash",
+      "action": "three-way merge"
+    },
+    {
+      "path": "src/frontend/components/intent_panel.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/frontend/components/news_list.splash",
+      "action": "preserve A change"
+    },
+    {
+      "path": "src/frontend/pages/bookmarks.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/frontend/pages/detail.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/frontend/pages/results.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/frontend/pages/schedule.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/frontend/pages/tracking.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "src/frontend/styles.splash",
+      "action": "copy B change"
+    },
+    {
+      "path": "tests/scenarios/rinx_render_probe.rs",
+      "action": "copy B change"
+    },
+    {
+      "path": "tests/scenarios/tracking_repair.splash",
+      "action": "copy B addition"
+    },
+    {
+      "path": "tests/scenarios/tracking_runtime.splash",
+      "action": "copy B change"
+    }
+  ]
+}

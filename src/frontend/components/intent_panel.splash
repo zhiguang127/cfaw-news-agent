@@ -2,6 +2,20 @@ let IntentPanel = View{width: Fill height: Fill flow: Down on_render: || {
     intent_content := ScrollYView{width: Fill height: Fill flow: Down padding: Inset{left: 24 right: 24 top: 12 bottom: 24} spacing: 14 on_render: || {
         if intent_draft != nil {
             let mode = intent_mode()
+            if intent_draft.target_topic_id == nil {
+                if mode != "schedule" { Small{text: "新建关注 · 确认后新增一条关注"} }
+            } else {
+                let target = topic_find(intent_draft.target_topic_id)
+                if target != nil { Small{text: "正在修改关注：「" + target.title + "」"} }
+                else { Small{text: "原关注已不存在"} }
+                if !analysis_busy {
+                    LinkButton{width: Fit text: "将这份输入作为新关注" on_click: || intent_as_new()}
+                    if target != nil && target.status != "cancelled" && target.version != intent_draft.target_version {
+                        Small{text: "原关注已更新，整理前请加载最新版本，或转为新关注。"}
+                        LinkButton{width: Fit text: "加载原关注最新版本" on_click: || intent_reload_target()}
+                    }
+                }
+            }
             if intent_draft.state != "ready" {
                 View{width: Fill height: 80 align: Align{x: 0.5 y: 0.5}
                     AIOrb{width: 80 height: 80 enabled: false}

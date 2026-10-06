@@ -10,6 +10,12 @@ fn intent_mode(){
     return intent_draft.intent_kind
 }
 fn intent_render(){ if detail_kind == "intent" && intent_scene_ready { ui.intent_content.render() } }
+fn intent_copy_as_new(draft){
+    let next = topic_new_draft(nil)
+    next.original_input = draft.original_input next.supplement = draft.supplement
+    next.intent_kind = draft.intent_kind next.schedule_timezone = draft.schedule_timezone
+    next
+}
 fn intent_begin(topic_id){
     if tracking_status == "recalling" || tracking_status == "enriching" { analysis_cancel() }
     tracking_recall_generation = tracking_recall_generation + 1
@@ -17,24 +23,54 @@ fn intent_begin(topic_id){
     intent_error = ""
     if topic_id == nil && topic_records.draft != nil { intent_draft = topic_records.draft.to_json().parse_json() }
     else { intent_draft = topic_new_draft(topic_id) }
+    if topic_id == nil && intent_draft.target_topic_id != nil {
+        let target = topic_find(intent_draft.target_topic_id)
+        if target == nil || target.status == "cancelled" {
+            intent_draft = intent_copy_as_new(intent_draft)
+            intent_error = "原关注已取消或不存在，已保留输入并转为新建关注。"
+        }
+    }
     intent_more = intent_draft.supplement != "" || intent_draft.question != ""
     intent_show()
+}
+fn intent_as_new(){
+    if analysis_busy { intent_error = "请先取消或等待当前整理，再转为新建关注。" intent_render() return }
+    intent_draft = intent_copy_as_new(intent_draft)
+    intent_error = intent_save_local()
+    intent_render()
+}
+fn intent_reload_target(){
+    if analysis_busy || intent_draft == nil { return }
+    let target = topic_find(intent_draft.target_topic_id)
+    if target == nil || target.status == "cancelled" { intent_as_new() return }
+    intent_draft.target_version = target.version
+    intent_invalidate()
+    intent_error = "已加载原关注的最新版本，保留了你的输入；请重新整理并确认。"
+    intent_render()
 }
 fn intent_pick_mode(kind){
     if intent_mode() == kind { return }
     if kind == "schedule" && (intent_draft.target_topic_id != nil || intent_draft.origin_reminder_id != nil) { return }
     intent_draft.intent_kind = kind intent_draft.question = ""
-    intent_changed(intent_draft.original_input, false)
+    intent_invalidate()
     intent_error = "" intent_render()
 }
 fn intent_pick_timezone(zone){
+    if intent_draft.schedule_timezone == zone { return }
     intent_draft.schedule_timezone = zone
-    intent_changed(intent_draft.original_input, false)
+    intent_invalidate()
     intent_error = "" intent_render()
 }
 fn intent_changed(value, supplement){
+    if intent_draft == nil { return }
     if value.to_chars().len() > tracking_config.max_input_chars { intent_error = "输入最多1000字符；超出内容未保存" return }
+    // Reapplying an input must not invalidate the in-flight request or preview.
+    if supplement { if value == intent_draft.supplement { return } }
+    else { if value == intent_draft.original_input { return } }
     if supplement { intent_draft.supplement = value } else { intent_draft.original_input = value }
+    intent_invalidate()
+}
+fn intent_invalidate(){
     intent_draft.version = intent_draft.version + 1 intent_draft.state = "editing" intent_draft.understanding = nil
     intent_draft.schedule_understanding = nil
     if intent_save_timer != nil { stop_timer(intent_save_timer) }
@@ -43,6 +79,27 @@ fn intent_changed(value, supplement){
         intent_save_timer = nil
         if intent_draft != nil { if version == intent_draft.version { intent_error = topic_save_draft(intent_draft) if intent_error != "" { intent_render() } } }
     })
+}
+fn intent_request_context_error(draft){
+    let reason = ""
+    if intent_draft == nil || !intent_open { reason = "输入面板已关闭或草稿已丢弃" }
+    else if intent_draft.draft_id != draft.draft_id { reason = "已切换到另一份草稿" }
+    else if intent_draft.intent_kind != draft.intent_kind { reason = "已切换输入类型" }
+    else if intent_draft.original_input != draft.original_input { reason = "输入文字已修改" }
+    else if intent_draft.supplement != draft.supplement { reason = "补充内容已修改" }
+    else if intent_draft.schedule_timezone != draft.schedule_timezone { reason = "日程时区已修改" }
+    else if intent_draft.version != draft.version { reason = "草稿已重新编辑" }
+    else if intent_draft.target_topic_id != draft.target_topic_id || intent_draft.target_version != draft.target_version { reason = "正在修改的关注已切换" }
+    else if draft.target_topic_id != nil {
+        let target = topic_find(draft.target_topic_id)
+        if target == nil { reason = "原关注已不存在" }
+        else if target.status == "cancelled" { reason = "原关注已取消" }
+        else if target.version != draft.target_version { reason = "原关注版本已更新" }
+    }
+    if reason == "" { return "" }
+    let record = "关注"
+    if draft.intent_kind == "schedule" { record = "日程" }
+    reason + "，本次结果未采用；未新增或修改" + record + "。请按当前输入重新整理。"
 }
 fn intent_save_local(){
     if intent_save_timer != nil { stop_timer(intent_save_timer) intent_save_timer = nil }
@@ -53,6 +110,8 @@ fn intent_submit(){
     if intent_draft == nil { return }
     intent_error = ""
     if intent_draft.original_input.trim() == "" { intent_error = "写下一个想法，让我们从这里开始" intent_render() return }
+    let context_error = intent_request_context_error(intent_draft)
+    if context_error != "" { intent_error = context_error intent_render() return }
     let error = intent_save_local()
     if error != "" { intent_error = error intent_render() return }
     // User input takes priority; wait for the host's interrupt acknowledgment.
@@ -63,7 +122,6 @@ fn intent_submit(){
         intent_error = "已有输入正在整理，请先取消或等待" intent_render() return
     }
     let draft = intent_draft.to_json().parse_json()
-    let key = draft.to_json()
     let current_topic = topic_find(draft.target_topic_id)
     if current_topic != nil {
         current_topic = current_topic.to_json().parse_json()
@@ -81,15 +139,11 @@ fn intent_submit(){
         snapshot.reference_date = schedule_date_at(schedule_zone_seconds(time_now(), zone))
         snapshot.prompt_revision = schedule_intent_prompt_revision
     }
-    intent_error = "正在理解你的想法…"
+    intent_error = "正在理解你的想法…返回后请确认保存，当前尚未新增关注。"
+    if intent_mode() == "schedule" { intent_error = "正在整理日程…返回后请确认保存，当前尚未新增日程。" }
     error = agent_task_start(kind, snapshot, prompt + snapshot.to_json(), || {
-        if intent_draft == nil { return false }
-        if !intent_open || intent_draft.to_json() != key { return false }
-        if draft.target_topic_id != nil {
-            let target = topic_find(draft.target_topic_id)
-            if target == nil { return false }
-            if target.version != draft.target_version { return false }
-        }
+        let reason = intent_request_context_error(draft)
+        if reason != "" { return reason }
         true
     }, fn(reply){
         if !reply.success { intent_error = reply.error }
@@ -137,7 +191,7 @@ fn intent_finish(message){
 fn intent_confirm_schedule(){
     if intent_draft.state != "ready" || !schedule_intent_understanding_valid(intent_draft["schedule_understanding"]) { intent_error = "请先取得完整的日程理解" intent_render() return }
     let plan = intent_draft.schedule_understanding
-    let result = schedule_create_record(plan.title, plan.content, plan.location, plan.start, plan.end, plan.timezone, nil, false, intent_draft.draft_id)
+    let result = schedule_create_record(plan.title, plan.content, plan.location, plan.start, plan.end, plan.timezone, nil, true, intent_draft.draft_id)
     if !result.success {
         intent_error = result.error
         if result["conflicts"] != nil { intent_error = "与已有日程重叠，请调整时间后重新整理" }
@@ -181,6 +235,9 @@ fn intent_follow_reminder(id){
 }
 fn topic_toggle_pause(id, version, status){
     let error = topic_set_status(id, version, status)
-    if error != "" { notice(error) } else { notice("关注状态已保存") tracking_schedule_check() }
+    if error != "" { notice(error) } else {
+        if status == "cancelled" { notice("已取消关注") } else { notice("关注状态已保存") }
+        tracking_schedule_check()
+    }
     tracking_ui_update()
 }

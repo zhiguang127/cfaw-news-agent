@@ -1,0 +1,15 @@
+{
+  "date": "2026-10-06",
+  "prompt_revision": "tracking-v2.2",
+  "reference_runtime_checks": 35,
+  "insights_checks": 33,
+  "python_unit_checks": 19,
+  "failed": 0,
+  "assembly": "passed",
+  "zip_matches_bundle": true,
+  "bundle_blake3": "05329e7b43f225d027ac1d91ee73473beb722a36edbcf904e78f349aefc8e3f4",
+  "live_model_verified": false,
+  "user_data_mutated": false,
+  "reported_error": "变化证据/段落引用无效",
+  "original_exact_subcause": "not retained by old diagnostic"
+}

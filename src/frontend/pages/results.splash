@@ -2,7 +2,10 @@ fn results_pending_page(offset){ results_pending_offset = offset ui.results_cont
 let AnalysisResultsPage = View{visible: false width: Fill height: Fill flow: Down
     results_content := ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 12 on_render: || {
         Section{text: "本轮目标变化"}
-        let insights = current_insights()
+        let insights = []
+        for value in current_insights() {
+            if value.state == "pending" || value.state == "watch" { insights.push(value) }
+        }
         if insights.len() == 0 { Small{text: "尚无当前有效的目标变化；可先保存关注并检查。"} }
         for value in insights {
             Section{text: value.title}
@@ -40,12 +43,12 @@ let AnalysisResultsPage = View{visible: false width: Fill height: Fill flow: Dow
             SecondaryButton{text: "继续原计划并记录决定" on_click: || reschedule_keep_original()}
             QuietButton{text: "取消提案" on_click: || {reschedule_preview = nil ui.results_content.render()}}
         }
-        Section{text: "应用内改期历史"}
         for a in schedule_actions.items {
+            if a.state != "prepared" { continue }
+            Section{text: "待完成的改期"}
             Small{text: a.original.title + " · " + schedule_action_state_label(a.state)}
             Small{text: "原：" + schedule_display_time(a.original.start, a.original.timezone) + " → " + schedule_display_time(a.original.end, a.original.timezone)}
             Small{text: "新：" + schedule_display_time(a.start, a.original.timezone) + " → " + schedule_display_time(a.end, a.original.timezone)}
-            if a.state == "applied" { SecondaryButton{text: "撤回这次改期" on_click: || reschedule_undo(a.action_id)} }
             if a.state == "prepared" { SecondaryButton{text: "恢复已确认的改期记录" on_click: || {notice(reschedule_resume(a.action_id)) tracking_ui_update()}} }
         }
         Section{text: "待关注日程影响"}
@@ -60,20 +63,14 @@ let AnalysisResultsPage = View{visible: false width: Fill height: Fill flow: Dow
         }
         SecondaryButton{text: "检查关注与日程" on_click: || tracking_start(nil)}
         Divider{}
-        Section{text: "最近目标检查历史"}
-        for i in tracking_cache.runs.len() {
-            let run = tracking_cache.runs[tracking_cache.runs.len() - 1 - i]
-            Small{text: age_label(run.checked_at) + " · " + run.result.explanation}
-            if record_array(run.result["insights"]) { for insight in run.result.insights { Small{text: insight.change_kind + " · " + insight.summary} } }
-        }
-        Section{text: "旧版建议记录"}
+        Section{text: "待确认建议"}
         if analysis_state == "failed" || analysis_needs_reopen {
             Small{text: analysis_error_hint() draw_text.color: accent}
             QuietButton{text: "查看具体原因" on_click: || {results_show_error_detail = !results_show_error_detail ui.results_content.render()}}
             if results_show_error_detail { Small{text: analysis_error} }
         }
         if tracking_in_progress() { Small{text: "分析正在进行，可继续浏览其他页面。"} SecondaryButton{text: "取消分析" on_click: || analysis_cancel()} }
-        if history_dirty { Small{text: "历史尚未完整保存，重开应用可能丢失本次结果。" draw_text.color: accent} SecondaryButton{text: "重试保存" on_click: || retry_analysis_save()} }
+        if history_dirty { Small{text: "结果尚未完整保存，重开应用可能丢失本次结果。" draw_text.color: accent} SecondaryButton{text: "重试保存" on_click: || retry_analysis_save()} }
         if analysis_history_warning != "" { Small{text: analysis_history_warning draw_text.color: accent} }
         let pending = 0
         for item in suggestion_history {
@@ -89,18 +86,5 @@ let AnalysisResultsPage = View{visible: false width: Fill height: Fill flow: Dow
         if results_pending_offset > 0 { SecondaryButton{text: "上一页建议" on_click: || results_pending_page(max(0, results_pending_offset - 20))} }
         if pending > results_pending_offset + 20 { SecondaryButton{text: "下一页建议" on_click: || results_pending_page(results_pending_offset + 20)} }
         if pending == 0 { Small{text: "暂无待确认建议。可在跟踪页检查关注更新，或分析一条新闻。"} }
-        Divider{}
-        Section{text: "最近分析"}
-        if analysis_history.len() == 0 { Small{text: "尚无分析记录；可在新闻详情或跟踪页开始分析。"} }
-        for i in analysis_history.len() {
-            let item = analysis_history[analysis_history.len() - 1 - i]
-            if i < 30 {
-                if item["news_snapshot"] != nil { Text{text: item.news_snapshot.title} }
-                Small{text: history_outcome_label(item.outcome) + " · " + age_label(item.created_at)}
-                Text{text: item.explanation}
-                SecondaryButton{text: "查看详情" on_click: || open_analysis_record(item.analysis_id)}
-                Divider{}
-            }
-        }
     }}
 }

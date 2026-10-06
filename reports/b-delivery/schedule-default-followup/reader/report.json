@@ -1,0 +1,10 @@
+{
+  "host": "D:\\Hackathon_agenticapp\\Rinx-main",
+  "article_url": null,
+  "checks": [
+    "actual paragraph ink reaches both edges on wrapped lines; final line remains left aligned",
+    "decoded source image visible, proportional sizing, bounded centered reader column, original link",
+    "article order, heading, paragraphs, caption, list and quote; unapproved image excluded",
+    "unsupported empty-summary article has original entry; cancelled old image callback cannot leak into it"
+  ]
+}

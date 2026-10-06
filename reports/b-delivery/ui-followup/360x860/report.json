@@ -1,0 +1,19 @@
+{
+  "passed": [
+    {
+      "restored_host_filling_layout": [
+        20,
+        132,
+        320,
+        708
+      ]
+    },
+    "schedule page hides news refresh; completed project discussion can be cancelled and versioned",
+    "return-to-top button is at the bottom right",
+    "mouse jitter before long press, continuous drag, edge snap, no accidental open, persisted position",
+    "short click opens and close returns to moved position",
+    "bookmark categories filter independently",
+    "visible refresh starts requests, second click cancels",
+    "fresh native process restores saved orb position"
+  ]
+}

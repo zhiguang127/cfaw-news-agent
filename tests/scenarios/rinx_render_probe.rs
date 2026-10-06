@@ -81,8 +81,12 @@ fn main() {
                 let ui = tree.widget(tree.root_uid());
                 if !ui.widget(cx, ids!(card)).is_empty() {
                     mounted = true;
+                    let resize_args: Vec<String> = std::env::args().collect();
+                    let requested = resize_args.iter().position(|s| s == "--size")
+                        .map(|i| resize_args[i + 1].clone()).unwrap_or("430x860".into());
+                    let size: Vec<f64> = requested.split('x').map(|v| v.parse().unwrap()).collect();
                     ui.window(cx, ids!(main_window))
-                        .resize(cx, dvec2(430., 860.));
+                        .resize(cx, dvec2(size[0], size[1]));
                     use rinx::miniapps::{MiniAppsAction, MiniAppsPanelWidgetRefExt};
                     ui.view(cx, ids!(home_screen_view)).set_visible(cx, true);
                     ui.view(cx, ids!(login_screen_view)).set_visible(cx, false);
@@ -111,9 +115,16 @@ fn main() {
                     let splash = ui.splash(cx, ids!(card));
                     splash.set_sandbox_dir(cx, Some(root));
                     splash.set_storage_quota(cx, Some(8388608));
-                    splash.set_host_caps(cx, vec!["storage".into()]);
+                    let network_host = args.iter().position(|s| s == "--network-host")
+                        .map(|i| args[i + 1].clone());
+                    let mut caps = vec!["storage".into()];
+                    if network_host.is_some() { caps.push("net".into()); }
+                    splash.set_host_caps(cx, caps);
                     splash.set_host_prompts(cx, false);
-                    splash.set_policy(cx, Some(vec![]), Some(16000000));
+                    splash.set_policy(cx, Some(network_host.iter().cloned().collect()), Some(16000000));
+                    if let Some(mut inner) = splash.borrow_mut() {
+                        inner.set_allow_net(network_host.is_some());
+                    }
                     splash.set_memory_bytes(cx, Some(33554432));
                     let text = std::fs::read_to_string(
                         std::path::PathBuf::from(arg("--bundle")).join("main.splash"),

@@ -29,6 +29,15 @@ fn news_http_request(url, redirects, callback){
     })
     news_http_step(url, redirects, context)
 }
+fn news_http_verification(headers){
+    if headers == nil { return false }
+    let actions = headers["x-amzn-waf-action"]
+    if actions == nil { actions = headers["X-Amzn-Waf-Action"] }
+    if actions == nil { actions = headers["X-AMZN-WAF-ACTION"] }
+    if !record_array(actions) { return false }
+    for action in actions { if action == "captcha" || action == "challenge" { return true } }
+    false
+}
 fn news_http_step(url, redirects, context){
     if context.done { return }
     if !news_request_allowed(url) { news_http_finish(context, {success: false error: "请求或重定向域名未获许可" category: "permission"}); return }
@@ -40,6 +49,10 @@ fn news_http_step(url, redirects, context){
             on_response: |response| {
                 if context.done { return }
                 let status = response.status_code
+                if news_http_verification(response.headers) {
+                    news_http_finish(context, {success: false error: "网站要求浏览器人机验证，暂不支持直接读取" category: "verification"})
+                    return
+                }
                 if status == 301 || status == 302 || status == 303 || status == 307 || status == 308 {
                     let locations = response.headers["location"]
                     if locations == nil { locations = response.headers["Location"] }

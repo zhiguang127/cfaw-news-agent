@@ -1,0 +1,31 @@
+{
+  "stage": "complete",
+  "passed": 23,
+  "failed": 0,
+  "checks": [
+    "baseline v2.1 fixture valid",
+    "Chinese summary length error is precise",
+    "correction prompt includes validator feedback: 1",
+    "malformed first response repaired: 1",
+    "repaired result passes persistence validation",
+    "correction prompt includes validator feedback: 2",
+    "malformed first response repaired: 2",
+    "correction prompt includes validator feedback: 3",
+    "malformed first response repaired: 3",
+    "correction prompt includes validator feedback: 4",
+    "malformed first response repaired: 4",
+    "correction prompt includes validator feedback: 5",
+    "second invalid response rejected: 5",
+    "error identifies missing summary",
+    "changed context prevents repair turn",
+    "correction prompt includes validator feedback: 7",
+    "cancel prevents repaired result publication",
+    "correction prompt includes validator feedback: 8",
+    "timeout interrupts repair instead of resetting deadline",
+    "correction prompt includes validator feedback: 9",
+    "second invalid response rejected: 9",
+    "fabricated paragraph remains rejected",
+    "only validated result persisted"
+  ],
+  "failures": []
+}

@@ -40,11 +40,11 @@ let schedule_next_day = false
 let schedule_custom_date = false
 let schedule_edit_error = ""
 let schedule_saved_view = false
-let schedule_allow_draft = false
+let schedule_allow_draft = true
 let schedule_original = nil
 let schedule_confirmation_id = nil
 let category_filters = [{id: "all" label: "全部"} {id: "tech" label: "科技"}
-    {id: "ai" label: "AI"} {id: "world" label: "国际"} {id: "finance" label: "财经"} {id: "china" label: "中文"}]
+    {id: "ai" label: "AI"} {id: "world" label: "国际"} {id: "finance" label: "财经"}]
 fn age_label(seconds){
     if seconds == nil || seconds <= 0 { return "时间未知" }
     let delta = time_now() - seconds
@@ -82,7 +82,6 @@ fn source_status_text(source){
     text
 }
 fn row_cache_note(row){
-    if row["demo_data"] == true { return "演示缓存 · 非实时新闻" }
     if page == "saved" { return "收藏快照" }
     let status = feed_status_by_source[row.source_id]
     if status == nil { return "" }
@@ -103,11 +102,17 @@ fn tracking_new_count(){
     for row in app_feed_rows { if row_is_new(row) { count = count + 1 } }
     count
 }
+fn tracking_focus_count(){
+    let count = 0
+    for topic in topic_records.topics { if topic_is_user_record(topic) && topic.status == "active" { count = count + 1 } }
+    for interest in user_interests { if interest.enabled { count = count + 1 } }
+    count
+}
 fn visible_rows(){
     if page == "saved" {
         let rows = []
         for i in user_bookmarks.len() { rows.push(user_bookmarks[user_bookmarks.len() - 1 - i]) }
-        return news_filter(rows, [], "all", false, query)
+        return news_filter(rows, [], category, false, query)
     }
     news_filter(app_feed_rows, [], category, false, query)
 }
@@ -116,8 +121,8 @@ fn empty_text(){
     if query != "" { return "没有匹配的新闻，试试其他关键词。" }
     if page == "saved" { return "收藏新闻后可在这里重看；清理新闻缓存不会删除收藏。" }
     if page == "tracking" {
-        if user_interests.len() == 0 { return "还没有关注。添加主题、关键词或关注新闻来源后，相关消息会出现在这里。" }
-        return "暂时没有与你关注内容匹配的新闻，可以刷新或调整关注。"
+        if tracking_focus_count() == 0 { return "暂无启用的关注，可添加关注或在管理关注中恢复已有关注。" }
+        return "已保存关注，当前没有匹配的相关新闻；可刷新新闻或调整关注范围。"
     }
     if enabled_source_ids.len() == 0 { return "尚未启用新闻源。打开左上角菜单，选择需要获取的来源。" }
     if busy { return "正在获取真实新闻，来源完成后会逐步显示。" }
@@ -125,8 +130,6 @@ fn empty_text(){
 }
 fn notice(text){ ui.feedback.set_text(text) ui.feedback_panel.set_visible(text != "") }
 fn sync_status(){
-    let failed = 0
-    for id in enabled_source_ids { if feed_status_by_source[id].state == "error" { failed = failed + 1 } }
     let text = "" + app_feed_rows.len() + " 条新闻"
     if busy {
         text = text + " · 正在更新"
@@ -134,10 +137,11 @@ fn sync_status(){
     }
     if page == "saved" { text = "" + user_bookmarks.len() + " 条收藏" }
     if page == "tracking" && !busy { text = "" + display_rows.len() + " 条相关新闻" }
-    if failed > 0 && page != "saved" { text = text + " · 部分来源暂时不可用" }
     ui.status.set_text(text)
+    ui.refresh_news.set_text(if busy { "停止更新" } else { "刷新新闻" })
+    ui.refresh_toolbar.set_visible(page == "feed" && detail_kind == "")
     ui.menu_cancel_update.set_visible(busy)
-    ui.tracking_summary.set_text("我的关注 · " + tracking_new_count() + " 条未读更新")
+    ui.tracking_summary.set_text("我的关注 · " + tracking_focus_count() + " 项 · " + tracking_new_count() + " 条未读更新")
     render_analysis_controls()
 }
 fn render_feed(){
@@ -198,11 +202,12 @@ fn render_main(){
 fn render_main_now(){
     // Set toolbar geometry before the asynchronous list preparation completes.
     render_analysis_controls()
-    if page == "feed" { ui.categories.render() }
+    if page == "feed" || page == "saved" { ui.categories.render() }
     // Keep navigation hit targets alive while deferred page renders settle.
     ui.feed_tab_active.set_visible(page != "schedule")
     ui.schedule_tab_active.set_visible(page == "schedule")
-    ui.feed_filters.set_visible(page == "feed")
+    ui.feed_filters.set_visible(page == "feed" || page == "saved")
+    ui.refresh_toolbar.set_visible(page == "feed" && detail_kind == "")
     ui.tracking_header.set_visible(page == "tracking")
     ui.bookmarks_header.set_visible(page == "saved")
     ui.search_box.set_visible(page != "schedule")
@@ -232,7 +237,7 @@ fn select_page(id){
     render_main()
 }
 fn schedule_reset_draft(){
-    schedule_saved_view = false schedule_original = nil schedule_allow_draft = false
+    schedule_saved_view = false schedule_original = nil schedule_allow_draft = true
     schedule_edit_id = nil schedule_edit_version = nil
     schedule_title_draft = "" schedule_content_draft = "" schedule_location_draft = ""
     schedule_timezone_draft = "Asia/Shanghai"
@@ -477,6 +482,7 @@ fn analysis_error_hint(){
     if analysis_error_category == "stale_context" { return "新闻或你的安排已变化，请重新分析。" }
     if analysis_error_category == "storage_error" { return "分析已返回，但结果尚未完整保存，请重试保存。" }
     if analysis_error_category == "timeout" { return "分析等待超时，请稍后重试。" }
+    if record_contains(["invalid_schema" "invalid_reference" "invalid_json"], analysis_error_category) { return "分析结果未通过校验，未保存：" + analysis_error }
     "本次分析未能完成，可查看具体原因后重试。"
 }
 fn analysis_status_for_news(id){
@@ -489,7 +495,7 @@ fn analyze_changes(){ tracking_start(nil) }
 fn show_analysis_results(){ results_pending_offset = 0 results_show_error_detail = false schedule_confirmation_id = nil notice("") render_analysis_controls() show_detail("results", "分析与建议") }
 fn retry_analysis_save(){
     let error = history_retry_save()
-    if error == "" { notice("历史已保存") } else { notice(error) }
+    if error == "" { notice("结果已保存") } else { notice(error) }
     ui.results_content.render()
 }
 fn open_analysis_record(id){
@@ -532,8 +538,9 @@ fn toggle_save(row){
     render_feed()
     if detail_kind == "story" { ui.story_content.render() }
 }
+let story_reset_pending = false
 fn render_detail(){
-    if detail_kind == "story" { ui.story_content.render() }
+    if detail_kind == "story" && !story_reset_pending { ui.story_content.render() }
     if detail_kind == "settings" { ui.source_list.render() }
     if detail_kind == "tracking" { ui.interest_list.render() }
     ui.story_panel.set_visible(detail_kind == "story")
@@ -568,8 +575,21 @@ fn open_story(row){
     story_show_analysis = false
     let error = records_mark_read(row.news_id)
     notice(error)
-    article_load(row, || { if detail_kind == "story" { ui.story_content.render() } })
+    // Recreate the scroll child only when opening another article. Downloads
+    // and ordinary reader updates retain the current reading position.
+    article_prepare()
+    story_reset_pending = true
+    ui.story_panel.render()
     show_detail("story", "新闻详情")
+    let reader_generation = article_state.generation
+    start_timeout(0.01, || {
+        if detail_kind == "story" && reader_generation == article_state.generation {
+            story_reset_pending = false
+            ui.story_panel.set_visible(true)
+            article_load(row, || { if detail_kind == "story" { ui.story_content.render() } })
+            ui.story_content.render()
+        }
+    })
 }
 fn update_suggestion_state(id, state){
     if state == "accepted" { schedule_begin_confirm(id) return }

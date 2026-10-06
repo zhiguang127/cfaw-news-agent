@@ -1,0 +1,9 @@
+{
+  "host": "D:\\Hackathon_agenticapp\\Rinx-main",
+  "article_url": null,
+  "checks": [
+    "decoded source image visible, proportional sizing, bounded centered reader column, original link",
+    "article order, heading, paragraphs, caption, list and quote; unapproved image excluded",
+    "unsupported empty-summary article has original entry; cancelled old image callback cannot leak into it"
+  ]
+}

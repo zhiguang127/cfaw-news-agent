@@ -1,0 +1,9 @@
+{
+  "checks": [
+    "New draft selected by default, proposal gate enabled, created schedule persisted allowed; native toggle works without parenthesized status"
+  ],
+  "records": {
+    "draft": true,
+    "proposals": true
+  }
+}

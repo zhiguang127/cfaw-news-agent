@@ -3,6 +3,9 @@ fn record_string(value){ return value.is_string() }
 fn record_array(value){ return value.is_array() }
 fn record_object(value){ return value.is_object() }
 fn record_number(value){ return value.is_number() && value >= 0 && value < 1000000000000 }
+fn news_is_demo(row){
+    row["demo_data"] == true || (record_string(row["source_url"]) && regex("^https://example[.]invalid/demo/").test(row["source_url"]))
+}
 fn record_url(value){ return record_string(value) && regex("^https?://[^/ ]+").test(value) }
 fn record_contains(values, value){
     for item in values { if item == value { return true } }
