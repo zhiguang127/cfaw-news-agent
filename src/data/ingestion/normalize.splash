@@ -9,6 +9,9 @@ fn news_normalize(item, source, retrieved_at){
     if record_string(item["source"]) && item.source != "" { publisher = item.source }
     let summary = ""
     if record_string(item["summary"]) { summary = item.summary }
+    let image_url = nil
+    // RSS images are optional and untrusted; only retain bounded HTTPS URLs.
+    if record_string(item["image"]) && item.image.len() <= 4096 && regex("^https://[^/ ]+").test(item.image) { image_url = item.image }
     let published_at = nil
     if record_number(item["published"]) && item.published > 0 { published_at = item.published }
     let kind = "rss_summary"
@@ -19,7 +22,7 @@ fn news_normalize(item, source, retrieved_at){
     }
     let row = {news_id: news_identity(item.link) evidence_id: news_identity(item.link) content_version: item.title.trim() + "\n" + summary title: item.title.trim() source: publisher
         source_id: source.id source_url: item.link feed_url: source.url category: source.category
-        language: source.language summary: summary published_at: published_at retrieved_at: retrieved_at
+        language: source.language summary: summary image_url: image_url published_at: published_at retrieved_at: retrieved_at
         evidence_kind: kind timestamp_kind: timestamp_kind
         references: [{source_id: source.id source: publisher source_url: item.link feed_url: source.url}]}
     if !news_record_valid(row) { return nil }

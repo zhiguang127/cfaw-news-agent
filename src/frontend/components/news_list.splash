@@ -1,31 +1,72 @@
-let NewsList = ScrollYView{width: Fill height: Fill flow: Down on_render: || {
-    for i row in display_rows {
-        let agent_hint = row_agent_hint(row)
-        let cache_note = row_cache_note(row)
-        GestureView{width: Fill height: Fit flow: Down on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
-            View{width: Fill height: Fit flow: Right spacing: 10 padding: Inset{left: 18 right: 18 top: 12 bottom: 8}
-                RoundedView{width: 32 height: 32 show_bg: true draw_bg.color: soft draw_bg.border_radius: 16.0 align: Align{x: 0.5 y: 0.5}
-                    Label{text: news_avatar(row) draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 12}}
-                }
-                View{width: Fill height: Fit flow: Down spacing: 4
-                    Small{text: news_meta(row) draw_text.text_style: theme.font_bold{font_size: 11 line_spacing: 1.15}}
-                    GestureView{width: Fill height: Fit on_tap: |x, y| open_story(row) on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
-                        Text{text: row.title max_lines: 3 draw_text.text_style.font_size: 14}
-                    }
-                    if agent_hint != nil {
-                        HintButton{height: 24 text: agent_hint.text + " ›" on_click: || open_feed_hint(row)}
-                    }
-                    if cache_note != "" { Small{text: cache_note} }
-                    View{width: Fill height: 28 flow: Right spacing: 10
-                        if records_has_interest("source", row.source) { LinkButton{text: "已跟踪" on_click: || toggle_follow(row)} }
-                        else { QuietButton{text: "关注来源" on_click: || toggle_follow(row)} }
-                        if records_is_bookmarked(row.news_id) { LinkButton{text: "已收藏" on_click: || toggle_save(row)} }
-                        else { QuietButton{text: "收藏" on_click: || toggle_save(row)} }
-                        QuietButton{text: "查看" on_click: || open_story(row)}
+let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{left: 14 right: 14 top: 8 bottom: 14} spacing: 10 on_render: || {
+    let featured_rows = []
+    let image_rows = []
+    let text_rows = []
+    for row in display_rows {
+        if record_string(row["image_url"]) && row.image_url != "" {
+            if featured_rows.len() < 3 { featured_rows.push(row) }
+            else { image_rows.push(row) }
+        } else { text_rows.push(row) }
+    }
+    if featured_rows.len() > 0 {
+        Section{text: "今日热点" padding: Inset{left: 2 top: 2}}
+        ScrollXView{width: Fill height: 170 flow: Right spacing: 10 padding: Inset{bottom: 4}
+            for row in featured_rows {
+                GestureView{width: 286 height: 158 on_tap: |x, y| open_story(row)
+                    RoundedView{width: Fill height: Fill flow: Down padding: 8 spacing: 6
+                        show_bg: true draw_bg.color: white draw_bg.border_size: 1.0 draw_bg.border_color: line draw_bg.border_radius: 14.0
+                        Image{width: Fill height: 98 fit: ImageFit.CropToFill src: http_resource(row.image_url)}
+                        Small{text: news_meta(row) max_lines: 1 draw_text.text_style.font_size: 10}
+                        Text{text: row.title max_lines: 2 draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 13 line_spacing: 1.15}}
                     }
                 }
             }
-            Divider{}
+        }
+    }
+    let ordered_rows = []
+    for row in image_rows { ordered_rows.push(row) }
+    for row in text_rows { ordered_rows.push(row) }
+    for row in ordered_rows {
+        let agent_hint = row_agent_hint(row)
+        let cache_note = row_cache_note(row)
+        let has_image = record_string(row["image_url"]) && row.image_url != ""
+        GestureView{width: Fill height: Fit flow: Down on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
+            RoundedView{width: Fill height: Fit flow: Down padding: 14 spacing: 9
+                show_bg: true draw_bg.color: white draw_bg.border_size: 1.0 draw_bg.border_color: line draw_bg.border_radius: 14.0
+                View{width: Fill height: Fit flow: Right spacing: 7 align: Align{y: 0.5}
+                    RoundedView{width: 22 height: 22 show_bg: true draw_bg.color: soft draw_bg.border_radius: 11.0 align: Align{x: 0.5 y: 0.5}
+                        Label{text: news_avatar(row) draw_text.color: secondary draw_text.text_style: theme.font_bold{font_size: 10}}
+                    }
+                    Small{width: Fill text: news_meta(row) max_lines: 1 draw_text.text_style: theme.font_regular{font_size: 11 line_spacing: 1.1}}
+                }
+                View{width: Fill height: Fit flow: Right spacing: 12 align: Align{y: 0.0}
+                    View{width: Fill height: Fit flow: Down spacing: 7
+                        GestureView{width: Fill height: Fit on_tap: |x, y| open_story(row) on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
+                            Text{text: row.title max_lines: 3 draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 16 line_spacing: 1.2}}
+                        }
+                        View{width: Fit height: 20 flow: Right
+                            RoundedView{width: Fit height: 20 padding: Inset{left: 7 right: 7 top: 2 bottom: 2} show_bg: true draw_bg.color: #xffffef draw_bg.border_radius: 10.0
+                                Small{text: category_label(row.category) draw_text.color: #x8d742d draw_text.text_style: theme.font_regular{font_size: 10}}
+                            }
+                        }
+                    }
+                    if has_image {
+                        Image{width: 104 height: 82 fit: ImageFit.CropToFill src: http_resource(row.image_url)}
+                    }
+                }
+                if agent_hint != nil {
+                    HintButton{height: 22 text: agent_hint.text + " ›" on_click: || open_feed_hint(row)}
+                }
+                if cache_note != "" { Small{text: cache_note max_lines: 2}}
+                View{width: Fill height: 26 flow: Right spacing: 8 align: Align{y: 0.5}
+                    if records_has_interest("source", row.source) { LinkButton{text: "已跟踪" on_click: || toggle_follow(row)} }
+                    else { QuietButton{text: "关注来源" on_click: || toggle_follow(row)} }
+                    if records_is_bookmarked(row.news_id) { LinkButton{text: "已收藏" on_click: || toggle_save(row)} }
+                    else { QuietButton{text: "收藏" on_click: || toggle_save(row)} }
+                    View{width: Fill height: 1}
+                    QuietButton{text: "查看" on_click: || open_story(row)}
+                }
+            }
         }
     }
 }}

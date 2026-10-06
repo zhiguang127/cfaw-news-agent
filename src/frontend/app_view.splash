@@ -1,28 +1,23 @@
 HostedView{width: Fill height: Fill
     full: View{width: Fill height: Fill flow: Overlay
     app_shell := View{width: Fill height: Fill flow: Down show_bg: true draw_bg.color: white
-        View{width: Fill height: 62 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 14} spacing: 8
+        View{width: Fill height: 56 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 14} spacing: 8
             menu_button := MenuToggle{}
             menu_badge := Small{visible: false width: Fit text: "•" draw_text.color: accent}
             View{width: Fill height: Fit flow: Down spacing: 2
                 Label{text: "cfaw-news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18} max_lines: 1}
                 Small{text: "NEWS THAT MOVES YOU" draw_text.color: accent draw_text.text_style.font_size: 8}
             }
+        }
+        View{width: Fill height: 54 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 14 top: 4 bottom: 4} spacing: 8
+            search_box := View{width: Fill height: Fit flow: Down
+                search := Search{height: 36 on_change: |text| set_query(text)}
+            }
             weather_widget := WeatherHeaderWidget{}
         }
         Divider{}
         menu_panel := MenuPanel{}
         main := View{width: Fill height: Fill flow: Down
-            navigation := View{width: Fill height: 46 flow: Right padding: Inset{left: 18 right: 18 top: 3 bottom: 3} spacing: 8
-                View{width: Fill height: 40 flow: Overlay
-                    feed_tab_active := RoundedView{width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 10.0}
-                    feed_tab := Nav{height: 40 text: "首页" draw_text +: {color: ink color_focus: ink} on_click: || select_page("feed")}
-                }
-                View{width: Fill height: 40 flow: Overlay
-                    schedule_tab_active := RoundedView{visible: false width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 10.0}
-                    schedule_tab := Nav{height: 40 text: "日程" draw_text +: {color: ink color_focus: ink} on_click: || select_page("schedule")}
-                }
-            }
             pending_suggestions := HintButton{visible: false height: 28 margin: Inset{left: 18 right: 18} text: "" on_click: || show_analysis_results()}
             feed_filters := FeedFilters{}
             feed_context := FeedContext{}
@@ -62,8 +57,18 @@ HostedView{width: Fill height: Fill
             feedback := Small{text: "" max_lines: 2}
             QuietButton{text: "关闭" on_click: || notice("")}
         }
-        search_box := View{width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 10 bottom: 12}
-            search := Search{height: 36 on_change: |text| set_query(text)}
+        navigation := View{width: Fill height: 58 flow: Down show_bg: true draw_bg.color: white
+            Divider{}
+            View{width: Fill height: 52 flow: Right padding: Inset{left: 18 right: 18 top: 4 bottom: 6} spacing: 8
+                View{width: Fill height: 42 flow: Overlay
+                    feed_tab_active := RoundedView{width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 12.0}
+                    feed_tab := Nav{height: 42 text: "首页" draw_text +: {color: ink color_focus: ink} on_click: || select_page("feed")}
+                }
+                View{width: Fill height: 42 flow: Overlay
+                    schedule_tab_active := RoundedView{visible: false width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 12.0}
+                    schedule_tab := Nav{height: 42 text: "日程" draw_text +: {color: ink color_focus: ink} on_click: || select_page("schedule")}
+                }
+            }
         }
     }
     floating_ai := View{width: Fill height: Fill flow: Overlay
