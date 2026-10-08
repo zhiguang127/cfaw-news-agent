@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "subtitle": "让 AI 新消息，与你的下一步有关",
+  "description": "CFAW News 是运行于 Rinx 的新闻 Agent 应用。用一句话表达对 AI、科技及其他领域的关注，阅读真实来源的新闻，查看新消息与你的工作、学习、生活目标和应用内日程的关系。\n\n首页支持分类、搜索、主动刷新及图片热点；阅读页提供可提取的正文、部分配图和系统浏览器原文入口。收藏以列表集中展示。通过意图空间整理关注或日程，查看理解预览并确认保存；关注支持修改、暂停、恢复与取消。\n\nAgent 结合关注、日程与候选新闻提出变化分析、证据和建议。日程调整须由用户确认。助手由宿主配置的 Octos 模型服务提供，团队使用 MiniMax；模型不可用时仍可浏览新闻。\n\n新闻获取和正文提取受来源可用性、付费及人机验证限制。跟踪在应用运行期间触发，不提供后台推送、系统日历写入或云同步。初始化的关注与日程预设在界面明确标识，不作为实时新闻。当前声明平台为 Windows。",
+  "category": "news",
+  "keywords": ["AI", "新闻", "Agent", "关注", "日程", "Rinx", "OctoScript"],
+  "screenshots": ["screenshots/e51a26ad2a041003f57da45db3727781.png", "screenshots/1d5ae8429656654ee1ad8e9a14883a0f.png"],
+  "icon": "assets/icon.svg",
+  "platforms": ["windows"],
+  "publisher": {
+    "name": "zhiguang127",
+    "support": "https://github.com/zhiguang127/cfaw-news-agent/issues",
+    "privacy_policy_url": "https://github.com/zhiguang127/cfaw-news-agent/blob/main/PRIVACY.md"
+  },
+  "release_notes": "首次提交：真实新闻浏览与刷新、图文阅读、自然语言关注、变化分析与证据、用户确认的应用内日程调整和新闻收藏。",
+  "age_rating": "12+",
+  "license": "Apache-2.0"
+}

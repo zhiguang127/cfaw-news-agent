@@ -3,6 +3,7 @@
     "storage",
     "net",
     "images",
+    "web",
     "octos.session.open",
     "octos.turn.start",
     "octos.turn.interrupt"
@@ -13,7 +14,7 @@
   },
   "id": "dev.cfaw.news",
   "integrity": {
-    "bundle_blake3": "e4bbb13914b3966f74b9515688304d7a01e8cdc956c6896a0dfdf17a86f41a67"
+    "bundle_blake3": "a1f66e6c97d3e9afe9522d69d379be84567b0601267f5a56ad2746492ad8ac44"
   },
   "name": "CFAW News",
   "network": {
