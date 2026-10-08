@@ -1,1 +1,4 @@
-let BookmarksHeader = Small{visible: false text: "你的收藏 · 可按分类与关键词筛选" padding: Inset{left: 18 right: 18 top: 8 bottom: 8}}
+let BookmarksHeader = View{visible: false width: Fill height: Fit flow: Right padding: Inset{left: 18 right: 18 top: 8 bottom: 8}
+    Small{width: Fill text: "你的收藏 · 可按分类与关键词筛选"}
+    LinkButton{text: "返回我的" on_click: || select_page("account")}
+}

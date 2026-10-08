@@ -362,7 +362,7 @@ fn tracking_schedule_check(){
 fn tracking_ui_update(){
     render_feed() render_analysis_controls()
     if detail_kind == "story" { ui.story_content.render() }
-    if detail_kind == "results" { ui.results_content.render() }
+    if page == "tracking" && tracking_section == "suggestions" && detail_kind == "" { ui.results_content.render() }
     if detail_kind == "tracking" { ui.interest_list.render() ui.continuous_controls.render() }
     if detail_kind == "intent" { intent_render() }
 }

@@ -29,7 +29,8 @@
       "name": "makepad",
       "commit": "c155f61d0e1600d2ec474209374444a38a09a470",
       "origin": "https://github.com/OctoSense-org/makepad.git",
-      "dirty": false,
+      "dirty": true,
+      "local_modifications_note": "Windows Preview builds apply the verified gesture patch to widgets/src/gesture_view.rs; card-host artifact records are independent of Rinx's Cargo cache patch.",
       "purpose": "App Hub sibling runtime dependency",
       "relative_checkout": ".dev/vendor/makepad"
     },

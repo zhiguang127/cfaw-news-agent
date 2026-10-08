@@ -81,8 +81,13 @@ try {
         $taskHub = $taskDrive + '/OctoSense-App-Hub'
         Set-Location $taskHub
         $env:CARGO_TARGET_DIR = $taskHub + '/target'
+        Invoke-ToolBuild 'cargo' @('fetch', '--locked') (Join-Path $taskLogRoot 'preview-fetch.log')
+        Invoke-ToolBuild 'python' @((Join-Path $PSScriptRoot 'patch_preview_gesture_host.py'), '--dev-root', ($taskDrive + '/')) (Join-Path $taskLogRoot 'preview-gesture-patch.log')
+        # Cargo assumes Git sources are immutable; rebuild the patched crate.
+        Invoke-ToolBuild 'cargo' @('clean', '--release', '-p', 'makepad-widgets') (Join-Path $taskLogRoot 'preview-gesture-clean.log')
         Write-Output ('Building pinned hub and card-host; log: ' + (Join-Path $taskLogRoot 'hub.log'))
         Invoke-ToolBuild 'cargo' @('build', '--locked', '--release', '-p', 'octosense-app-hub', '--bin', 'hub', '-p', 'octosense-card-host', '--bin', 'card-host') (Join-Path $taskLogRoot 'hub.log')
+        Invoke-ToolBuild 'python' @((Join-Path $PSScriptRoot 'patch_preview_gesture_host.py'), '--dev-root', ($taskDrive + '/'), '--record') (Join-Path $taskLogRoot 'preview-gesture-record.log')
         & (Join-Path $PSScriptRoot 'stage_windows_resources.ps1') -DevRoot ($taskDrive + '/')
     }
 } finally {

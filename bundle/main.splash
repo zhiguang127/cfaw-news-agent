@@ -4503,6 +4503,7 @@ let results_pending_offset = 0
 let suggestion_focus_id = nil
 // UI actions connect repository/retrieval/ingestion; mutable navigation lives here.
 let page = "feed"
+let tracking_section = "dynamic"
 let category = "all"
 let query = ""
 let page_filters = {feed: {category: "all" query: ""} tracking: {category: "all" query: ""} saved: {category: "all" query: ""}}
@@ -4510,7 +4511,6 @@ let reading = nil
 let detail_kind = ""
 let story_show_analysis = false
 let busy = false
-let menu_open = false
 let last_swipe_refresh_at = 0
 let last_return_top_at = 0
 let settings_show_diagnostics = false
@@ -4641,7 +4641,6 @@ fn sync_status(){
     ui.status.set_text(text)
     ui.refresh_news.set_text(if busy { "停止更新" } else { "刷新新闻" })
     ui.refresh_toolbar.set_visible(page == "feed" && detail_kind == "")
-    ui.menu_cancel_update.set_visible(busy)
     ui.tracking_summary.set_text("我的关注 · " + tracking_focus_count() + " 项 · " + tracking_new_count() + " 条未读更新")
     render_analysis_controls()
 }
@@ -4660,7 +4659,7 @@ fn render_feed(){
 fn render_feed_now(){
     // A source completion or an earlier navigation may arrive while the
     // calendar is visible. Its hidden list can wait until browsing resumes.
-    if page == "schedule" { feed_render_pending = false sync_status() ui.tile_list.render() return }
+    if page == "schedule" || page == "account" || (page == "tracking" && tracking_section == "suggestions") { feed_render_pending = false sync_status() ui.tile_list.render() return }
     let generation = feed_render_generation
     let rows = visible_rows()
     prepare_feed_presentation(rows, generation, fn(prepared){
@@ -4705,23 +4704,31 @@ fn render_main_now(){
     render_analysis_controls()
     if page == "feed" || page == "saved" { ui.categories.render() }
     // Keep navigation hit targets alive while deferred page renders settle.
-    ui.feed_tab_active.set_visible(page != "schedule")
+    let browsing = page == "feed" || page == "saved" || (page == "tracking" && tracking_section == "dynamic")
+    ui.feed_tab_active.set_visible(page == "feed")
+    ui.tracking_tab_active.set_visible(page == "tracking")
     ui.schedule_tab_active.set_visible(page == "schedule")
+    ui.account_tab_active.set_visible(page == "account" || page == "saved")
+    ui.home_tools.set_visible(page == "feed" || page == "saved")
     ui.feed_filters.set_visible(page == "feed" || page == "saved")
     ui.refresh_toolbar.set_visible(page == "feed" && detail_kind == "")
     ui.tracking_header.set_visible(page == "tracking")
     ui.bookmarks_header.set_visible(page == "saved")
-    ui.search_box.set_visible(page != "schedule")
-    ui.status.set_visible(page != "schedule")
-    ui.feed_list.set_visible(page != "schedule")
+    ui.search_box.set_visible(page == "feed" || page == "saved")
+    ui.status.set_visible(browsing)
+    ui.feed_list.set_visible(browsing)
     ui.schedule_page.set_visible(page == "schedule")
+    ui.account_page.set_visible(page == "account")
+    ui.results_panel.set_visible(page == "tracking" && tracking_section == "suggestions")
     if page == "schedule" {
         ui.schedule_list.render()
         ui.schedule_editor.render()
-    } else { render_feed() }
+    } else if page == "tracking" && tracking_section == "suggestions" { ui.results_content.render() }
+    else if browsing { render_feed() }
 }
+fn tracking_pick_section(section){ tracking_section = section select_page("tracking") }
 fn select_page(id){
-    close_menu()
+    article_cancel()
     notice("")
     if page != "schedule" { page_filters[page] = {category: category query: query} }
     page = id
@@ -4963,12 +4970,13 @@ fn render_analysis_controls(){
     ui.feed_context.set_visible(context.has_context && page == "feed" && detail_kind == "")
     if page == "feed" && detail_kind == "" { ui.feed_context_content.render() }
     let count = suggestion_attention_count()
-    ui.menu_badge.set_visible(count > 0)
-    ui.suggestions_button.set_text("分析与建议")
-    if count > 0 { ui.suggestions_button.set_text("分析与建议 · " + count + " 待处理") }
+    ui.tracking_tab.set_text(if count > 0 { "关注 · " + count } else { "关注" })
+    ui.tracking_dynamic_button.set_text(if tracking_section == "dynamic" { "动态 ✓" } else { "动态" })
+    ui.tracking_new_button.set_text("新增 / 继续草稿")
+    ui.suggestions_button.set_text(if tracking_section == "suggestions" { "建议 ✓" } else { "建议" })
+    if count > 0 { ui.suggestions_button.set_text("建议 · " + count) }
     ui.pending_suggestions.set_visible(count > 0 && page == "feed" && detail_kind == "")
     ui.pending_suggestions.set_text("" + count + " 项变化待关注 ›")
-    ui.manage_tracking_button.set_visible(analysis_has_focus())
     if page == "tracking" { ui.tracking_analysis_actions.render() }
 }
 fn analysis_check_status(){
@@ -4993,7 +5001,7 @@ fn analysis_status_for_news(id){
     "尚无当前有效的追踪结果"
 }
 fn analyze_changes(){ tracking_start(nil) }
-fn show_analysis_results(){ results_pending_offset = 0 results_show_error_detail = false schedule_confirmation_id = nil notice("") render_analysis_controls() show_detail("results", "分析与建议") }
+fn show_analysis_results(){ results_pending_offset = 0 results_show_error_detail = false schedule_confirmation_id = nil tracking_pick_section("suggestions") }
 fn retry_analysis_save(){
     let error = history_retry_save()
     if error == "" { notice("结果已保存") } else { notice(error) }
@@ -5047,14 +5055,11 @@ fn render_detail(){
     ui.story_panel.set_visible(detail_kind == "story")
     ui.settings_panel.set_visible(detail_kind == "settings")
     ui.tracking_panel.set_visible(detail_kind == "tracking")
-    ui.results_panel.set_visible(detail_kind == "results")
     ui.weather_panel.set_visible(detail_kind == "weather")
     if detail_kind == "intent" { intent_render() }
-    if detail_kind == "results" { ui.results_content.render() }
     if detail_kind == "weather" { ui.weather_content.render() }
 }
 fn show_detail(kind, title){
-    close_menu()
     if kind != "story" { article_cancel() }
     detail_kind = kind
     ui.detail_title.set_text(title)
@@ -5102,7 +5107,6 @@ fn update_suggestion_state(id, state){
 }
 fn close_detail(){
     if detail_kind == "intent" && intent_open { intent_cancel() return }
-    close_menu()
     article_cancel()
     detail_kind = ""
     reading = nil
@@ -5110,13 +5114,12 @@ fn close_detail(){
     ui.detail_pane.set_visible(false)
     ui.main.set_visible(true)
     ui.navigation.set_visible(true)
-    ui.search_box.set_visible(page != "schedule")
+    ui.search_box.set_visible(page == "feed" || page == "saved")
     // Preserve the existing ScrollYView and its position on return.
-    render_feed()
+    if page == "tracking" && tracking_section == "suggestions" { ui.results_content.render() }
+    else { render_feed() }
 }
 fn show_settings(){ notice("") settings_show_diagnostics = false ui.diagnostics_controls.render() show_detail("settings", "设置") }
-fn close_menu(){ menu_open = false ui.menu_panel.set_visible(false) }
-fn toggle_menu(){ menu_open = !menu_open ui.menu_panel.set_visible(menu_open) }
 fn manage_tracking(){ notice("") show_detail("tracking", "管理关注") }
 fn remove_interest(id){ analysis_check_message = "" notice(records_remove_interest(id)) render_detail() render_feed() tracking_schedule_check() }
 fn toggle_source(id){
@@ -5533,7 +5536,7 @@ fn tracking_schedule_check(){
 fn tracking_ui_update(){
     render_feed() render_analysis_controls()
     if detail_kind == "story" { ui.story_content.render() }
-    if detail_kind == "results" { ui.results_content.render() }
+    if page == "tracking" && tracking_section == "suggestions" && detail_kind == "" { ui.results_content.render() }
     if detail_kind == "tracking" { ui.interest_list.render() ui.continuous_controls.render() }
     if detail_kind == "intent" { intent_render() }
 }
@@ -5759,7 +5762,6 @@ fn intent_motion_frame(generation, opening, started){
 }
 fn intent_show(){
     if !intent_open { intent_return_kind = detail_kind }
-    close_menu()
     intent_open = true detail_kind = "intent"
     intent_motion_active = true
     intent_scene_ready = false
@@ -6608,36 +6610,6 @@ let WeatherHeaderWidget = View{width: 132 height: 50
 }
 // END src/frontend/components/weather_widget.splash
 
-// BEGIN src/frontend/components/menu.splash
-let MenuToggle = GestureView{width: 32 height: 36 on_tap: |x, y| toggle_menu()
-    View{width: Fill height: Fill show_bg: true
-        draw_bg +: {
-            pixel: fn(){
-                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                sdf.box(6.0, 10.0, 20.0, 2.0, 1.0) sdf.fill(#x202126)
-                sdf.box(6.0, 17.0, 20.0, 2.0, 1.0) sdf.fill(#x202126)
-                sdf.box(6.0, 24.0, 20.0, 2.0, 1.0) sdf.fill(#x202126)
-                return sdf.result
-            }
-        }
-    }
-}
-let MenuItem = QuietButton{width: Fill height: 36 align: Align{x: 0.0}
-    draw_text +: {color: ink color_hover: ink color_down: ink text_style +: {font_size: 13}}
-}
-let MenuPanel = View{visible: false width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 8 bottom: 8}
-    show_bg: true draw_bg.color: soft
-    MenuItem{text: "新闻来源" on_click: || show_settings()}
-    MenuItem{text: "表达关注 / 继续草稿" on_click: || intent_begin(nil)}
-    MenuItem{text: "管理关注" on_click: || manage_tracking()}
-    MenuItem{text: "关注动态" on_click: || select_page("tracking")}
-    MenuItem{text: "我的收藏" on_click: || select_page("saved")}
-    suggestions_button := MenuItem{text: "分析与建议" on_click: || show_analysis_results()}
-    MenuItem{text: "天气预报" on_click: || show_weather()}
-    menu_cancel_update := MenuItem{visible: false text: "停止新闻更新" on_click: || { close_menu() if busy { refresh() } }}
-}
-// END src/frontend/components/menu.splash
-
 // BEGIN src/frontend/components/intent_orb.splash
 // The reveal origin matches the floating orb's 72px hit target and insets.
 let AIOrb = ButtonFlat{width: 72 height: 72 padding: 0 margin: 0 text: "AI"
@@ -6842,7 +6814,12 @@ let FeedContext = View{visible: false width: Fill height: Fit flow: Down padding
 let TrackingHeader = View{visible: false width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 10 bottom: 8} spacing: 6
     View{width: Fill height: 30 flow: Right align: Align{y: 0.5}
         tracking_summary := Small{width: Fill text: "我的关注"}
-        manage_tracking_button := LinkButton{visible: false text: "管理关注" on_click: || manage_tracking()}
+        LinkButton{text: "管理" on_click: || manage_tracking()}
+    }
+    View{width: Fill height: Fit flow: Right spacing: 8
+        tracking_dynamic_button := Pill{text: "动态" on_click: || tracking_pick_section("dynamic")}
+        suggestions_button := Pill{text: "建议" on_click: || tracking_pick_section("suggestions")}
+        tracking_new_button := Pill{text: "新增 / 继续草稿" on_click: || intent_begin(nil)}
     }
     tracking_analysis_actions := View{width: Fill height: Fit flow: Down spacing: 6 on_render: || {
         Small{text: analysis_check_status() max_lines: 2}
@@ -6850,7 +6827,6 @@ let TrackingHeader = View{visible: false width: Fill height: Fit flow: Down padd
             if !analysis_has_focus() { SecondaryButton{text: "添加关注" on_click: || intent_begin(nil)} }
             else if tracking_in_progress() { SecondaryButton{text: "停止检查" on_click: || analysis_cancel()} }
             else { SecondaryButton{text: "检查关注更新" on_click: || analyze_changes()} }
-            QuietButton{text: "查看分析与建议" on_click: || show_analysis_results()}
         }
     }}
 }
@@ -6919,8 +6895,31 @@ let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
 // END src/frontend/pages/tracking.splash
 
 // BEGIN src/frontend/pages/bookmarks.splash
-let BookmarksHeader = Small{visible: false text: "你的收藏 · 可按分类与关键词筛选" padding: Inset{left: 18 right: 18 top: 8 bottom: 8}}
+let BookmarksHeader = View{visible: false width: Fill height: Fit flow: Right padding: Inset{left: 18 right: 18 top: 8 bottom: 8}
+    Small{width: Fill text: "你的收藏 · 可按分类与关键词筛选"}
+    LinkButton{text: "返回我的" on_click: || select_page("account")}
+}
 // END src/frontend/pages/bookmarks.splash
+
+// BEGIN src/frontend/pages/account.splash
+let AccountPage = View{visible: false width: Fill height: Fill flow: Down
+    ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 16
+        Heading{text: "我的"}
+        Small{text: "收藏与阅读偏好"}
+        Box{
+            Section{text: "我的收藏"}
+            Small{text: "保存的新闻，可按分类和关键词查找。"}
+            SecondaryButton{text: "查看收藏" on_click: || select_page("saved")}
+        }
+        Section{text: "设置"}
+        Box{
+            Section{text: "新闻来源与连接"}
+            Small{text: "选择新闻来源，查看获取状态和助手连接诊断。"}
+            SecondaryButton{text: "新闻来源" on_click: || show_settings()}
+        }
+    }
+}
+// END src/frontend/pages/account.splash
 
 // BEGIN src/frontend/pages/schedule.splash
 let SchedulePage = View{visible: false width: Fill height: Fill flow: Down
@@ -7458,21 +7457,18 @@ HostedView{width: Fill height: Fill
     full: View{width: Fill height: Fill flow: Overlay
     app_shell := View{width: Fill height: Fill flow: Down show_bg: true draw_bg.color: white
         View{width: Fill height: 56 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 14} spacing: 8
-            menu_button := MenuToggle{}
-            menu_badge := Small{visible: false width: Fit text: "•" draw_text.color: accent}
             View{width: Fill height: Fit flow: Down spacing: 2
                 Label{text: "cfaw-news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18} max_lines: 1}
                 Small{text: "NEWS THAT MOVES YOU" draw_text.color: accent draw_text.text_style.font_size: 8}
             }
         }
-        View{width: Fill height: 54 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 14 top: 4 bottom: 4} spacing: 8
+        home_tools := View{width: Fill height: 54 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 14 top: 4 bottom: 4} spacing: 8
             search_box := View{width: Fill height: Fit flow: Down
                 search := Search{height: 36 on_change: |text| set_query(text)}
             }
             weather_widget := WeatherHeaderWidget{}
         }
         Divider{}
-        menu_panel := MenuPanel{}
         main := View{width: Fill height: Fill flow: Down
             pending_suggestions := HintButton{visible: false height: 28 margin: Inset{left: 18 right: 18} text: "" on_click: || show_analysis_results()}
             feed_filters := FeedFilters{}
@@ -7500,6 +7496,8 @@ HostedView{width: Fill height: Fill
                 }
             }
             schedule_page := SchedulePage{}
+            account_page := AccountPage{}
+            results_panel := AnalysisResultsPage{}
         }
         detail_pane := View{visible: false width: Fill height: Fill flow: Down
             View{width: Fill height: 44 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 18} spacing: 8
@@ -7510,7 +7508,6 @@ HostedView{width: Fill height: Fill
             story_panel := StoryPage{}
             settings_panel := SourcesPage{}
             tracking_panel := TrackingEditor{}
-            results_panel := AnalysisResultsPage{}
             weather_panel := WeatherPage{}
         }
         feedback_panel := View{visible: false width: Fill height: Fit flow: Right padding: Inset{left: 18 right: 12 top: 6 bottom: 6} align: Align{y: 0.5}
@@ -7525,8 +7522,16 @@ HostedView{width: Fill height: Fill
                     feed_tab := Nav{height: 42 text: "首页" draw_text +: {color: ink color_focus: ink} on_click: || select_page("feed")}
                 }
                 View{width: Fill height: 42 flow: Overlay
+                    tracking_tab_active := RoundedView{visible: false width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 12.0}
+                    tracking_tab := Nav{height: 42 text: "关注" draw_text +: {color: ink color_focus: ink} on_click: || select_page("tracking")}
+                }
+                View{width: Fill height: 42 flow: Overlay
                     schedule_tab_active := RoundedView{visible: false width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 12.0}
                     schedule_tab := Nav{height: 42 text: "日程" draw_text +: {color: ink color_focus: ink} on_click: || select_page("schedule")}
+                }
+                View{width: Fill height: 42 flow: Overlay
+                    account_tab_active := RoundedView{visible: false width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 12.0}
+                    account_tab := Nav{height: 42 text: "我的" draw_text +: {color: ink color_focus: ink} on_click: || select_page("account")}
                 }
             }
         }

@@ -41,6 +41,10 @@ if ($Mode -eq 'Rinx') {
     & python (Join-Path $PSScriptRoot 'patch_windows_render_host.py') --dev-root $taskDevRoot --check-artifacts
     if ($LASTEXITCODE -ne 0) { throw 'Build the recorded D3D11 host fix first: scripts/build_windows_tools.ps1 -Mode Rinx' }
 }
+if ($Mode -eq 'Preview') {
+    & python (Join-Path $PSScriptRoot 'patch_preview_gesture_host.py') --dev-root $taskDevRoot --check-artifacts
+    if ($LASTEXITCODE -ne 0) { throw 'Build the Preview gesture fix first: scripts/build_windows_tools.ps1 -Mode Preview -DevRoot <vendor directory>' }
+}
 if ($Mode -eq 'Rinx' -and $RinxTextRasterizer -eq 'Sdf') {
     & python (Join-Path $PSScriptRoot 'build_windows_sdf_host.py') --dev-root $taskDevRoot
     if ($LASTEXITCODE -ne 0) { throw 'SDF host build failed; see Windows development instructions' }
