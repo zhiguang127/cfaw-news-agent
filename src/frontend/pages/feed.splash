@@ -1,25 +1,13 @@
 let FeedFilters = View{width: Fill height: Fit flow: Down
-    categories := View{width: Fill height: 32 flow: Right padding: Inset{left: 12 right: 12} spacing: 2 on_render: || {
+    categories := View{width: Fill height: 40 flow: Right padding: Inset{left: 18 right: 18 top: 4 bottom: 4} spacing: 5 on_render: || {
         for item in category_filters {
-            if category == item.id { FilterActive{height: 30 text: item.label on_click: || pick_category(item.id)} }
-            else { Filter{height: 30 text: item.label on_click: || pick_category(item.id)} }
+            if category == item.id { FilterActive{height: 32 text: item.label draw_bg.color: #xeeecfc draw_bg.border_radius: 16.0 draw_text.color: editorial_accent on_click: || pick_category(item.id)} }
+            else { Filter{height: 32 text: item.label draw_text.color: editorial_muted on_click: || pick_category(item.id)} }
         }
     }}
 }
-let FeedContext = View{visible: false width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 4 bottom: 4} spacing: 2
-    feed_context_content := View{width: Fill height: Fit flow: Down on_render: || {
-        let context = feed_context_state()
-        if context.topic_label != "" {
-            View{width: Fill height: 24 flow: Right align: Align{y: 0.5}
-                Small{width: Fill max_lines: 1 text: context.topic_label}
-                LinkButton{text: "管理" on_click: || manage_tracking()}
-            }
-        }
-        if context.schedule_label != "" {
-            View{width: Fill height: 24 flow: Right align: Align{y: 0.5}
-                Small{width: Fill max_lines: 1 text: context.schedule_label}
-                LinkButton{text: "日程" on_click: || select_page("schedule")}
-            }
-        }
-    }}
+// Keep the existing controller's visibility/render handles; the visual cards
+// live inside the news scroll below the image recommendations.
+let FeedContext = View{visible: false width: Fill height: 0
+    feed_context_content := View{width: Fill height: 0 on_render: || {}}
 }

@@ -1,7 +1,7 @@
 // Keep unadmitted RSS thumbnails from aborting the whole list render.
 fn news_thumbnail_allowed(row){ record_string(row["image_url"]) && article_image_allowed(row.image_url) }
 let news_thumbnail_resource = |url| http_resource(url)
-let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{left: 14 right: 14 top: 8 bottom: 14} spacing: 10 on_render: || {
+let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{left: 18 right: 18 top: 10 bottom: 24} spacing: 14 on_render: || {
     let featured_rows = []
     let image_rows = []
     let text_rows = []
@@ -14,19 +14,71 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{le
         } else { text_rows.push(row) }
     }
     if featured_rows.len() > 0 {
-        Section{text: "今日热点" padding: Inset{left: 2 top: 2}}
-        ScrollXView{width: Fill height: 170 flow: Right spacing: 10 padding: Inset{bottom: 4}
-            for row in featured_rows {
-                GestureView{width: 286 height: 158 on_tap: |x, y| open_story(row)
-                    RoundedView{width: Fill height: Fill flow: Down padding: 8 spacing: 6
-                        show_bg: true draw_bg.color: white draw_bg.border_size: 1.0 draw_bg.border_color: line draw_bg.border_radius: 14.0
-                        Image{width: Fill height: 98 fit: ImageFit.CropToFill src: news_thumbnail_resource(row.image_url)}
-                        Small{text: news_meta(row) max_lines: 1 draw_text.text_style.font_size: 10}
-                        Text{text: row.title max_lines: 2 draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 13 line_spacing: 1.15}}
+        ScrollXView{width: Fill height: 228 flow: Right spacing: 12 padding: Inset{bottom: 4}
+            for featured_index row in featured_rows {
+                GestureView{width: 370 height: 220 on_tap: |x, y| open_story(row)
+                    View{width: Fill height: Fill flow: Overlay
+                        EditorialImage{width: Fill height: Fill src: news_thumbnail_resource(row.image_url) draw_bg +: {
+                            radius: 20.0
+                            pixel: fn(){
+                                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                                let c = mix(self.get_color(), #x536076, self.async_load)
+                                let shade = smoothstep(0.18, 1.0, self.pos.y) * 0.88
+                                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.radius)
+                                sdf.fill(vec4(mix(c.xyz, vec3(0.035, 0.045, 0.07), shade), self.opacity))
+                                return sdf.result
+                            }
+                        }}
+                        View{width: Fill height: Fill flow: Down padding: 16 spacing: 7
+                            RoundedView{width: Fit height: 24 padding: Inset{left: 9 right: 9 top: 4 bottom: 4} show_bg: true draw_bg.color: #x7369c6d9 draw_bg.border_radius: 8.0
+                                Label{text: "今日精选" draw_text.color: white draw_text.text_style: theme.font_regular{font_size: 10}}
+                            }
+                            View{width: Fill height: Fill}
+                            Text{text: row.title max_lines: 2 draw_text.color: white draw_text.text_style: theme.font_bold{font_size: 18 line_spacing: 1.15}}
+                            Small{text: row.summary max_lines: 1 draw_text.color: #xe1e4ec draw_text.text_style.font_size: 11}
+                            Small{text: news_meta(row) max_lines: 1 draw_text.color: #xc1c8d6 draw_text.text_style.font_size: 9}
+                            View{width: Fill height: 6 flow: Right spacing: 5 align: Align{x: 0.5}
+                                for dot in [0 1 2] {
+                                    if dot < featured_rows.len() {
+                                        RoundedView{width: 18 height: 3 show_bg: true draw_bg.border_radius: 1.5 draw_bg.color: if dot == featured_index { white } else { #xffffff55 }}
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+    if page == "feed" {
+        let context = feed_context_state()
+        View{width: Fill height: Fit flow: Right spacing: 10 margin: Inset{top: 6 bottom: 10}
+            GestureView{width: Fill height: 68 on_tap: |x,y| select_page("tracking")
+                EditorialCard{height: Fill flow: Right padding: 12 spacing: 8 align: Align{y: 0.5} draw_bg.color: #xfafaff
+                    EditorialIcon{draw_bg.kind: 1.0 draw_bg.tint: editorial_accent}
+                    View{width: Fill height: Fit flow: Down spacing: 4
+                        Section{text: "我的关注" draw_text.color: editorial_ink}
+                        EditorialCaption{text: if context.topic_label != "" { context.topic_label } else { "添加你的关注" } max_lines: 1 draw_text.text_style.font_size: 10}
+                    }
+                    Label{text: "›" draw_text.color: editorial_muted draw_text.text_style.font_size: 18}
+                }
+            }
+            GestureView{width: Fill height: 68 on_tap: |x,y| select_page("schedule")
+                EditorialCard{height: Fill flow: Right padding: 12 spacing: 8 align: Align{y: 0.5} draw_bg.color: #xfffbfa
+                    EditorialIcon{draw_bg.kind: 2.0 draw_bg.tint: #xc88a79}
+                    View{width: Fill height: Fit flow: Down spacing: 4
+                        Section{text: "今日日程" draw_text.color: editorial_ink}
+                        EditorialCaption{text: if context.schedule_label != "" { context.schedule_label } else { "查看或添加安排" } max_lines: 1 draw_text.text_style.font_size: 10}
+                    }
+                    Label{text: "›" draw_text.color: editorial_muted draw_text.text_style.font_size: 18}
+                }
+            }
+        }
+    }
+    View{width: Fill height: 30 flow: Right align: Align{y: 0.5} spacing: 9
+        RoundedView{width: 3 height: 16 show_bg: true draw_bg.color: editorial_accent draw_bg.border_radius: 1.5}
+        Section{width: Fill text: if page == "saved" { "收藏文章" } else { "最新文章" } draw_text.color: editorial_ink draw_text.text_style.font_size: 16}
+        EditorialCaption{width: Fit text: "共 " + display_rows.len() + " 条新闻"}
     }
     for row in image_rows { ordered_rows.push(row) }
     for row in text_rows { ordered_rows.push(row) }
@@ -35,34 +87,30 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{le
         let cache_note = row_cache_note(row)
         let has_image = news_thumbnail_allowed(row)
         GestureView{width: Fill height: Fit flow: Down on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
-            RoundedView{width: Fill height: Fit flow: Down padding: 14 spacing: 9
-                show_bg: true draw_bg.color: white draw_bg.border_size: 1.0 draw_bg.border_color: line draw_bg.border_radius: 14.0
+            EditorialCard{
                 View{width: Fill height: Fit flow: Right spacing: 7 align: Align{y: 0.5}
                     RoundedView{width: 22 height: 22 show_bg: true draw_bg.color: soft draw_bg.border_radius: 11.0 align: Align{x: 0.5 y: 0.5}
                         Label{text: news_avatar(row) draw_text.color: secondary draw_text.text_style: theme.font_bold{font_size: 10}}
                     }
-                    Small{width: Fill text: news_meta(row) max_lines: 1 draw_text.text_style: theme.font_regular{font_size: 11 line_spacing: 1.1}}
+                    EditorialCaption{width: Fill text: news_meta(row) max_lines: 1}
                 }
                 View{width: Fill height: Fit flow: Right spacing: 12 align: Align{y: 0.0}
                     View{width: Fill height: Fit flow: Down spacing: 7
                         GestureView{width: Fill height: Fit on_tap: |x, y| open_story(row) on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
-                            Text{text: row.title max_lines: 3 draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 16 line_spacing: 1.2}}
-                        }
-                        View{width: Fit height: 20 flow: Right
-                            RoundedView{width: Fit height: 20 padding: Inset{left: 7 right: 7 top: 2 bottom: 2} show_bg: true draw_bg.color: #xffffef draw_bg.border_radius: 10.0
-                                Small{text: category_label(row.category) draw_text.color: #x8d742d draw_text.text_style: theme.font_regular{font_size: 10}}
-                            }
+                            EditorialTitle{text: row.title max_lines: 3}
                         }
                     }
                     if has_image {
-                        Image{width: 104 height: 82 fit: ImageFit.CropToFill src: news_thumbnail_resource(row.image_url)}
+                        EditorialImage{width: 112 height: 88 src: news_thumbnail_resource(row.image_url)}
                     }
                 }
+                if row.summary != "" { EditorialCaption{text: row.summary max_lines: 2 draw_text.text_style.font_size: 12 draw_text.text_style.line_spacing: 1.2} }
                 if agent_hint != nil {
                     HintButton{height: 22 text: agent_hint.text + " ›" on_click: || open_feed_hint(row)}
                 }
                 if cache_note != "" { Small{text: cache_note max_lines: 2}}
-                View{width: Fill height: 26 flow: Right spacing: 8 align: Align{y: 0.5}
+                View{width: Fill height: 26 flow: Right spacing: 5 align: Align{y: 0.5}
+                    EditorialTag{Label{text: category_label(row.category) draw_text.color: editorial_accent draw_text.text_style: theme.font_regular{font_size: 10}}}
                     if records_has_interest("source", row.source) { LinkButton{text: "已跟踪" on_click: || toggle_follow(row)} }
                     else { QuietButton{text: "关注来源" on_click: || toggle_follow(row)} }
                     if records_is_bookmarked(row.news_id) { LinkButton{text: "已收藏" on_click: || toggle_save(row)} }

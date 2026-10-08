@@ -56,24 +56,24 @@ let ForecastSky = RoundedView{width: Fill height: Fit flow: Down show_bg: true
         }
     }
 }
-let WeatherHeaderWidget = View{width: 132 height: 50
+let WeatherHeaderWidget = View{width: 100 height: 46
     weather_header_content := View{width: Fill height: Fill on_render: || {
         let city = weather_primary_city()
         let today = weather_today()
         weather_header_hit := GestureView{width: Fill height: Fill on_tap: |x, y| show_weather()
-            ForecastSky{width: Fill height: Fill padding: 8 draw_bg.border_radius: 12.0
+            RoundedView{width: Fill height: Fill padding: 8 show_bg: true draw_bg.color: #xf0f5fd draw_bg.border_radius: 23.0
                 View{width: Fill height: Fill flow: Right spacing: 6 align: Align{y: 0.5}
-                    ForecastGlyph{width: 30 height: 30 draw_bg.condition: weather_glyph_condition(today)}
+                    ForecastGlyph{width: 24 height: 24 draw_bg.condition: weather_glyph_condition(today)}
                     View{width: Fill height: Fit flow: Down spacing: 3
                         if city != nil {
-                            Small{text: city.name + " · " + weather_header_condition(today) draw_text.color: #xd7e6f7 max_lines: 1 draw_text.text_style.font_size: 9}
+                            Small{text: city.name draw_text.color: editorial_muted max_lines: 1 draw_text.text_style.font_size: 9}
                             if today != nil {
                                 Text{text: weather_temperature(today.temp_min_c) + " / " + weather_temperature(today.temp_max_c)
-                                    max_lines: 1 draw_text.color: white draw_text.text_style: theme.font_bold{font_size: 13}}
-                            } else { Small{text: "查看预报 ›" draw_text.color: white max_lines: 1} }
+                                    max_lines: 1 draw_text.color: editorial_ink draw_text.text_style: theme.font_bold{font_size: 11}}
+                            } else { Small{text: "查看预报 ›" draw_text.color: editorial_ink max_lines: 1 draw_text.text_style.font_size: 9} }
                         } else {
-                            Small{text: "城市天气" draw_text.color: #xd7e6f7 max_lines: 1 draw_text.text_style.font_size: 9}
-                            Small{text: "选择城市 ›" draw_text.color: white max_lines: 1}
+                            Small{text: "城市天气" draw_text.color: editorial_muted max_lines: 1 draw_text.text_style.font_size: 9}
+                            Small{text: "选择城市 ›" draw_text.color: editorial_ink max_lines: 1 draw_text.text_style.font_size: 9}
                         }
                     }
                 }

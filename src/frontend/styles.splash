@@ -52,3 +52,50 @@ let Search = TextInput{width: Fill height: 32 empty_text: "搜索新闻"
         border_color: #x00000000 border_color_hover: #x00000000 border_color_focus: #x00000000 border_color_empty: #x00000000 border_radius: 8.0}
     draw_text +: {color: ink color_hover: ink color_focus: ink color_empty: secondary color_empty_hover: secondary text_style +: {font_size: 12}}
 }
+// Editorial feed styles are scoped so reading and management pages keep their sizing.
+let editorial_ink = #x202635
+let editorial_muted = #x8790a3
+let editorial_accent = #x7369c6
+let EditorialTitle = Text{draw_text.color: editorial_ink draw_text.text_style: theme.font_bold{font_size: 17 line_spacing: 1.16}}
+let EditorialCaption = Small{draw_text.color: editorial_muted draw_text.text_style.font_size: 11}
+let EditorialTag = RoundedView{width: Fit height: 22 padding: Inset{left: 9 right: 9 top: 3 bottom: 3} show_bg: true draw_bg.color: #xf1f0fb draw_bg.border_radius: 11.0}
+let EditorialCard = RoundedView{width: Fill height: Fit flow: Down padding: 15 spacing: 9 show_bg: true
+    draw_bg +: {color: white border_size: 1.0 border_color: #xeeeff5 border_radius: 20.0}}
+let EditorialImage = Image{fit: ImageFit.CropToFill draw_bg +: {
+    radius: uniform(14.0)
+    pixel: fn(){
+        let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+        let c = mix(self.get_color(), #xeef0f5, self.async_load)
+        sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.radius)
+        sdf.fill(vec4(c.xyz, c.w * self.opacity))
+        return sdf.result
+    }
+}}
+let EditorialIcon = View{width: 24 height: 24 show_bg: true draw_bg +: {
+    kind: uniform(0.0) tint: uniform(#x8790a3)
+    pixel: fn(){
+        let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+        if self.kind < 0.5 {
+            sdf.move_to(3.0, 10.0) sdf.line_to(12.0, 3.0) sdf.line_to(21.0, 10.0) sdf.stroke(self.tint, 1.7)
+            sdf.box(5.0, 10.0, 14.0, 11.0, 2.0) sdf.stroke(self.tint, 1.7)
+            sdf.box(10.0, 15.0, 4.0, 6.0, 0.5) sdf.stroke(self.tint, 1.5)
+        } else if self.kind < 1.5 {
+            sdf.circle(12.0, 12.0, 9.0) sdf.stroke(self.tint, 1.7)
+            sdf.circle(12.0, 12.0, 4.0) sdf.stroke(self.tint, 1.7)
+            sdf.move_to(13.0, 11.0) sdf.line_to(21.0, 3.0) sdf.stroke(self.tint, 1.7)
+        } else if self.kind < 2.5 {
+            sdf.box(4.0, 5.0, 16.0, 16.0, 3.0) sdf.stroke(self.tint, 1.7)
+            sdf.move_to(4.0, 10.0) sdf.line_to(20.0, 10.0) sdf.stroke(self.tint, 1.5)
+            sdf.move_to(8.0, 3.0) sdf.line_to(8.0, 7.0) sdf.stroke(self.tint, 1.7)
+            sdf.move_to(16.0, 3.0) sdf.line_to(16.0, 7.0) sdf.stroke(self.tint, 1.7)
+            sdf.move_to(8.0, 15.0) sdf.line_to(11.0, 18.0) sdf.line_to(16.0, 13.0) sdf.stroke(self.tint, 1.5)
+        } else if self.kind < 3.5 {
+            sdf.circle(12.0, 7.0, 4.0) sdf.stroke(self.tint, 1.7)
+            sdf.box(5.0, 14.0, 14.0, 7.0, 3.0) sdf.stroke(self.tint, 1.7)
+        } else {
+            sdf.circle(10.0, 10.0, 6.0) sdf.stroke(self.tint, 1.7)
+            sdf.move_to(15.0, 15.0) sdf.line_to(21.0, 21.0) sdf.stroke(self.tint, 1.7)
+        }
+        return sdf.result
+    }
+}}
