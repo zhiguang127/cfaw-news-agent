@@ -25,6 +25,10 @@ fn news_normalize(item, source, retrieved_at){
         language: source.language summary: summary image_url: image_url published_at: published_at retrieved_at: retrieved_at
         evidence_kind: kind timestamp_kind: timestamp_kind
         references: [{source_id: source.id source: publisher source_url: item.link feed_url: source.url}]}
+    if record_string(item["body_html"]) {
+        row.source_summary = summary row.body_html = item.body_html
+        row.body_truncated = item["body_truncated"] == true row.body_origin = item["body_origin"]
+    }
     if !news_record_valid(row) { return nil }
     return row
 }
@@ -43,7 +47,8 @@ fn news_hn_items(body){
 }
 fn news_parse(body, source, retrieved_at){
     let items = nil
-    if source.kind == "hn" { items = news_hn_items(body) }
+    if source["reading_feed"] == true { items = reading_feed_items(body, source) }
+    else if source.kind == "hn" { items = news_hn_items(body) }
     else {
         // The pinned native parser has no return value for unsupported XML.
         if !regex("<(rss|feed|rdf:RDF)([ >\\r\\n\\t])").test(body) { return nil }

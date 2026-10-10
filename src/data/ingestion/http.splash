@@ -31,6 +31,10 @@ fn news_http_request(url, redirects, callback){
 }
 fn news_http_verification(headers){
     if headers == nil { return false }
+    let mitigated = headers["cf-mitigated"]
+    if mitigated == nil { mitigated = headers["Cf-Mitigated"] }
+    if mitigated == nil { mitigated = headers["CF-Mitigated"] }
+    if record_array(mitigated) { for action in mitigated { if action == "challenge" { return true } } }
     let actions = headers["x-amzn-waf-action"]
     if actions == nil { actions = headers["X-Amzn-Waf-Action"] }
     if actions == nil { actions = headers["X-AMZN-WAF-ACTION"] }

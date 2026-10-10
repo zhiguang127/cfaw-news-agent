@@ -115,15 +115,17 @@ fn main() {
                     let splash = ui.splash(cx, ids!(card));
                     splash.set_sandbox_dir(cx, Some(root));
                     splash.set_storage_quota(cx, Some(8388608));
-                    let network_host = args.iter().position(|s| s == "--network-host")
-                        .map(|i| args[i + 1].clone());
+                    let network_hosts: Vec<String> = args.windows(2)
+                        .filter(|pair| pair[0] == "--network-host")
+                        .map(|pair| pair[1].clone()).collect();
                     let mut caps = vec!["storage".into()];
-                    if network_host.is_some() { caps.push("net".into()); }
+                    if args.iter().any(|arg| arg == "--web-reader-test") { caps.push("web".into()); }
+                    if !network_hosts.is_empty() { caps.push("net".into()); }
                     splash.set_host_caps(cx, caps);
                     splash.set_host_prompts(cx, false);
-                    splash.set_policy(cx, Some(network_host.iter().cloned().collect()), Some(16000000));
+                    splash.set_policy(cx, Some(network_hosts.clone()), Some(16000000));
                     if let Some(mut inner) = splash.borrow_mut() {
-                        inner.set_allow_net(network_host.is_some());
+                        inner.set_allow_net(!network_hosts.is_empty());
                     }
                     splash.set_memory_bytes(cx, Some(33554432));
                     let text = std::fs::read_to_string(

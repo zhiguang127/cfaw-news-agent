@@ -1,0 +1,126 @@
+// Manual summaries share the application's host-managed Agent turn boundary.
+// No model call from feed refresh, article loading, or publisher-summary display.
+let reader_summary = {generation: 0 news_id: "" state: "idle" text: "" error: "" chunks: [] notes: [] index: 0 body_key: "" article_generation: 0}
+let reader_summary_cache = []
+fn reader_source_summary(row){
+    if record_string(row["source_summary"]) { return row.source_summary }
+    row.summary
+}
+fn reader_summary_open(row){
+    reader_summary.generation = reader_summary.generation + 1
+    reader_summary.news_id = row.news_id reader_summary.state = "idle" reader_summary.text = "" reader_summary.error = ""
+    reader_summary.chunks = [] reader_summary.notes = [] reader_summary.index = 0 reader_summary.body_key = ""
+    for saved in reader_summary_cache {
+        if saved.news_id == row.news_id && saved.content_version == row.content_version && saved.retrieved_at == row.retrieved_at {
+            reader_summary.state = "ready" reader_summary.text = saved.text
+        }
+    }
+}
+fn reader_summary_render(){ if detail_kind == "story" && !original_article_open { ui.story_content.render() } }
+fn reader_summary_body(){
+    let text = ""
+    if article_state.blocks.len() > 0 {
+        for block in article_state.blocks { if block.kind != "image" && block.text != "" { text = text + block.text + "\n\n" } }
+    } else { for paragraph in article_state.paragraphs { text = text + paragraph + "\n\n" } }
+    text.trim()
+}
+fn reader_summary_chunks(text, complete){
+    let work = {chars: text.to_chars() index: 0 chunk: "".to_chars() bytes: 0 chunks: [] complete: complete}
+    start_timeout(0.01, || reader_summary_chunk_step(work))
+}
+fn reader_summary_chunk_step(work){
+    let steps = 0 let started = time_now()
+    while work.index < work.chars.len() && steps < 200 && time_now() - started < 0.008 {
+        let codepoint = work.chars[work.index]
+        let bytes = 4
+        if codepoint <= 65535 { bytes = 3 }
+        if codepoint <= 2047 { bytes = 2 }
+        if codepoint <= 127 { bytes = 1 }
+        if work.bytes + bytes > 10000 { work.chunks.push(work.chunk.to_string()) work.chunk = "".to_chars() work.bytes = 0 }
+        work.chunk.push(codepoint) work.bytes = work.bytes + bytes
+        work.index = work.index + 1 steps = steps + 1
+    }
+    if work.index < work.chars.len() { start_timeout(0.01, || reader_summary_chunk_step(work)) return }
+    if work.chunk.len() > 0 { work.chunks.push(work.chunk.to_string()) }
+    work.chars = [] work.complete(work.chunks)
+}
+fn reader_summary_current(generation, id, key){
+    if reader_summary.generation != generation || reading == nil { return false }
+    if detail_kind != "story" || reading.news_id != id || reader_summary.state != "running" { return false }
+    article_state.state == "ready" && !article_state.truncated && reader_summary.body_key == key && article_state.generation == reader_summary.article_generation
+}
+fn reader_summary_start(){
+    if reading == nil || reader_summary.state == "running" { return }
+    if reader_source_summary(reading) != "" { return }
+    reader_summary.error = ""
+    if analysis_busy || octos_testing || analysis_needs_reopen { reader_summary.error = "助手忙碌或中断尚未确认，请稍后重试。" reader_summary_render() return }
+    if article_state.state != "ready" { reader_summary.error = "正文尚未读取完成，请先读取正文后重试。" reader_summary_render() return }
+    if article_state.truncated { reader_summary.error = "正文超出读取上限，暂不能生成全文摘要。可打开图文原文阅读。" reader_summary_render() return }
+    let body = reader_summary_body()
+    if body == "" { reader_summary.error = "未获取正文，无法提取摘要。" reader_summary_render() return }
+    reader_summary.generation = reader_summary.generation + 1
+    reader_summary.state = "running" reader_summary.text = "" reader_summary.body_key = body
+    reader_summary.article_generation = article_state.generation
+    reader_summary.chunks = [] reader_summary.notes = [] reader_summary.index = 0
+    reader_summary_render()
+    let generation = reader_summary.generation
+    reader_summary_chunks(body, fn(chunks){
+        if reader_summary.generation != generation || reader_summary.state != "running" { return }
+        reader_summary.chunks = chunks
+        reader_summary_next(generation)
+    })
+}
+fn reader_summary_next(generation){
+    if reader_summary.generation != generation || reader_summary.state != "running" || reading == nil { return }
+    let row = reading let key = reader_summary.body_key
+    let combining = reader_summary.index >= reader_summary.chunks.len()
+    let mode = "section" let input = ""
+    let compacting = false let batch = []
+    if combining {
+        mode = "combine"
+        compacting = reader_summary.notes.len() > 6
+        for i note in reader_summary.notes { if !compacting || i < 6 { batch.push(note) } }
+        input = batch.to_json()
+    }
+    else {
+        input = reader_summary.chunks[reader_summary.index]
+        if reader_summary.chunks.len() == 1 { mode = "whole" }
+    }
+    let payload = {mode: mode title: row.title url: row.source_url article_text: if combining {""} else {input}
+        section_notes: if combining {input} else {""} section: reader_summary.index + 1 total_sections: reader_summary.chunks.len()}
+    let prompt = article_summary_prompt + "\n" + payload.to_json()
+    let snapshot = {prompt_revision: "article-summary-v1" news_id: row.news_id max_summary_chars: if mode == "section" || compacting {600} else {1200}}
+    let error = agent_task_start("article_summary", snapshot, prompt,
+        || reader_summary_current(generation, row.news_id, key), fn(reply){
+            if reader_summary.generation != generation { return }
+            if !reply.success {
+                reader_summary.state = "failed" reader_summary.error = reply.error reader_summary_render() return
+            }
+            if compacting {
+                let notes = [reply.result.summary]
+                for i note in reader_summary.notes { if i >= 6 { notes.push(note) } }
+                reader_summary.notes = notes
+                start_timeout(0.05, || reader_summary_next(generation))
+            } else if mode == "whole" || mode == "combine" {
+                reader_summary.state = "ready" reader_summary.text = reply.result.summary
+                reader_summary_cache.retain(|entry| entry.news_id != row.news_id)
+                reader_summary_cache.push({news_id: row.news_id content_version: row["content_version"] retrieved_at: row.retrieved_at text: reader_summary.text})
+                if reader_summary_cache.len() > 20 { reader_summary_cache.remove(0) }
+                reader_summary_render()
+            } else {
+                reader_summary.notes.push(reply.result.summary) reader_summary.index = reader_summary.index + 1
+                reader_summary_render()
+                start_timeout(0.05, || reader_summary_next(generation))
+            }
+        })
+    if error != "" { reader_summary.state = "failed" reader_summary.error = error reader_summary_render() }
+}
+fn reader_summary_cancel(){
+    reader_summary.generation = reader_summary.generation + 1
+    if reader_summary.state == "running" {
+        reader_summary.state = "idle" reader_summary.error = "已取消摘要提取。"
+        if agent_task != nil {
+            if agent_task.kind == "article_summary" && !agent_task.terminal { agent_task_stop("cancelled", "已取消摘要提取", "cancelled") }
+        }
+    }
+}

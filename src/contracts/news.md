@@ -48,6 +48,10 @@ Windows 宿主临时回收保护：应用合并同一事件中的列表渲染请
 
 ## 正文阅读
 
+配图保持 HTTPS 主机许可，每张下载不超过 2 MB，累计不超过 6 MB，超时 15 秒。提取器支持 data-srcset/srcset、data-src/data-original/data-lazy-src/src；宽度候选限制为 320–1600，优先接近 900 的网页阅读尺寸。封面通过文件名匹配网页实际提供的衍生图，排除明确小于 640 的缩略图；不猜测 CDN 转换地址。请求声明可解码的 JPEG/PNG/WebP/GIF 格式并可携带获许可原站 origin 的 Referer。
+
+图片状态为 loading/ready/failed，失败保留 error；article_retry_image 只重试失败图片，仍检查文章 generation，过期完成不能写入当前详情。配图失败不清空正文，页面提供重试和应用内原文入口，不把网页验证响应当图片。resource 仅用于当前 UI，不写入存储或 Agent 证据。
+
 `article_load(row, complete)` 是只读的网页阅读边界。仅接受 `article_hosts` 中的 HTTPS 原文地址；HTTP 请求沿用 15 秒、2 MB 和 3 次许可重定向限制。`article_state` 的单一 owner 在数据层，状态为 idle/loading/ready/unavailable/failed；新的加载或离开详情增加 generation，迟到与重复完成不发布。`article_extract` 使用宿主 HTML 解析器，只读取 article/main 或明确文章容器的 p 段落，最多 80 段、24 KB，不把整页导航/同意页面当文章。状态回调由 app 层触发页面渲染。
 
-阅读文本仅存在当前阅读状态，不替换 summary/content_version、不进入 Agent snapshot 或收藏快照。未知发布日期保持未知。正文无法读取时明确回到来源摘要；应用不是完整网页浏览器，阅读模式可能省略非段落内容。当前固定 Linux/Windows Makepad 的 open_url 未实现，因此不把无效的浏览器按钮标为可用功能，保留可复制原文地址。
+阅读文本不替换 summary/content_version 或收藏快照。未知发布日期保持未知。结构化阅读可能省略非段落内容；“打开图文原文”改用应用内 WebReader，关闭原文页后回到详情。识别人机验证响应时，设置 requires_verification 并自动进入原文页；网页中的验证和阅读由用户完成。WebReader 中的正文不会自动回填到抓取器或 Agent snapshot，验证失败也不会被当成已取得全文。Windows WebReader 的宿主后端见 native/windows-webreader 和 scripts/patch_webreader_host.py；阅读页不显示平台说明，保留可复制原文地址。

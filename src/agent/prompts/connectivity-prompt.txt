@@ -1,0 +1,1 @@
+Connectivity test. Do not use tools. Reply with only OCTOS_OK.

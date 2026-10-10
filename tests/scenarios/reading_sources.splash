@@ -1,0 +1,153 @@
+// Live publisher samples; Agent responses below are explicitly synthetic.
+let reading_test_results = {passed: 0 failed: 0 checks: [] sources: [] stage: "parsing" model_calls: 0 tail_seen: false}
+let reading_test_rows = []
+fn reading_test_check(passed, name){
+    reading_test_results.checks.push({name: name passed: passed})
+    if passed { reading_test_results.passed = reading_test_results.passed + 1 } else { reading_test_results.failed = reading_test_results.failed + 1 }
+}
+fn reading_test_write(){ fs.write("reading-report.json", reading_test_results.to_json()) }
+fn reading_test_parse(index){
+    let ids = ["mit" "36kr" "ithome" "sspai" "solidot" "ifanr" "nasa"]
+    if index >= ids.len() { reading_test_load(0) return }
+    let id = ids[index] let source = news_source(id)
+    reading_test_results.stage = "parse-" + id reading_test_write()
+    let rows = news_parse(fs.read(id + ".xml"), source, time_now())
+    reading_test_check(rows != nil, id + " RSS parsed")
+    reading_test_check(rows.len() > 0, id + " nonempty rows")
+    let row = rows[0]
+    reading_test_check(news_record_valid(row), id + " normalized contract")
+    reading_test_check(row.title != "" && row.source_url != "", id + " title and original URL")
+    reading_test_results.stage = "extract-" + id reading_test_write()
+    start_timeout(0.05, || reading_test_extract(index, id, row, rows.len()))
+}
+fn reading_test_extract(index, id, row, row_count){
+    let result = nil
+    if id == "sspai" {
+        result = article_extract(fs.read("sspai.html"), row.source_url)
+        reading_test_check(row.source_summary != "", id + " publisher summary")
+        reading_test_check(row.body_html == "", id + " summary is not promoted to body")
+    } else {
+        result = article_extract("<article>" + row.body_html + "</article>", row.source_url)
+        if id == "solidot" && result.paragraphs.len() == 0 { result.paragraphs = [reading_feed_text(row.body_html)] }
+        reading_test_check(row.body_html != "", id + " original RSS body retained")
+        reading_test_check(record_contains(["mit" "ifanr" "nasa"], id) == (row.source_summary != ""), id + " summary/body distinction")
+    }
+    reading_test_check(result.paragraphs.len() > 0, id + " readable article body")
+    reading_test_check(!result.truncated, id + " sample body not truncated")
+    reading_test_results.sources.push({id: id rows: row_count summary_chars: row.source_summary.len() body_bytes: row.body_html.to_bytes().len() paragraphs: result.paragraphs.len()})
+    reading_test_rows.push(row)
+    reading_test_write()
+    mod.gc.run()
+    start_timeout(0.05, || reading_test_parse(index + 1))
+}
+fn reading_test_load(index){
+    if index >= reading_test_rows.len() { reading_test_migration() return }
+    let row = reading_test_rows[index] let accepted = false
+    article_http_request = fn(url, redirects, callback){ callback({success: true body: fs.read("sspai.html")}) }
+    article_image_request = fn(url, callback, origin = nil){ callback({success: false error: "隔离测试不下载配图"}) }
+    reading_test_results.stage = "load-" + row.source_id reading_test_write()
+    article_load(row, || {
+        if accepted { return }
+        accepted = true
+        reading_test_check(article_state.state == "ready", row.source_id + " complete article_load path")
+        reading_test_check(article_state.paragraphs.len() > 0 && !article_state.truncated, row.source_id + " full reader state")
+        reading_test_write()
+        start_timeout(0.05, || reading_test_load(index + 1))
+    })
+}
+fn reading_test_migration(){
+    let interest = {interest_id: "keyword:保留关注" kind: "keyword" value: "保留关注" enabled: true created_at: time_now()}
+    fs.write("interests_v1.json", {schema_version: 1 items: [interest] enabled_source_ids: ["hn" "ars"]}.to_json())
+    records_load()
+    reading_test_check(enabled_source_ids.len() == 7 && !record_contains(enabled_source_ids, "hn"), "legacy sources migrate to seven reading sources")
+    reading_test_check(user_interests.len() == 1 && user_interests[0].value == "保留关注", "migration preserves user interests")
+    enabled_source_ids = ["mit" "ithome"] user_interests = [] records_save_interests() records_load()
+    reading_test_check(enabled_source_ids.len() == 2 && record_contains(enabled_source_ids, "ithome") && user_interests.len() == 0, "saved nonempty sources with empty interests reload safely")
+    enabled_source_ids = [] records_save_interests() records_load()
+    reading_test_check(enabled_source_ids.len() == 0, "subsequent explicit disable-all survives reload")
+    reading_test_check(reading_test_results.model_calls == 0, "parsing and migration make no model calls")
+    let text = ""
+    for i in 12 { text = text + "这是明确标注的合成新闻段落，用于检查全部正文都进入模型上下文。" }
+    let html = "<p>" + text + "</p><p>FULL_BODY_TAIL_合成正文末尾</p>"
+    let row = news_normalize({title: "合成新闻：手动全文摘要验证" link: "https://www.ithome.com/reading-fixture" body_html: html body_origin: "publisher_rss" body_truncated: false}, news_source("ithome"), time_now())
+    let body = ""
+    for i in 35 { body = body + text + "\n" }
+    body = body + "FULL_BODY_TAIL_合成正文末尾"
+    reader_summary_chunks(body, fn(chunks){
+        let joined = ""
+        for chunk in chunks { joined = joined + chunk }
+        reading_test_check(joined == body && chunks.len() > 1, "Unicode chunking preserves every character and tail")
+    })
+    reading_test_results.stage = "migration_passed" reading_test_write()
+    reading_test_check(!tracking_parse("{\"summary\":\"\"}", "article_summary", {max_summary_chars: 1200}).valid, "empty model summary rejected")
+    reading_test_check(!tracking_parse("not json", "article_summary", {max_summary_chars: 1200}).valid, "invalid model summary rejected")
+    let paragraphs = []
+    for i in 10 { paragraphs.push("合成证据段落") }
+    let cached = analysis_article_store(row, {paragraphs: paragraphs truncated: false}, "")
+    reading_test_check(cached.paragraphs.len() == 6 && cached.truncated, "tracking excerpt cache is bounded independently of full reader body")
+    agent_metrics_origin = "synthetic_fixture"
+    analysis_host_has = |name| true
+    analysis_host_request = fn(name, data, callback){
+        if name == "octos.turn.start" {
+            reading_test_results.model_calls = reading_test_results.model_calls + 1
+            if regex("FULL_BODY_TAIL").test(data.text) { reading_test_results.tail_seen = true }
+            start_timeout(0.15, || callback({is_ok: true data: {text: "{\"summary\":\"这是合成模型回复，用于验证手动摘要流程。\"}"}}))
+        } else { callback({is_ok: true data: {}}) }
+    }
+    article_image_request = fn(url, callback, origin = nil){ callback({success: false error: "隔离测试不下载配图"}) }
+    app_feed_rows = [row] render_main()
+    start_timeout(0.1, || {
+        open_story(row)
+        start_timeout(0.2, || {reading_test_results.stage = "ui_ready" reading_test_write()})
+    })
+}
+fn reading_test_after_click(){
+    reading_test_check(reader_summary.state == "ready" && reader_summary.text != "", "manual button publishes summary")
+    reading_test_check(reading_test_results.model_calls == 1 && reading_test_results.tail_seen, "button sends full article including tail")
+    // Publisher summary never calls the Agent and remains separate from body.
+    let mit = reading_test_rows[0]
+    reading = mit reader_summary_open(mit) reader_summary_start()
+    reading_test_check(reading_test_results.model_calls == 1 && reader_source_summary(mit) != "", "publisher summary skips model")
+    let row = app_feed_rows[0]
+    reading = row reader_summary_open(row)
+    article_state.truncated = true reader_summary_start()
+    reading_test_check(reading_test_results.model_calls == 1 && reader_summary.error != "", "truncated body blocks full-text summary")
+    article_state.truncated = false
+    // Multi-part extraction must read through the final segment and combine.
+    let text = fs.read("summary-long-fixture.txt")
+    article_state.blocks = [{kind: "paragraph" text: text + "FULL_BODY_TAIL_最后一段"}]
+    reader_summary_start()
+    start_timeout(3.0, || {
+        reading_test_check(reader_summary.state == "ready" && reading_test_results.model_calls > 3, "multi-part article summarized and combined")
+        reading_test_check(reader_summary.index == reader_summary.chunks.len(), "all article segments processed")
+        let calls = reading_test_results.model_calls
+        reader_summary_open(row)
+        // Cancellation while the host turn is outstanding invalidates callbacks.
+        reader_summary_cache = [] reader_summary.state = "idle"
+        reader_summary_start()
+        start_timeout(0.08, || {
+            reader_summary_cancel()
+            start_timeout(0.4, || {
+                reading_test_check(reader_summary.state == "idle" && reader_summary.text == "", "cancelled reply does not publish summary")
+                reading_test_check(!analysis_busy && !analysis_needs_reopen, "cancel acknowledged and shared Agent released")
+                reading_test_results.stage = "complete" reading_test_write()
+            })
+        })
+    })
+}
+start_timeout(0.1, || {
+    records_load() schedules_load() topics_load() agent_preferences_load() feed_initialize()
+    tracking_schedule_check = fn(){}
+    start_interval(0.2, || {
+        if reading_test_results.stage == "ui_ready" && reader_summary.state == "ready" {
+            reading_test_results.stage = "summary_ready"
+            reading_test_write()
+        }
+        if reading_test_results.stage == "summary_ready" && fs.exists("summary-ui-checked.txt") {
+            reading_test_results.stage = "agent_checks"
+            reading_test_write()
+            start_timeout(0.05, || reading_test_after_click())
+        }
+    })
+    reading_test_parse(0)
+})

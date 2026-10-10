@@ -28,6 +28,37 @@ fn insights_tests(){
     insights_assert(insight_state(insight, run) == "pending", "material new facts reopen")
     insight.change_kind = "withdrawn"
     insights_assert(insight_state(insight, run) == "withdrawn", "withdrawn remains visibly withdrawn")
+    let saved_runs = tracking_cache.runs
+    let prior = insight.to_json().parse_json() prior.summary = "固定测试：上次判断"
+    tracking_cache.runs = [{task_id: "comparison-test" checked_at: 1 result: {insights: [prior]}}]
+    let presentation = {insight: insight run: run}
+    insight.compared_run_id = "comparison-test"
+    insights_assert(insight_comparison(presentation).insight.summary == prior.summary, "comparison uses the exact previous issue")
+    prior.target_version = 2
+    insights_assert(insight_comparison(presentation) == nil, "comparison rejects another target version")
+    prior.target_version = 1 prior.issue_key = "other"
+    insights_assert(insight_comparison(presentation) == nil, "comparison rejects another issue")
+    prior.issue_key = insight.issue_key insight.compared_run_id = "evicted"
+    insights_assert(insight_comparison(presentation) == nil, "evicted comparison stays unavailable")
+    insight.compared_run_id = nil tracking_cache.runs = saved_runs
+    let saved_draft = intent_draft
+    let stale_plan = {run: {snapshot: {prompt_revision: "obsolete"}} insight: {next_step: "不可执行的旧核实建议"}}
+    insights_assert(!insight_plan_check(stale_plan) && intent_draft == saved_draft, "stale next check cannot open or replace a draft")
+    intent_draft = topic_new_draft(nil)
+    for example in life_scenarios {
+        intent_draft = topic_new_draft(nil)
+        insights_assert(intent_use_scenario(example.id) && intent_draft.intent_kind == "goal" && intent_draft.original_input == example.input,
+            "life starter populates editable goal: " + example.id)
+        let before_input = intent_draft.original_input
+        insights_assert(!intent_use_scenario("buy") && intent_draft.original_input == before_input,
+            "life starter cannot replace existing input: " + example.id)
+    }
+    intent_draft = topic_new_draft(nil) intent_draft.target_topic_id = "topic-test"
+    insights_assert(!intent_use_scenario("learn"), "life starter cannot replace a topic edit")
+    intent_draft = topic_new_draft(nil) intent_draft.supplement = "保留补充"
+    insights_assert(!intent_use_scenario("learn"), "life starter preserves supplement-only draft")
+    if intent_save_timer != nil { stop_timer(intent_save_timer) intent_save_timer = nil }
+    intent_draft = saved_draft
     let prefs = agent_preferences.to_json().parse_json() prefs.orb_x = 2
     insights_assert(!agent_preferences_valid(prefs), "orb must stay normalized inside viewport")
     prefs.orb_x = 0 prefs.interval_seconds = 1

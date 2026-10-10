@@ -1,5 +1,34 @@
 // Application operations; decisions remain owned by topics_commit.
 let insight_evidence_view = nil
+let results_show_all_insights = false
+fn insight_comparison(value){
+    let current = value.insight
+    if !record_string(current["compared_run_id"]) { return nil }
+    // Use the exact validated comparison run, not whichever record is newest.
+    for run in tracking_cache.runs {
+        if run["task_id"] != current.compared_run_id || !record_array(run.result["insights"]) { continue }
+        for old in run.result.insights {
+            if old.target_type == current.target_type && old.target_id == current.target_id &&
+                old.target_version == current.target_version && old.issue_key == current.issue_key {
+                return {insight: old checked_at: run.checked_at}
+            }
+        }
+    }
+    nil
+}
+fn insight_goal(value){
+    if value.insight["target_type"] != "topic" || !record_array(value.run.snapshot["topics"]) { return nil }
+    for topic in value.run.snapshot.topics {
+        if topic.topic_id == value.insight.target_id && topic.version == value.insight.target_version { return topic }
+    }
+    nil
+}
+fn insight_decision_effect(value){
+    let labels = {none: "暂不需要改变行动" watch: "继续观察" review: "需要重新核实决定" unknown: "证据不足，暂不能判断"}
+    let label = labels[value.insight.decision_effect]
+    if label == nil { return "" }
+    label
+}
 fn insight_open_evidence(value, id){
     let row = tracking_current_row(id)
     if row == nil { notice("来源已离开当前列表，请重新检查") return }
@@ -46,6 +75,7 @@ fn insight_decide(value, state){
 }
 fn insight_label(value){
     let labels = {new: "新增" updated: "更新" withdrawn: "撤回" unchanged: "无变化" watch: "继续观察" handled: "已处理" dismissed: "已忽略" pending: "待关注"}
+    if value.insight.change_kind == value.state { return labels[value.state] }
     labels[value.insight.change_kind] + " · " + labels[value.state]
 }
 fn target_check_label(kind, id, version){

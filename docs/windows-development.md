@@ -66,6 +66,8 @@ powershell -ExecutionPolicy Bypass -File scripts/run_windows.ps1 -Mode Rinx -Rin
 
 不传 `-Mode` 时启动 card-host，窗口 430×860。它没有 Rinx 的 Octos 服务，连接检查应报告真实服务不可用。启动脚本通过固定 hub 刷新未签名摘要和 `build/cfaw-news.zip`；签名包不能使用该流程改写。
 
+打包脚本会先用固定的嵌套文件校验向量确认 Hub 使用可移植的 `/` 路径摘要；旧 Windows 工具即使自身 `check` 通过，也可能与 Rinx 不一致，此类工具会在修改应用前被拒绝。可用 `scripts/package.py --hub <兼容的 hub.exe>` 或 `OCTO_HUB` 显式选择工具；成功选择缓存为 `build/package-tool.json`，缺少本项目默认工具时复用，且每次重新检查兼容性。`bundle digest` 表示包的内容指纹；只有 `does not match the manifest` 才是摘要不一致。修复后须重新点击 Review bundle，以丢弃旧审查结果。
+
 ## 数据与验证边界
 
 Rinx 默认沿用项目 `.local-state/rinx/`，此目录不入 Git。设置 `RINX_DATA_DIR` 或旧 `ROBRIX_DATA_DIR` 可覆盖。更新依赖不迁移或清理用户记录。直接双击原始 rinx.exe 会使用宿主默认数据目录，建议通过项目脚本启动。

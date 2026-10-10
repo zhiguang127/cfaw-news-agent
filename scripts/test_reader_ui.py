@@ -45,12 +45,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host-root', type=Path, required=True)
     parser.add_argument('--window-size', default='430x860', choices=('430x860', '800x1050'))
-    parser.add_argument('--article-url', help='Optional real HTTPS article; one explicitly granted hostname')
-    parser.add_argument('--open-original', action='store_true', help='Actually click the real article link and verify Windows browser dispatch')
+    parser.add_argument('--article-url', help='Optional real HTTPS article; grants the configured article/image hosts')
+    parser.add_argument('--open-original', action='store_true', help='Click WebReader and verify application navigation; does not prove native page rendering')
     parser.add_argument('--chinese', action='store_true', help='Use Chinese paragraph fixtures to check inter-character justification')
+    parser.add_argument('--retry-image', action='store_true', help='Fail the synthetic image once, then verify the retry button displays it')
     args = parser.parse_args()
     release = args.host_root.resolve() / 'target/release'
-    work = ROOT / ('.test-state/reader-' + args.window_size + ('-live' if args.article_url else '') + ('-zh' if args.chinese else ''))
+    assert not (args.retry_image and args.article_url), 'Retry fault injection is only for labelled synthetic fixtures'
+    work = ROOT / ('.test-state/reader-' + args.window_size + ('-live' if args.article_url else '') + ('-zh' if args.chinese else '') + ('-web' if args.open_original else '') + ('-retry' if args.retry_image else ''))
     work.mkdir(parents=True, exist_ok=True)
     bundle = work / 'bundle'
     bundle.mkdir(exist_ok=True)
@@ -69,7 +71,11 @@ def main():
         setup += 'article_http_request = fn(url, redirects, callback){ callback({success: true body: ' + json.dumps(html) + '}) }\n'
         setup += 'let fixture_bytes = "".to_bytes()\nfor value in ' + json.dumps([float(b) for b in fixture_png()]) + ' { fixture_bytes.push(value) }\n'
         setup += 'fs.write("bytes-check.json", {length: fixture_bytes.len() a: fixture_bytes[0] b: fixture_bytes[1]}.to_json())\n'
-        setup += 'article_image_request = fn(url, callback){ start_timeout(1.0, || callback({success: true bytes: fixture_bytes})) }\n'
+        setup += 'let fixture_image_attempts = 0\n'
+        fixture_reply = 'callback({success: true bytes: fixture_bytes})'
+        if args.retry_image:
+            fixture_reply = 'if fixture_image_attempts == 1 { callback({success: false error: "配图请求 HTTP 503"}) } else { ' + fixture_reply + ' }'
+        setup += 'article_image_request = fn(url, callback, origin = nil){ fixture_image_attempts = fixture_image_attempts + 1 start_timeout(1.0, || { ' + fixture_reply + ' }) }\n'
     article_url = args.article_url or 'https://news.mit.edu/reader-fixture'
     source += '''
 start_timeout(0.1, || {
@@ -80,15 +86,16 @@ start_timeout(0.1, || {
     app_feed_rows = [first second]
     render_main()
     start_timeout(0.1, || open_story(first))
-    start_timeout(2.0, || { let states = [] for image in article_state.images { states.push(image.state) } fs.write("reader-state.json", {state: article_state.state error: article_state.error blocks: article_state.blocks.len() images: states}.to_json()) })
+    start_interval(0.2, || fs.write("original-state.json", {open: original_article_open native_open: ui.original_reader.is_open() detail: detail_kind reading: if reading == nil {""} else {reading.news_id}}.to_json()))
+    start_interval(0.5, || { let states = [] for image in article_state.images { states.push({url: image.url state: image.state error: image["error"]}) } fs.write("reader-state.json", {state: article_state.state error: article_state.error blocks: article_state.blocks.len() images: states}.to_json()) })
 })
 '''
     (bundle / 'main.splash').write_text(source, encoding='utf-8', newline='\n')
     native = work / 'native'
     native.mkdir(exist_ok=True)
     executable = native / 'reader-probe.exe'
-    libraries = list((release / 'deps').glob('librinx-*.rlib'))
-    assert len(libraries) == 1, libraries
+    libraries = sorted((release / 'deps').glob('librinx-*.rlib'), key=lambda p: p.stat().st_mtime, reverse=True)
+    assert libraries, 'Build the host first'
     command = ['rustc', '+1.98.0', '--edition=2024', '-C', 'opt-level=2', '--crate-name', 'cfaw_reader_probe', '--extern', 'rinx=' + str(libraries[0]), '-L', 'dependency=' + str(release / 'deps'), str(ROOT / 'tests/scenarios/rinx_render_probe.rs'), '-o', str(executable)]
     for output in (release / 'build').glob('*/output'):
         for line in output.read_text(encoding='utf-8', errors='replace').splitlines():
@@ -118,11 +125,14 @@ start_timeout(0.1, || {
         x, y, width, height = w['r']
         get('/click', x=x+width/2, y=y+height/2, wait=1)
         time.sleep(.2)
-    command = [str(executable), '--bundle', str(bundle), '--app-data', str(data), '--remote='+str(port), '--size', args.window_size]
+    command = [str(executable), '--bundle', str(bundle), '--app-data', str(data), '--remote='+str(port), '--size', args.window_size, '--web-reader-test']
     if args.article_url:
         url = urlsplit(args.article_url)
         assert url.scheme == 'https' and not url.username and not url.port
-        command += ['--network-host', url.hostname]
+        hosts = set(json.loads((ROOT / 'bundle/manifest.json').read_text(encoding='utf-8'))['network']['hosts'])
+        assert url.hostname in hosts, 'Article must be from a configured host'
+        for hostname in sorted(hosts):
+            command += ['--network-host', hostname]
     checks = []
     with (work / 'host.log').open('w', encoding='utf-8') as log:
         process = subprocess.Popen(command, cwd=native, env=env, stdout=log, stderr=log)
@@ -140,19 +150,42 @@ start_timeout(0.1, || {
             else:
                 raise RuntimeError('Reader did not load the article')
             assert column[2] <= 720.1, column
+            assert not any('平台说明' in w.get('t', '') for w in initial)
             if args.window_size == '800x1050':
                 shell = find(ident='app_shell')['r']
                 assert shell[2] > 720 and column[0] > shell[0], (shell, column)
             if args.open_original:
-                assert args.article_url, 'Only click a real public article in this test'
                 click(find(ident='original_article'))
-                assert 'open_url: dispatched HTTP(S) link to default browser' in (work / 'host.log').read_text(encoding='utf-8', errors='replace')
-                checks.append('real original link clicked; Windows ShellExecute accepted default browser navigation')
+                time.sleep(.8)
+                find(text='图文原文')
+                find(ident='original_reader')
+                opened = json.loads((data / 'dev.cfaw.runtime-tests/original-state.json').read_text(encoding='utf-8'))
+                assert opened['open'] and opened['native_open'], opened
+                (work / 'webreader.png').write_bytes(get('/g', raw=1))
+                click(find(text='‹ 返回'))
+                time.sleep(.4)
+                closed = json.loads((data / 'dev.cfaw.runtime-tests/original-state.json').read_text(encoding='utf-8'))
+                assert not closed['open'] and not closed['native_open'] and closed['reading'] == opened['reading'], closed
+                find(ident='original_article')
+                assert 'open_url: dispatched HTTP(S)' not in (work / 'host.log').read_text(encoding='utf-8', errors='replace')
+                checks.append('WebReader open/close navigation preserves article and returns to detail; no external browser dispatch; native page rendering unverified')
             scroll_amount = 350
             if not args.article_url:
                 initial_paragraph = next(w['r'] for w in initial if w.get('t') == first_text)
                 scroll_amount = max(0, initial_paragraph[1] - find(ident='story_content')['r'][1] - 14)
             get('/m', k='scroll', x=column[0]+column[2]/2, y=580, dy=scroll_amount, wait=1)
+            if args.retry_image:
+                for _ in range(80):
+                    try:
+                        find(text='配图请求 HTTP 503')
+                        retry = find(text='重试配图')
+                        break
+                    except (OSError, StopIteration):
+                        time.sleep(.25)
+                else:
+                    raise RuntimeError('Failed image did not expose its cause and retry button')
+                click(retry)
+                checks.append('synthetic HTTP 503 exposes cause; retry recovers the actual decoded fixture image')
             for _ in range(120):
                 try:
                     image = next(w for w in widgets() if w.get('ty') == 'Image' and w['r'][2] > 100 and w['r'][3] > 100)
@@ -190,14 +223,14 @@ start_timeout(0.1, || {
                     find(text=label)
                 checks.append('article order, heading, paragraphs, caption, list and quote; unapproved image excluded')
                 click(find(text='‹ 返回'))
-                buttons = [w for w in widgets() if w.get('t') == '查看' and w.get('ty') != 'Label']
-                click(buttons[0])
+                click(find(text='Synthetic illustrated article'))
                 click(find(text='‹ 返回'))
-                buttons = [w for w in widgets() if w.get('t') == '查看' and w.get('ty') != 'Label']
-                click(buttons[1])
+                # The floating intent orb can overlap the second row's button.
+                click(find(text='Synthetic unsupported article'))
                 time.sleep(1.2)
                 find(ident='original_article')
-                find(text='此来源未提供摘要。点击上方“打开图文原文”查看文章和图片。')
+                assert not any('平台说明' in w.get('t', '') for w in widgets())
+                find(text='此来源未提供摘要。点击上方“打开图文原文”，在应用内查看来源网页。')
                 assert not any(w.get('ty') == 'Image' for w in widgets())
                 (work / 'fallback.png').write_bytes(get('/g', raw=1))
                 checks.append('unsupported empty-summary article has original entry; cancelled old image callback cannot leak into it')
@@ -212,8 +245,14 @@ start_timeout(0.1, || {
             except (OSError, subprocess.TimeoutExpired):
                 process.terminate()
                 process.wait(timeout=5)
-    assert '[E]' not in (work / 'host.log').read_text(encoding='utf-8', errors='replace')
-    (work / 'report.json').write_text(json.dumps({'host': str(args.host_root), 'article_url': args.article_url, 'checks': checks}, indent=2), encoding='utf-8')
+    log_text = (work / 'host.log').read_text(encoding='utf-8', errors='replace')
+    unsupported = 'Not implemented on this platform: CxOsOp::SpawnSystemBrowser' in log_text
+    (work / 'report.json').write_text(json.dumps({'host': str(args.host_root), 'article_url': args.article_url, 'checks': checks,
+        'native_webreader_supported': False if unsupported else None,
+        'host_errors': [line for line in log_text.splitlines() if '[E]' in line]}, indent=2), encoding='utf-8')
+    if unsupported:
+        raise RuntimeError('WebReader navigation checked, but Windows host has no embedded browser implementation; full original-page test FAILED')
+    assert '[E]' not in log_text
     print(work)
 
 

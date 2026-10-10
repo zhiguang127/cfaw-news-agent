@@ -19,8 +19,17 @@ fn analysis_article_find(row){
 }
 fn analysis_article_store(row, extracted, error){
     let paragraphs = []
-    if extracted != nil { for i text in extracted.paragraphs { paragraphs.push({paragraph_id: "p" + (i + 1) text: text}) } }
     let truncated = false if extracted != nil { truncated = extracted.truncated }
+    // Tracking consumes at most six paragraphs / 4 KB. Bound its separate
+    // evidence cache before fingerprinting now that the reader accepts longer
+    // bodies; manual full-text summaries continue to use article_state.
+    let bytes = 0
+    if extracted != nil {
+        for i text in extracted.paragraphs {
+            if paragraphs.len() >= 6 || bytes + text.len() > 4000 { truncated = true break }
+            paragraphs.push({paragraph_id: "p" + (i + 1) text: text}) bytes = bytes + text.len()
+        }
+    }
     let entry = {news_id: row.news_id content_key: analysis_article_key(row) source_url: row.source_url
         retrieved_at: time_now() paragraphs: paragraphs truncated: truncated error: error
         body_key: evidence_body_fingerprint(paragraphs)}
