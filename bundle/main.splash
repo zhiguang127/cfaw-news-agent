@@ -7080,7 +7080,6 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{le
                 if cache_note != "" { Small{text: cache_note max_lines: 2}}
                 View{width: Fill height: 26 flow: Right spacing: 5 align: Align{y: 0.5}
                     EditorialTag{Label{text: category_label(row.category) draw_text.color: editorial_accent draw_text.text_style: theme.font_regular{font_size: 10}}}
-                    QuietButton{text: "关注话题" on_click: || follow_story(row)}
                     if records_has_interest("source", row.source) { LinkButton{text: "已跟踪" on_click: || toggle_follow(row)} }
                     else { QuietButton{text: "关注来源" on_click: || toggle_follow(row)} }
                     if records_is_bookmarked(row.news_id) { LinkButton{text: "已收藏" on_click: || toggle_save(row)} }
