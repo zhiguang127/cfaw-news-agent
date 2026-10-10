@@ -4842,6 +4842,7 @@ let results_pending_offset = 0
 let suggestion_focus_id = nil
 // UI actions connect repository/retrieval/ingestion; mutable navigation lives here.
 let page = "feed"
+let tracking_section = "dynamic"
 let category = "all"
 let query = ""
 let page_filters = {feed: {category: "all" query: ""} tracking: {category: "all" query: ""} saved: {category: "all" query: ""}}
@@ -4849,7 +4850,6 @@ let reading = nil
 let detail_kind = ""
 let story_show_analysis = false
 let busy = false
-let menu_open = false
 let last_swipe_refresh_at = 0
 let last_return_top_at = 0
 let settings_show_diagnostics = false
@@ -4980,7 +4980,6 @@ fn sync_status(){
     ui.status.set_text(text)
     ui.refresh_news.set_text(if busy { "停止更新" } else { "刷新新闻" })
     ui.refresh_toolbar.set_visible(page == "feed" && detail_kind == "")
-    ui.menu_cancel_update.set_visible(busy)
     ui.tracking_summary.set_text("我的关注 · " + tracking_focus_count() + " 项 · " + tracking_new_count() + " 条未读更新")
     render_analysis_controls()
 }
@@ -4999,7 +4998,7 @@ fn render_feed(){
 fn render_feed_now(){
     // A source completion or an earlier navigation may arrive while the
     // calendar is visible. Its hidden list can wait until browsing resumes.
-    if page == "schedule" { feed_render_pending = false sync_status() ui.tile_list.render() return }
+    if page == "schedule" || page == "account" || (page == "tracking" && tracking_section == "suggestions") { feed_render_pending = false sync_status() ui.tile_list.render() return }
     let generation = feed_render_generation
     let rows = visible_rows()
     prepare_feed_presentation(rows, generation, fn(prepared){
@@ -5044,23 +5043,31 @@ fn render_main_now(){
     render_analysis_controls()
     if page == "feed" || page == "saved" { ui.categories.render() }
     // Keep navigation hit targets alive while deferred page renders settle.
-    ui.feed_tab_active.set_visible(page != "schedule")
+    let browsing = page == "feed" || page == "saved" || (page == "tracking" && tracking_section == "dynamic")
+    ui.feed_tab_active.set_visible(page == "feed")
+    ui.tracking_tab_active.set_visible(page == "tracking")
     ui.schedule_tab_active.set_visible(page == "schedule")
+    ui.account_tab_active.set_visible(page == "account" || page == "saved")
+    ui.home_tools.set_visible(page == "feed" || page == "saved")
     ui.feed_filters.set_visible(page == "feed" || page == "saved")
     ui.refresh_toolbar.set_visible(page == "feed" && detail_kind == "")
     ui.tracking_header.set_visible(page == "tracking")
     ui.bookmarks_header.set_visible(page == "saved")
-    ui.search_box.set_visible(page != "schedule")
-    ui.status.set_visible(page != "schedule")
-    ui.feed_list.set_visible(page != "schedule")
+    ui.search_box.set_visible(page == "feed" || page == "saved")
+    ui.status.set_visible(browsing)
+    ui.feed_list.set_visible(browsing)
     ui.schedule_page.set_visible(page == "schedule")
+    ui.account_page.set_visible(page == "account")
+    ui.results_panel.set_visible(page == "tracking" && tracking_section == "suggestions")
     if page == "schedule" {
         ui.schedule_list.render()
         ui.schedule_editor.render()
-    } else { render_feed() }
+    } else if page == "tracking" && tracking_section == "suggestions" { ui.results_content.render() }
+    else if browsing { render_feed() }
 }
+fn tracking_pick_section(section){ tracking_section = section select_page("tracking") }
 fn select_page(id){
-    close_menu()
+    article_cancel()
     notice("")
     if page != "schedule" { page_filters[page] = {category: category query: query} }
     page = id
@@ -5302,12 +5309,13 @@ fn render_analysis_controls(){
     ui.feed_context.set_visible(context.has_context && page == "feed" && detail_kind == "")
     if page == "feed" && detail_kind == "" { ui.feed_context_content.render() }
     let count = suggestion_attention_count()
-    ui.menu_badge.set_visible(count > 0)
-    ui.suggestions_button.set_text("分析与建议")
-    if count > 0 { ui.suggestions_button.set_text("分析与建议 · " + count + " 待处理") }
+    ui.tracking_tab.set_text(if count > 0 { "关注 · " + count } else { "关注" })
+    ui.tracking_dynamic_button.set_text(if tracking_section == "dynamic" { "动态 ✓" } else { "动态" })
+    ui.tracking_new_button.set_text("新增 / 继续草稿")
+    ui.suggestions_button.set_text(if tracking_section == "suggestions" { "建议 ✓" } else { "建议" })
+    if count > 0 { ui.suggestions_button.set_text("建议 · " + count) }
     ui.pending_suggestions.set_visible(count > 0 && page == "feed" && detail_kind == "")
     ui.pending_suggestions.set_text("" + count + " 项变化待关注 ›")
-    ui.manage_tracking_button.set_visible(analysis_has_focus())
     if page == "tracking" { ui.tracking_analysis_actions.render() }
 }
 fn analysis_check_status(){
@@ -5332,7 +5340,7 @@ fn analysis_status_for_news(id){
     "尚无当前有效的追踪结果"
 }
 fn analyze_changes(){ tracking_start(nil) }
-fn show_analysis_results(){ results_pending_offset = 0 results_show_error_detail = false schedule_confirmation_id = nil notice("") render_analysis_controls() show_detail("results", "分析与建议") }
+fn show_analysis_results(){ results_pending_offset = 0 results_show_error_detail = false schedule_confirmation_id = nil tracking_pick_section("suggestions") }
 fn retry_analysis_save(){
     let error = history_retry_save()
     if error == "" { notice("结果已保存") } else { notice(error) }
@@ -5425,15 +5433,12 @@ fn render_detail(){
     ui.original_pane.set_visible(detail_kind == "story" && original_article_open)
     ui.settings_panel.set_visible(detail_kind == "settings")
     ui.tracking_panel.set_visible(detail_kind == "tracking")
-    ui.results_panel.set_visible(detail_kind == "results")
     ui.weather_panel.set_visible(detail_kind == "weather")
     if detail_kind == "intent" { intent_render() }
-    if detail_kind == "results" { ui.results_content.render() }
     if detail_kind == "weather" { ui.weather_content.render() }
 }
 fn show_detail(kind, title){
     close_original_article()
-    close_menu()
     if kind != "story" { article_cancel() }
     detail_kind = kind
     ui.detail_title.set_text(title)
@@ -5494,7 +5499,6 @@ fn close_detail(){
         return
     }
     if detail_kind == "intent" && intent_open { intent_cancel() return }
-    close_menu()
     reader_summary_cancel()
     article_cancel()
     detail_kind = ""
@@ -5503,13 +5507,12 @@ fn close_detail(){
     ui.detail_pane.set_visible(false)
     ui.main.set_visible(true)
     ui.navigation.set_visible(true)
-    ui.search_box.set_visible(page != "schedule")
+    ui.search_box.set_visible(page == "feed" || page == "saved")
     // Preserve the existing ScrollYView and its position on return.
-    render_feed()
+    if page == "tracking" && tracking_section == "suggestions" { ui.results_content.render() }
+    else { render_feed() }
 }
 fn show_settings(){ notice("") settings_show_diagnostics = false ui.diagnostics_controls.render() show_detail("settings", "设置") }
-fn close_menu(){ menu_open = false ui.menu_panel.set_visible(false) }
-fn toggle_menu(){ menu_open = !menu_open ui.menu_panel.set_visible(menu_open) }
 fn manage_tracking(){ notice("") show_detail("tracking", "管理关注") }
 fn remove_interest(id){ analysis_check_message = "" notice(records_remove_interest(id)) render_detail() render_feed() tracking_schedule_check() }
 fn toggle_source(id){
@@ -5926,7 +5929,7 @@ fn tracking_schedule_check(){
 fn tracking_ui_update(){
     render_feed() render_analysis_controls()
     if detail_kind == "story" { ui.story_content.render() }
-    if detail_kind == "results" { ui.results_content.render() }
+    if page == "tracking" && tracking_section == "suggestions" && detail_kind == "" { ui.results_content.render() }
     if detail_kind == "tracking" { ui.interest_list.render() ui.continuous_controls.render() }
     if detail_kind == "intent" { intent_render() }
 }
@@ -6182,7 +6185,6 @@ fn intent_motion_frame(generation, opening, started){
 }
 fn intent_show(){
     if !intent_open { intent_return_kind = detail_kind }
-    close_menu()
     intent_open = true detail_kind = "intent"
     intent_motion_active = true
     intent_scene_ready = false
@@ -6915,13 +6917,60 @@ let Search = TextInput{width: Fill height: 32 empty_text: "搜索新闻"
         border_color: #x00000000 border_color_hover: #x00000000 border_color_focus: #x00000000 border_color_empty: #x00000000 border_radius: 8.0}
     draw_text +: {color: ink color_hover: ink color_focus: ink color_empty: secondary color_empty_hover: secondary text_style +: {font_size: 12}}
 }
+// Editorial feed styles are scoped so reading and management pages keep their sizing.
+let editorial_ink = #x202635
+let editorial_muted = #x8790a3
+let editorial_accent = #x7369c6
+let EditorialTitle = Text{draw_text.color: editorial_ink draw_text.text_style: theme.font_bold{font_size: 17 line_spacing: 1.16}}
+let EditorialCaption = Small{draw_text.color: editorial_muted draw_text.text_style.font_size: 11}
+let EditorialTag = RoundedView{width: Fit height: 22 padding: Inset{left: 9 right: 9 top: 3 bottom: 3} show_bg: true draw_bg.color: #xf1f0fb draw_bg.border_radius: 11.0}
+let EditorialCard = RoundedView{width: Fill height: Fit flow: Down padding: 15 spacing: 9 show_bg: true
+    draw_bg +: {color: white border_size: 1.0 border_color: #xeeeff5 border_radius: 20.0}}
+let EditorialImage = Image{fit: ImageFit.CropToFill draw_bg +: {
+    radius: uniform(14.0)
+    pixel: fn(){
+        let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+        let c = mix(self.get_color(), #xeef0f5, self.async_load)
+        sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.radius)
+        sdf.fill(vec4(c.xyz, c.w * self.opacity))
+        return sdf.result
+    }
+}}
+let EditorialIcon = View{width: 24 height: 24 show_bg: true draw_bg +: {
+    kind: uniform(0.0) tint: uniform(#x8790a3)
+    pixel: fn(){
+        let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+        if self.kind < 0.5 {
+            sdf.move_to(3.0, 10.0) sdf.line_to(12.0, 3.0) sdf.line_to(21.0, 10.0) sdf.stroke(self.tint, 1.7)
+            sdf.box(5.0, 10.0, 14.0, 11.0, 2.0) sdf.stroke(self.tint, 1.7)
+            sdf.box(10.0, 15.0, 4.0, 6.0, 0.5) sdf.stroke(self.tint, 1.5)
+        } else if self.kind < 1.5 {
+            sdf.circle(12.0, 12.0, 9.0) sdf.stroke(self.tint, 1.7)
+            sdf.circle(12.0, 12.0, 4.0) sdf.stroke(self.tint, 1.7)
+            sdf.move_to(13.0, 11.0) sdf.line_to(21.0, 3.0) sdf.stroke(self.tint, 1.7)
+        } else if self.kind < 2.5 {
+            sdf.box(4.0, 5.0, 16.0, 16.0, 3.0) sdf.stroke(self.tint, 1.7)
+            sdf.move_to(4.0, 10.0) sdf.line_to(20.0, 10.0) sdf.stroke(self.tint, 1.5)
+            sdf.move_to(8.0, 3.0) sdf.line_to(8.0, 7.0) sdf.stroke(self.tint, 1.7)
+            sdf.move_to(16.0, 3.0) sdf.line_to(16.0, 7.0) sdf.stroke(self.tint, 1.7)
+            sdf.move_to(8.0, 15.0) sdf.line_to(11.0, 18.0) sdf.line_to(16.0, 13.0) sdf.stroke(self.tint, 1.5)
+        } else if self.kind < 3.5 {
+            sdf.circle(12.0, 7.0, 4.0) sdf.stroke(self.tint, 1.7)
+            sdf.box(5.0, 14.0, 14.0, 7.0, 3.0) sdf.stroke(self.tint, 1.7)
+        } else {
+            sdf.circle(10.0, 10.0, 6.0) sdf.stroke(self.tint, 1.7)
+            sdf.move_to(15.0, 15.0) sdf.line_to(21.0, 21.0) sdf.stroke(self.tint, 1.7)
+        }
+        return sdf.result
+    }
+}}
 // END src/frontend/styles.splash
 
 // BEGIN src/frontend/components/news_list.splash
 // Keep unadmitted RSS thumbnails from aborting the whole list render.
 fn news_thumbnail_allowed(row){ record_string(row["image_url"]) && article_image_allowed(row.image_url) }
 let news_thumbnail_resource = |url| http_resource(url)
-let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{left: 14 right: 14 top: 8 bottom: 14} spacing: 10 on_render: || {
+let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{left: 18 right: 18 top: 10 bottom: 24} spacing: 14 on_render: || {
     let featured_rows = []
     let image_rows = []
     let text_rows = []
@@ -6934,19 +6983,71 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{le
         } else { text_rows.push(row) }
     }
     if featured_rows.len() > 0 {
-        Section{text: "今日热点" padding: Inset{left: 2 top: 2}}
-        ScrollXView{width: Fill height: 170 flow: Right spacing: 10 padding: Inset{bottom: 4}
-            for row in featured_rows {
-                GestureView{width: 286 height: 158 on_tap: |x, y| open_story(row)
-                    RoundedView{width: Fill height: Fill flow: Down padding: 8 spacing: 6
-                        show_bg: true draw_bg.color: white draw_bg.border_size: 1.0 draw_bg.border_color: line draw_bg.border_radius: 14.0
-                        Image{width: Fill height: 98 fit: ImageFit.CropToFill src: news_thumbnail_resource(row.image_url)}
-                        Small{text: news_meta(row) max_lines: 1 draw_text.text_style.font_size: 10}
-                        Text{text: row.title max_lines: 2 draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 13 line_spacing: 1.15}}
+        ScrollXView{width: Fill height: 228 flow: Right spacing: 12 padding: Inset{bottom: 4}
+            for featured_index row in featured_rows {
+                GestureView{width: 370 height: 220 on_tap: |x, y| open_story(row)
+                    View{width: Fill height: Fill flow: Overlay
+                        EditorialImage{width: Fill height: Fill src: news_thumbnail_resource(row.image_url) draw_bg +: {
+                            radius: 20.0
+                            pixel: fn(){
+                                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                                let c = mix(self.get_color(), #x536076, self.async_load)
+                                let shade = smoothstep(0.18, 1.0, self.pos.y) * 0.88
+                                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.radius)
+                                sdf.fill(vec4(mix(c.xyz, vec3(0.035, 0.045, 0.07), shade), self.opacity))
+                                return sdf.result
+                            }
+                        }}
+                        View{width: Fill height: Fill flow: Down padding: 16 spacing: 7
+                            RoundedView{width: Fit height: 24 padding: Inset{left: 9 right: 9 top: 4 bottom: 4} show_bg: true draw_bg.color: #x7369c6d9 draw_bg.border_radius: 8.0
+                                Label{text: "今日精选" draw_text.color: white draw_text.text_style: theme.font_regular{font_size: 10}}
+                            }
+                            View{width: Fill height: Fill}
+                            Text{text: row.title max_lines: 2 draw_text.color: white draw_text.text_style: theme.font_bold{font_size: 18 line_spacing: 1.15}}
+                            Small{text: row.summary max_lines: 1 draw_text.color: #xe1e4ec draw_text.text_style.font_size: 11}
+                            Small{text: news_meta(row) max_lines: 1 draw_text.color: #xc1c8d6 draw_text.text_style.font_size: 9}
+                            View{width: Fill height: 6 flow: Right spacing: 5 align: Align{x: 0.5}
+                                for dot in [0 1 2] {
+                                    if dot < featured_rows.len() {
+                                        RoundedView{width: 18 height: 3 show_bg: true draw_bg.border_radius: 1.5 draw_bg.color: if dot == featured_index { white } else { #xffffff55 }}
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+    if page == "feed" {
+        let context = feed_context_state()
+        View{width: Fill height: Fit flow: Right spacing: 10 margin: Inset{top: 6 bottom: 10}
+            GestureView{width: Fill height: 68 on_tap: |x,y| select_page("tracking")
+                EditorialCard{height: Fill flow: Right padding: 12 spacing: 8 align: Align{y: 0.5} draw_bg.color: #xfafaff
+                    EditorialIcon{draw_bg.kind: 1.0 draw_bg.tint: editorial_accent}
+                    View{width: Fill height: Fit flow: Down spacing: 4
+                        Section{text: "我的关注" draw_text.color: editorial_ink}
+                        EditorialCaption{text: if context.topic_label != "" { context.topic_label } else { "添加你的关注" } max_lines: 1 draw_text.text_style.font_size: 10}
+                    }
+                    Label{text: "›" draw_text.color: editorial_muted draw_text.text_style.font_size: 18}
+                }
+            }
+            GestureView{width: Fill height: 68 on_tap: |x,y| select_page("schedule")
+                EditorialCard{height: Fill flow: Right padding: 12 spacing: 8 align: Align{y: 0.5} draw_bg.color: #xfffbfa
+                    EditorialIcon{draw_bg.kind: 2.0 draw_bg.tint: #xc88a79}
+                    View{width: Fill height: Fit flow: Down spacing: 4
+                        Section{text: "今日日程" draw_text.color: editorial_ink}
+                        EditorialCaption{text: if context.schedule_label != "" { context.schedule_label } else { "查看或添加安排" } max_lines: 1 draw_text.text_style.font_size: 10}
+                    }
+                    Label{text: "›" draw_text.color: editorial_muted draw_text.text_style.font_size: 18}
+                }
+            }
+        }
+    }
+    View{width: Fill height: 30 flow: Right align: Align{y: 0.5} spacing: 9
+        RoundedView{width: 3 height: 16 show_bg: true draw_bg.color: editorial_accent draw_bg.border_radius: 1.5}
+        Section{width: Fill text: if page == "saved" { "收藏文章" } else { "最新文章" } draw_text.color: editorial_ink draw_text.text_style.font_size: 16}
+        EditorialCaption{width: Fit text: "共 " + display_rows.len() + " 条新闻"}
     }
     for row in image_rows { ordered_rows.push(row) }
     for row in text_rows { ordered_rows.push(row) }
@@ -6955,35 +7056,32 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{le
         let cache_note = row_cache_note(row)
         let has_image = news_thumbnail_allowed(row)
         GestureView{width: Fill height: Fit flow: Down on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
-            RoundedView{width: Fill height: Fit flow: Down padding: 14 spacing: 9
-                show_bg: true draw_bg.color: white draw_bg.border_size: 1.0 draw_bg.border_color: line draw_bg.border_radius: 14.0
+            EditorialCard{
                 View{width: Fill height: Fit flow: Right spacing: 7 align: Align{y: 0.5}
                     RoundedView{width: 22 height: 22 show_bg: true draw_bg.color: soft draw_bg.border_radius: 11.0 align: Align{x: 0.5 y: 0.5}
                         Label{text: news_avatar(row) draw_text.color: secondary draw_text.text_style: theme.font_bold{font_size: 10}}
                     }
-                    Small{width: Fill text: news_meta(row) max_lines: 1 draw_text.text_style: theme.font_regular{font_size: 11 line_spacing: 1.1}}
+                    EditorialCaption{width: Fill text: news_meta(row) max_lines: 1}
                 }
                 View{width: Fill height: Fit flow: Right spacing: 12 align: Align{y: 0.0}
                     View{width: Fill height: Fit flow: Down spacing: 7
                         GestureView{width: Fill height: Fit on_tap: |x, y| open_story(row) on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
-                            Text{text: row.title max_lines: 3 draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 16 line_spacing: 1.2}}
-                        }
-                        View{width: Fit height: 20 flow: Right
-                            RoundedView{width: Fit height: 20 padding: Inset{left: 7 right: 7 top: 2 bottom: 2} show_bg: true draw_bg.color: #xffffef draw_bg.border_radius: 10.0
-                                Small{text: category_label(row.category) draw_text.color: #x8d742d draw_text.text_style: theme.font_regular{font_size: 10}}
-                            }
+                            EditorialTitle{text: row.title max_lines: 3}
                         }
                     }
                     if has_image {
-                        Image{width: 104 height: 82 fit: ImageFit.CropToFill src: news_thumbnail_resource(row.image_url)}
+                        EditorialImage{width: 112 height: 88 src: news_thumbnail_resource(row.image_url)}
                     }
                 }
+                if row.summary != "" { EditorialCaption{text: row.summary max_lines: 2 draw_text.text_style.font_size: 12 draw_text.text_style.line_spacing: 1.2} }
                 if agent_hint != nil {
                     HintButton{height: 22 text: agent_hint.text + " ›" on_click: || open_feed_hint(row)}
                 }
                 if cache_note != "" { Small{text: cache_note max_lines: 2}}
-                View{width: Fill height: 26 flow: Right spacing: 8 align: Align{y: 0.5}
-                    QuietButton{text: "关注话题" on_click: || follow_story(row)}
+                View{width: Fill height: 26 flow: Right spacing: 5 align: Align{y: 0.5}
+                    EditorialTag{Label{text: category_label(row.category) draw_text.color: editorial_accent draw_text.text_style: theme.font_regular{font_size: 10}}}
+                    if records_has_interest("source", row.source) { LinkButton{text: "已跟踪" on_click: || toggle_follow(row)} }
+                    else { QuietButton{text: "关注来源" on_click: || toggle_follow(row)} }
                     if records_is_bookmarked(row.news_id) { LinkButton{text: "已收藏" on_click: || toggle_save(row)} }
                     else { QuietButton{text: "收藏" on_click: || toggle_save(row)} }
                     View{width: Fill height: 1}
@@ -7054,24 +7152,24 @@ let ForecastSky = RoundedView{width: Fill height: Fit flow: Down show_bg: true
         }
     }
 }
-let WeatherHeaderWidget = View{width: 132 height: 50
+let WeatherHeaderWidget = View{width: 100 height: 46
     weather_header_content := View{width: Fill height: Fill on_render: || {
         let city = weather_primary_city()
         let today = weather_today()
         weather_header_hit := GestureView{width: Fill height: Fill on_tap: |x, y| show_weather()
-            ForecastSky{width: Fill height: Fill padding: 8 draw_bg.border_radius: 12.0
+            RoundedView{width: Fill height: Fill padding: 8 show_bg: true draw_bg.color: #xf0f5fd draw_bg.border_radius: 23.0
                 View{width: Fill height: Fill flow: Right spacing: 6 align: Align{y: 0.5}
-                    ForecastGlyph{width: 30 height: 30 draw_bg.condition: weather_glyph_condition(today)}
+                    ForecastGlyph{width: 24 height: 24 draw_bg.condition: weather_glyph_condition(today)}
                     View{width: Fill height: Fit flow: Down spacing: 3
                         if city != nil {
-                            Small{text: city.name + " · " + weather_header_condition(today) draw_text.color: #xd7e6f7 max_lines: 1 draw_text.text_style.font_size: 9}
+                            Small{text: city.name draw_text.color: editorial_muted max_lines: 1 draw_text.text_style.font_size: 9}
                             if today != nil {
                                 Text{text: weather_temperature(today.temp_min_c) + " / " + weather_temperature(today.temp_max_c)
-                                    max_lines: 1 draw_text.color: white draw_text.text_style: theme.font_bold{font_size: 13}}
-                            } else { Small{text: "查看预报 ›" draw_text.color: white max_lines: 1} }
+                                    max_lines: 1 draw_text.color: editorial_ink draw_text.text_style: theme.font_bold{font_size: 11}}
+                            } else { Small{text: "查看预报 ›" draw_text.color: editorial_ink max_lines: 1 draw_text.text_style.font_size: 9} }
                         } else {
-                            Small{text: "城市天气" draw_text.color: #xd7e6f7 max_lines: 1 draw_text.text_style.font_size: 9}
-                            Small{text: "选择城市 ›" draw_text.color: white max_lines: 1}
+                            Small{text: "城市天气" draw_text.color: editorial_muted max_lines: 1 draw_text.text_style.font_size: 9}
+                            Small{text: "选择城市 ›" draw_text.color: editorial_ink max_lines: 1 draw_text.text_style.font_size: 9}
                         }
                     }
                 }
@@ -7080,36 +7178,6 @@ let WeatherHeaderWidget = View{width: 132 height: 50
     }}
 }
 // END src/frontend/components/weather_widget.splash
-
-// BEGIN src/frontend/components/menu.splash
-let MenuToggle = GestureView{width: 32 height: 36 on_tap: |x, y| toggle_menu()
-    View{width: Fill height: Fill show_bg: true
-        draw_bg +: {
-            pixel: fn(){
-                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-                sdf.box(6.0, 10.0, 20.0, 2.0, 1.0) sdf.fill(#x202126)
-                sdf.box(6.0, 17.0, 20.0, 2.0, 1.0) sdf.fill(#x202126)
-                sdf.box(6.0, 24.0, 20.0, 2.0, 1.0) sdf.fill(#x202126)
-                return sdf.result
-            }
-        }
-    }
-}
-let MenuItem = QuietButton{width: Fill height: 36 align: Align{x: 0.0}
-    draw_text +: {color: ink color_hover: ink color_down: ink text_style +: {font_size: 13}}
-}
-let MenuPanel = View{visible: false width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 8 bottom: 8}
-    show_bg: true draw_bg.color: soft
-    MenuItem{text: "新闻来源" on_click: || show_settings()}
-    MenuItem{text: "表达关注 / 继续草稿" on_click: || intent_begin(nil)}
-    MenuItem{text: "管理关注" on_click: || manage_tracking()}
-    MenuItem{text: "关注动态" on_click: || select_page("tracking")}
-    MenuItem{text: "我的收藏" on_click: || select_page("saved")}
-    suggestions_button := MenuItem{text: "分析与建议" on_click: || show_analysis_results()}
-    MenuItem{text: "天气预报" on_click: || show_weather()}
-    menu_cancel_update := MenuItem{visible: false text: "停止新闻更新" on_click: || { close_menu() if busy { refresh() } }}
-}
-// END src/frontend/components/menu.splash
 
 // BEGIN src/frontend/components/intent_orb.splash
 // The reveal origin matches the floating orb's 72px hit target and insets.
@@ -7293,29 +7361,17 @@ let IntentPanel = View{width: Fill height: Fill flow: Down on_render: || {
 
 // BEGIN src/frontend/pages/feed.splash
 let FeedFilters = View{width: Fill height: Fit flow: Down
-    categories := View{width: Fill height: 32 flow: Right padding: Inset{left: 12 right: 12} spacing: 2 on_render: || {
+    categories := View{width: Fill height: 40 flow: Right padding: Inset{left: 18 right: 18 top: 4 bottom: 4} spacing: 5 on_render: || {
         for item in category_filters {
-            if category == item.id { FilterActive{height: 30 text: item.label on_click: || pick_category(item.id)} }
-            else { Filter{height: 30 text: item.label on_click: || pick_category(item.id)} }
+            if category == item.id { FilterActive{height: 32 text: item.label draw_bg.color: #xeeecfc draw_bg.border_radius: 16.0 draw_text.color: editorial_accent on_click: || pick_category(item.id)} }
+            else { Filter{height: 32 text: item.label draw_text.color: editorial_muted on_click: || pick_category(item.id)} }
         }
     }}
 }
-let FeedContext = View{visible: false width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 4 bottom: 4} spacing: 2
-    feed_context_content := View{width: Fill height: Fit flow: Down on_render: || {
-        let context = feed_context_state()
-        if context.topic_label != "" {
-            View{width: Fill height: 24 flow: Right align: Align{y: 0.5}
-                Small{width: Fill max_lines: 1 text: context.topic_label}
-                LinkButton{text: "管理" on_click: || manage_tracking()}
-            }
-        }
-        if context.schedule_label != "" {
-            View{width: Fill height: 24 flow: Right align: Align{y: 0.5}
-                Small{width: Fill max_lines: 1 text: context.schedule_label}
-                LinkButton{text: "日程" on_click: || select_page("schedule")}
-            }
-        }
-    }}
+// Keep the existing controller's visibility/render handles; the visual cards
+// live inside the news scroll below the image recommendations.
+let FeedContext = View{visible: false width: Fill height: 0
+    feed_context_content := View{width: Fill height: 0 on_render: || {}}
 }
 // END src/frontend/pages/feed.splash
 
@@ -7323,7 +7379,12 @@ let FeedContext = View{visible: false width: Fill height: Fit flow: Down padding
 let TrackingHeader = View{visible: false width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 10 bottom: 8} spacing: 6
     View{width: Fill height: 30 flow: Right align: Align{y: 0.5}
         tracking_summary := Small{width: Fill text: "我的关注"}
-        manage_tracking_button := LinkButton{visible: false text: "管理关注" on_click: || manage_tracking()}
+        LinkButton{text: "管理" on_click: || manage_tracking()}
+    }
+    View{width: Fill height: Fit flow: Right spacing: 8
+        tracking_dynamic_button := Pill{text: "动态" on_click: || tracking_pick_section("dynamic")}
+        suggestions_button := Pill{text: "建议" on_click: || tracking_pick_section("suggestions")}
+        tracking_new_button := Pill{text: "新增 / 继续草稿" on_click: || intent_begin(nil)}
     }
     tracking_analysis_actions := View{width: Fill height: Fit flow: Down spacing: 6 on_render: || {
         Small{text: analysis_check_status() max_lines: 2}
@@ -7331,7 +7392,6 @@ let TrackingHeader = View{visible: false width: Fill height: Fit flow: Down padd
             if !analysis_has_focus() { SecondaryButton{text: "添加关注" on_click: || intent_begin(nil)} }
             else if tracking_in_progress() { SecondaryButton{text: "停止检查" on_click: || analysis_cancel()} }
             else { SecondaryButton{text: "检查关注更新" on_click: || analyze_changes()} }
-            QuietButton{text: "查看分析与建议" on_click: || show_analysis_results()}
         }
     }}
 }
@@ -7400,8 +7460,31 @@ let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
 // END src/frontend/pages/tracking.splash
 
 // BEGIN src/frontend/pages/bookmarks.splash
-let BookmarksHeader = Small{visible: false text: "你的收藏 · 可按分类与关键词筛选" padding: Inset{left: 18 right: 18 top: 8 bottom: 8}}
+let BookmarksHeader = View{visible: false width: Fill height: Fit flow: Right padding: Inset{left: 18 right: 18 top: 8 bottom: 8}
+    Small{width: Fill text: "你的收藏 · 可按分类与关键词筛选"}
+    LinkButton{text: "返回我的" on_click: || select_page("account")}
+}
 // END src/frontend/pages/bookmarks.splash
+
+// BEGIN src/frontend/pages/account.splash
+let AccountPage = View{visible: false width: Fill height: Fill flow: Down
+    ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 16
+        Heading{text: "我的"}
+        Small{text: "收藏与阅读偏好"}
+        Box{
+            Section{text: "我的收藏"}
+            Small{text: "保存的新闻，可按分类和关键词查找。"}
+            SecondaryButton{text: "查看收藏" on_click: || select_page("saved")}
+        }
+        Section{text: "设置"}
+        Box{
+            Section{text: "新闻来源与连接"}
+            Small{text: "选择新闻来源，查看获取状态和助手连接诊断。"}
+            SecondaryButton{text: "新闻来源" on_click: || show_settings()}
+        }
+    }
+}
+// END src/frontend/pages/account.splash
 
 // BEGIN src/frontend/pages/schedule.splash
 let SchedulePage = View{visible: false width: Fill height: Fill flow: Down
@@ -7997,33 +8080,34 @@ let WeatherPage = View{visible: false width: Fill height: Fill flow: Down
 HostedView{width: Fill height: Fill
     full: View{width: Fill height: Fill flow: Overlay
     app_shell := View{width: Fill height: Fill flow: Down show_bg: true draw_bg.color: white
-        View{width: Fill height: 56 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 14} spacing: 8
-            menu_button := MenuToggle{}
-            menu_badge := Small{visible: false width: Fit text: "•" draw_text.color: accent}
+        View{width: Fill height: 88 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 18 top: 12 bottom: 8} spacing: 8
             View{width: Fill height: Fit flow: Down spacing: 2
-                Label{text: "cfaw-news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18} max_lines: 1}
-                Small{text: "NEWS THAT MOVES YOU" draw_text.color: accent draw_text.text_style.font_size: 8}
+                Label{text: "cfaw-news" draw_text.color: editorial_ink draw_text.text_style: TextStyle{font_size: 28 line_spacing: 1.1
+                    font_family: FontFamily{latin := FontMember{res: crate_resource("makepad_widgets:resources/Serif-Bold.ttf") asc: 0.0 desc: 0.0}}} max_lines: 1}
+                Small{text: "NEWS THAT MOVES YOU" draw_text.color: editorial_accent draw_text.text_style.font_size: 7.5 draw_text.text_style.letter_spacing: 1.0}
             }
-        }
-        View{width: Fill height: 54 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 14 top: 4 bottom: 4} spacing: 8
-            search_box := View{width: Fill height: Fit flow: Down
-                search := Search{height: 36 on_change: |text| set_query(text)}
+            refresh_toolbar := View{width: Fit height: 42 flow: Down align: Align{x: 0.5 y: 0.5}
+                refresh_news := LinkButton{height: 38 text: "刷新新闻" on_click: || refresh() draw_text.color: editorial_muted}
             }
             weather_widget := WeatherHeaderWidget{}
         }
-        Divider{}
-        menu_panel := MenuPanel{}
+        home_tools := View{width: Fill height: 56 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 18 top: 4 bottom: 8} spacing: 8
+            search_box := View{width: Fill height: Fit flow: Down
+                RoundedView{width: Fill height: 44 flow: Right padding: Inset{left: 12 right: 10} spacing: 10 align: Align{y: 0.5} show_bg: true draw_bg.color: #xf3f4f8 draw_bg.border_radius: 20.0
+                    EditorialIcon{width: 22 height: 22 draw_bg.kind: 4.0}
+                    search := Search{height: 40 empty_text: "搜索新闻、话题或来源…" on_change: |text| set_query(text)
+                        draw_bg +: {color: #x00000000 color_hover: #x00000000 color_focus: #x00000000 color_empty: #x00000000}
+                        draw_text +: {color_empty: #x9aA2b2 color_empty_hover: #x9aA2b2 text_style +: {font_size: 13}}}
+                }
+            }
+        }
         main := View{width: Fill height: Fill flow: Down
             pending_suggestions := HintButton{visible: false height: 28 margin: Inset{left: 18 right: 18} text: "" on_click: || show_analysis_results()}
             feed_filters := FeedFilters{}
-            refresh_toolbar := View{width: Fill height: 32 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 18}
-                Small{width: Fill text: "主动获取最新新闻" max_lines: 1}
-                refresh_news := LinkButton{text: "刷新新闻" on_click: || refresh()}
-            }
             feed_context := FeedContext{}
             tracking_header := TrackingHeader{}
             bookmarks_header := BookmarksHeader{}
-            status := Small{text: "正在准备新闻来源…" padding: Inset{left: 18 right: 18 bottom: 6}}
+            status := EditorialCaption{text: "正在准备新闻来源…" padding: Inset{left: 20 right: 18 top: 4 bottom: 4}}
             feed_list := View{width: Fill height: Fill flow: Overlay
                 empty_panel := GestureView{visible: false width: Fill height: Fill flow: Down padding: 28 spacing: 12 on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
                     Section{text: "这里暂时没有内容"}
@@ -8040,6 +8124,8 @@ HostedView{width: Fill height: Fill
                 }
             }
             schedule_page := SchedulePage{}
+            account_page := AccountPage{}
+            results_panel := AnalysisResultsPage{}
         }
         detail_pane := View{visible: false width: Fill height: Fill flow: Down
             View{width: Fill height: 44 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 18} spacing: 8
@@ -8059,23 +8145,34 @@ HostedView{width: Fill height: Fill
             }
             settings_panel := SourcesPage{}
             tracking_panel := TrackingEditor{}
-            results_panel := AnalysisResultsPage{}
             weather_panel := WeatherPage{}
         }
         feedback_panel := View{visible: false width: Fill height: Fit flow: Right padding: Inset{left: 18 right: 12 top: 6 bottom: 6} align: Align{y: 0.5}
             feedback := Small{text: "" max_lines: 2}
             QuietButton{text: "关闭" on_click: || notice("")}
         }
-        navigation := View{width: Fill height: 58 flow: Down show_bg: true draw_bg.color: white
+        navigation := View{width: Fill height: 72 flow: Down show_bg: true draw_bg.color: white
             Divider{}
-            View{width: Fill height: 52 flow: Right padding: Inset{left: 18 right: 18 top: 4 bottom: 6} spacing: 8
-                View{width: Fill height: 42 flow: Overlay
-                    feed_tab_active := RoundedView{width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 12.0}
-                    feed_tab := Nav{height: 42 text: "首页" draw_text +: {color: ink color_focus: ink} on_click: || select_page("feed")}
+            View{width: Fill height: 66 flow: Right padding: Inset{left: 18 right: 18 top: 6 bottom: 6} spacing: 8
+                View{width: Fill height: 54 flow: Overlay
+                    View{width: Fill height: Fill align: Align{x: 0.5 y: 0.1} EditorialIcon{draw_bg.kind: 0.0}}
+                    feed_tab_active := RoundedView{width: Fill height: Fill align: Align{x: 0.5 y: 0.1} show_bg: true draw_bg.color: #xeeecfa draw_bg.border_radius: 22.0 EditorialIcon{draw_bg.kind: 0.0 draw_bg.tint: editorial_accent}}
+                    feed_tab := Nav{height: 54 text: "首页" align: Align{x: 0.5 y: 1.0} padding: Inset{bottom: 2} draw_text +: {color: editorial_ink color_focus: editorial_accent text_style +: {font_size: 11}} on_click: || select_page("feed")}
                 }
-                View{width: Fill height: 42 flow: Overlay
-                    schedule_tab_active := RoundedView{visible: false width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 12.0}
-                    schedule_tab := Nav{height: 42 text: "日程" draw_text +: {color: ink color_focus: ink} on_click: || select_page("schedule")}
+                View{width: Fill height: 54 flow: Overlay
+                    View{width: Fill height: Fill align: Align{x: 0.5 y: 0.1} EditorialIcon{draw_bg.kind: 1.0}}
+                    tracking_tab_active := RoundedView{visible: false width: Fill height: Fill align: Align{x: 0.5 y: 0.1} show_bg: true draw_bg.color: #xeeecfa draw_bg.border_radius: 22.0 EditorialIcon{draw_bg.kind: 1.0 draw_bg.tint: editorial_accent}}
+                    tracking_tab := Nav{height: 54 text: "关注" align: Align{x: 0.5 y: 1.0} padding: Inset{bottom: 2} draw_text +: {color: editorial_muted color_focus: editorial_accent text_style +: {font_size: 11}} on_click: || select_page("tracking")}
+                }
+                View{width: Fill height: 54 flow: Overlay
+                    View{width: Fill height: Fill align: Align{x: 0.5 y: 0.1} EditorialIcon{draw_bg.kind: 2.0}}
+                    schedule_tab_active := RoundedView{visible: false width: Fill height: Fill align: Align{x: 0.5 y: 0.1} show_bg: true draw_bg.color: #xeeecfa draw_bg.border_radius: 22.0 EditorialIcon{draw_bg.kind: 2.0 draw_bg.tint: editorial_accent}}
+                    schedule_tab := Nav{height: 54 text: "日程" align: Align{x: 0.5 y: 1.0} padding: Inset{bottom: 2} draw_text +: {color: editorial_muted color_focus: editorial_accent text_style +: {font_size: 11}} on_click: || select_page("schedule")}
+                }
+                View{width: Fill height: 54 flow: Overlay
+                    View{width: Fill height: Fill align: Align{x: 0.5 y: 0.1} EditorialIcon{draw_bg.kind: 3.0}}
+                    account_tab_active := RoundedView{visible: false width: Fill height: Fill align: Align{x: 0.5 y: 0.1} show_bg: true draw_bg.color: #xeeecfa draw_bg.border_radius: 22.0 EditorialIcon{draw_bg.kind: 3.0 draw_bg.tint: editorial_accent}}
+                    account_tab := Nav{height: 54 text: "我的" align: Align{x: 0.5 y: 1.0} padding: Inset{bottom: 2} draw_text +: {color: editorial_muted color_focus: editorial_accent text_style +: {font_size: 11}} on_click: || select_page("account")}
                 }
             }
         }

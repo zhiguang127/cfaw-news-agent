@@ -2,6 +2,7 @@ let results_pending_offset = 0
 let suggestion_focus_id = nil
 // UI actions connect repository/retrieval/ingestion; mutable navigation lives here.
 let page = "feed"
+let tracking_section = "dynamic"
 let category = "all"
 let query = ""
 let page_filters = {feed: {category: "all" query: ""} tracking: {category: "all" query: ""} saved: {category: "all" query: ""}}
@@ -9,7 +10,6 @@ let reading = nil
 let detail_kind = ""
 let story_show_analysis = false
 let busy = false
-let menu_open = false
 let last_swipe_refresh_at = 0
 let last_return_top_at = 0
 let settings_show_diagnostics = false
@@ -140,7 +140,6 @@ fn sync_status(){
     ui.status.set_text(text)
     ui.refresh_news.set_text(if busy { "停止更新" } else { "刷新新闻" })
     ui.refresh_toolbar.set_visible(page == "feed" && detail_kind == "")
-    ui.menu_cancel_update.set_visible(busy)
     ui.tracking_summary.set_text("我的关注 · " + tracking_focus_count() + " 项 · " + tracking_new_count() + " 条未读更新")
     render_analysis_controls()
 }
@@ -159,7 +158,7 @@ fn render_feed(){
 fn render_feed_now(){
     // A source completion or an earlier navigation may arrive while the
     // calendar is visible. Its hidden list can wait until browsing resumes.
-    if page == "schedule" { feed_render_pending = false sync_status() ui.tile_list.render() return }
+    if page == "schedule" || page == "account" || (page == "tracking" && tracking_section == "suggestions") { feed_render_pending = false sync_status() ui.tile_list.render() return }
     let generation = feed_render_generation
     let rows = visible_rows()
     prepare_feed_presentation(rows, generation, fn(prepared){
@@ -204,23 +203,31 @@ fn render_main_now(){
     render_analysis_controls()
     if page == "feed" || page == "saved" { ui.categories.render() }
     // Keep navigation hit targets alive while deferred page renders settle.
-    ui.feed_tab_active.set_visible(page != "schedule")
+    let browsing = page == "feed" || page == "saved" || (page == "tracking" && tracking_section == "dynamic")
+    ui.feed_tab_active.set_visible(page == "feed")
+    ui.tracking_tab_active.set_visible(page == "tracking")
     ui.schedule_tab_active.set_visible(page == "schedule")
+    ui.account_tab_active.set_visible(page == "account" || page == "saved")
+    ui.home_tools.set_visible(page == "feed" || page == "saved")
     ui.feed_filters.set_visible(page == "feed" || page == "saved")
     ui.refresh_toolbar.set_visible(page == "feed" && detail_kind == "")
     ui.tracking_header.set_visible(page == "tracking")
     ui.bookmarks_header.set_visible(page == "saved")
-    ui.search_box.set_visible(page != "schedule")
-    ui.status.set_visible(page != "schedule")
-    ui.feed_list.set_visible(page != "schedule")
+    ui.search_box.set_visible(page == "feed" || page == "saved")
+    ui.status.set_visible(browsing)
+    ui.feed_list.set_visible(browsing)
     ui.schedule_page.set_visible(page == "schedule")
+    ui.account_page.set_visible(page == "account")
+    ui.results_panel.set_visible(page == "tracking" && tracking_section == "suggestions")
     if page == "schedule" {
         ui.schedule_list.render()
         ui.schedule_editor.render()
-    } else { render_feed() }
+    } else if page == "tracking" && tracking_section == "suggestions" { ui.results_content.render() }
+    else if browsing { render_feed() }
 }
+fn tracking_pick_section(section){ tracking_section = section select_page("tracking") }
 fn select_page(id){
-    close_menu()
+    article_cancel()
     notice("")
     if page != "schedule" { page_filters[page] = {category: category query: query} }
     page = id
@@ -462,12 +469,13 @@ fn render_analysis_controls(){
     ui.feed_context.set_visible(context.has_context && page == "feed" && detail_kind == "")
     if page == "feed" && detail_kind == "" { ui.feed_context_content.render() }
     let count = suggestion_attention_count()
-    ui.menu_badge.set_visible(count > 0)
-    ui.suggestions_button.set_text("分析与建议")
-    if count > 0 { ui.suggestions_button.set_text("分析与建议 · " + count + " 待处理") }
+    ui.tracking_tab.set_text(if count > 0 { "关注 · " + count } else { "关注" })
+    ui.tracking_dynamic_button.set_text(if tracking_section == "dynamic" { "动态 ✓" } else { "动态" })
+    ui.tracking_new_button.set_text("新增 / 继续草稿")
+    ui.suggestions_button.set_text(if tracking_section == "suggestions" { "建议 ✓" } else { "建议" })
+    if count > 0 { ui.suggestions_button.set_text("建议 · " + count) }
     ui.pending_suggestions.set_visible(count > 0 && page == "feed" && detail_kind == "")
     ui.pending_suggestions.set_text("" + count + " 项变化待关注 ›")
-    ui.manage_tracking_button.set_visible(analysis_has_focus())
     if page == "tracking" { ui.tracking_analysis_actions.render() }
 }
 fn analysis_check_status(){
@@ -492,7 +500,7 @@ fn analysis_status_for_news(id){
     "尚无当前有效的追踪结果"
 }
 fn analyze_changes(){ tracking_start(nil) }
-fn show_analysis_results(){ results_pending_offset = 0 results_show_error_detail = false schedule_confirmation_id = nil notice("") render_analysis_controls() show_detail("results", "分析与建议") }
+fn show_analysis_results(){ results_pending_offset = 0 results_show_error_detail = false schedule_confirmation_id = nil tracking_pick_section("suggestions") }
 fn retry_analysis_save(){
     let error = history_retry_save()
     if error == "" { notice("结果已保存") } else { notice(error) }
@@ -585,15 +593,12 @@ fn render_detail(){
     ui.original_pane.set_visible(detail_kind == "story" && original_article_open)
     ui.settings_panel.set_visible(detail_kind == "settings")
     ui.tracking_panel.set_visible(detail_kind == "tracking")
-    ui.results_panel.set_visible(detail_kind == "results")
     ui.weather_panel.set_visible(detail_kind == "weather")
     if detail_kind == "intent" { intent_render() }
-    if detail_kind == "results" { ui.results_content.render() }
     if detail_kind == "weather" { ui.weather_content.render() }
 }
 fn show_detail(kind, title){
     close_original_article()
-    close_menu()
     if kind != "story" { article_cancel() }
     detail_kind = kind
     ui.detail_title.set_text(title)
@@ -654,7 +659,6 @@ fn close_detail(){
         return
     }
     if detail_kind == "intent" && intent_open { intent_cancel() return }
-    close_menu()
     reader_summary_cancel()
     article_cancel()
     detail_kind = ""
@@ -663,13 +667,12 @@ fn close_detail(){
     ui.detail_pane.set_visible(false)
     ui.main.set_visible(true)
     ui.navigation.set_visible(true)
-    ui.search_box.set_visible(page != "schedule")
+    ui.search_box.set_visible(page == "feed" || page == "saved")
     // Preserve the existing ScrollYView and its position on return.
-    render_feed()
+    if page == "tracking" && tracking_section == "suggestions" { ui.results_content.render() }
+    else { render_feed() }
 }
 fn show_settings(){ notice("") settings_show_diagnostics = false ui.diagnostics_controls.render() show_detail("settings", "设置") }
-fn close_menu(){ menu_open = false ui.menu_panel.set_visible(false) }
-fn toggle_menu(){ menu_open = !menu_open ui.menu_panel.set_visible(menu_open) }
 fn manage_tracking(){ notice("") show_detail("tracking", "管理关注") }
 fn remove_interest(id){ analysis_check_message = "" notice(records_remove_interest(id)) render_detail() render_feed() tracking_schedule_check() }
 fn toggle_source(id){

@@ -32,7 +32,6 @@ fn intent_motion_frame(generation, opening, started){
 }
 fn intent_show(){
     if !intent_open { intent_return_kind = detail_kind }
-    close_menu()
     intent_open = true detail_kind = "intent"
     intent_motion_active = true
     intent_scene_ready = false

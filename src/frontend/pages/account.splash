@@ -1,0 +1,17 @@
+let AccountPage = View{visible: false width: Fill height: Fill flow: Down
+    ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 16
+        Heading{text: "我的"}
+        Small{text: "收藏与阅读偏好"}
+        Box{
+            Section{text: "我的收藏"}
+            Small{text: "保存的新闻，可按分类和关键词查找。"}
+            SecondaryButton{text: "查看收藏" on_click: || select_page("saved")}
+        }
+        Section{text: "设置"}
+        Box{
+            Section{text: "新闻来源与连接"}
+            Small{text: "选择新闻来源，查看获取状态和助手连接诊断。"}
+            SecondaryButton{text: "新闻来源" on_click: || show_settings()}
+        }
+    }
+}

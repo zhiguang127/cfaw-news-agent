@@ -1,33 +1,34 @@
 HostedView{width: Fill height: Fill
     full: View{width: Fill height: Fill flow: Overlay
     app_shell := View{width: Fill height: Fill flow: Down show_bg: true draw_bg.color: white
-        View{width: Fill height: 56 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 14} spacing: 8
-            menu_button := MenuToggle{}
-            menu_badge := Small{visible: false width: Fit text: "•" draw_text.color: accent}
+        View{width: Fill height: 88 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 18 top: 12 bottom: 8} spacing: 8
             View{width: Fill height: Fit flow: Down spacing: 2
-                Label{text: "cfaw-news" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18} max_lines: 1}
-                Small{text: "NEWS THAT MOVES YOU" draw_text.color: accent draw_text.text_style.font_size: 8}
+                Label{text: "cfaw-news" draw_text.color: editorial_ink draw_text.text_style: TextStyle{font_size: 28 line_spacing: 1.1
+                    font_family: FontFamily{latin := FontMember{res: crate_resource("makepad_widgets:resources/Serif-Bold.ttf") asc: 0.0 desc: 0.0}}} max_lines: 1}
+                Small{text: "NEWS THAT MOVES YOU" draw_text.color: editorial_accent draw_text.text_style.font_size: 7.5 draw_text.text_style.letter_spacing: 1.0}
             }
-        }
-        View{width: Fill height: 54 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 14 top: 4 bottom: 4} spacing: 8
-            search_box := View{width: Fill height: Fit flow: Down
-                search := Search{height: 36 on_change: |text| set_query(text)}
+            refresh_toolbar := View{width: Fit height: 42 flow: Down align: Align{x: 0.5 y: 0.5}
+                refresh_news := LinkButton{height: 38 text: "刷新新闻" on_click: || refresh() draw_text.color: editorial_muted}
             }
             weather_widget := WeatherHeaderWidget{}
         }
-        Divider{}
-        menu_panel := MenuPanel{}
+        home_tools := View{width: Fill height: 56 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 18 top: 4 bottom: 8} spacing: 8
+            search_box := View{width: Fill height: Fit flow: Down
+                RoundedView{width: Fill height: 44 flow: Right padding: Inset{left: 12 right: 10} spacing: 10 align: Align{y: 0.5} show_bg: true draw_bg.color: #xf3f4f8 draw_bg.border_radius: 20.0
+                    EditorialIcon{width: 22 height: 22 draw_bg.kind: 4.0}
+                    search := Search{height: 40 empty_text: "搜索新闻、话题或来源…" on_change: |text| set_query(text)
+                        draw_bg +: {color: #x00000000 color_hover: #x00000000 color_focus: #x00000000 color_empty: #x00000000}
+                        draw_text +: {color_empty: #x9aA2b2 color_empty_hover: #x9aA2b2 text_style +: {font_size: 13}}}
+                }
+            }
+        }
         main := View{width: Fill height: Fill flow: Down
             pending_suggestions := HintButton{visible: false height: 28 margin: Inset{left: 18 right: 18} text: "" on_click: || show_analysis_results()}
             feed_filters := FeedFilters{}
-            refresh_toolbar := View{width: Fill height: 32 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 18}
-                Small{width: Fill text: "主动获取最新新闻" max_lines: 1}
-                refresh_news := LinkButton{text: "刷新新闻" on_click: || refresh()}
-            }
             feed_context := FeedContext{}
             tracking_header := TrackingHeader{}
             bookmarks_header := BookmarksHeader{}
-            status := Small{text: "正在准备新闻来源…" padding: Inset{left: 18 right: 18 bottom: 6}}
+            status := EditorialCaption{text: "正在准备新闻来源…" padding: Inset{left: 20 right: 18 top: 4 bottom: 4}}
             feed_list := View{width: Fill height: Fill flow: Overlay
                 empty_panel := GestureView{visible: false width: Fill height: Fill flow: Down padding: 28 spacing: 12 on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
                     Section{text: "这里暂时没有内容"}
@@ -44,6 +45,8 @@ HostedView{width: Fill height: Fill
                 }
             }
             schedule_page := SchedulePage{}
+            account_page := AccountPage{}
+            results_panel := AnalysisResultsPage{}
         }
         detail_pane := View{visible: false width: Fill height: Fill flow: Down
             View{width: Fill height: 44 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 18} spacing: 8
@@ -63,23 +66,34 @@ HostedView{width: Fill height: Fill
             }
             settings_panel := SourcesPage{}
             tracking_panel := TrackingEditor{}
-            results_panel := AnalysisResultsPage{}
             weather_panel := WeatherPage{}
         }
         feedback_panel := View{visible: false width: Fill height: Fit flow: Right padding: Inset{left: 18 right: 12 top: 6 bottom: 6} align: Align{y: 0.5}
             feedback := Small{text: "" max_lines: 2}
             QuietButton{text: "关闭" on_click: || notice("")}
         }
-        navigation := View{width: Fill height: 58 flow: Down show_bg: true draw_bg.color: white
+        navigation := View{width: Fill height: 72 flow: Down show_bg: true draw_bg.color: white
             Divider{}
-            View{width: Fill height: 52 flow: Right padding: Inset{left: 18 right: 18 top: 4 bottom: 6} spacing: 8
-                View{width: Fill height: 42 flow: Overlay
-                    feed_tab_active := RoundedView{width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 12.0}
-                    feed_tab := Nav{height: 42 text: "首页" draw_text +: {color: ink color_focus: ink} on_click: || select_page("feed")}
+            View{width: Fill height: 66 flow: Right padding: Inset{left: 18 right: 18 top: 6 bottom: 6} spacing: 8
+                View{width: Fill height: 54 flow: Overlay
+                    View{width: Fill height: Fill align: Align{x: 0.5 y: 0.1} EditorialIcon{draw_bg.kind: 0.0}}
+                    feed_tab_active := RoundedView{width: Fill height: Fill align: Align{x: 0.5 y: 0.1} show_bg: true draw_bg.color: #xeeecfa draw_bg.border_radius: 22.0 EditorialIcon{draw_bg.kind: 0.0 draw_bg.tint: editorial_accent}}
+                    feed_tab := Nav{height: 54 text: "首页" align: Align{x: 0.5 y: 1.0} padding: Inset{bottom: 2} draw_text +: {color: editorial_ink color_focus: editorial_accent text_style +: {font_size: 11}} on_click: || select_page("feed")}
                 }
-                View{width: Fill height: 42 flow: Overlay
-                    schedule_tab_active := RoundedView{visible: false width: Fill height: Fill show_bg: true draw_bg.color: soft draw_bg.border_radius: 12.0}
-                    schedule_tab := Nav{height: 42 text: "日程" draw_text +: {color: ink color_focus: ink} on_click: || select_page("schedule")}
+                View{width: Fill height: 54 flow: Overlay
+                    View{width: Fill height: Fill align: Align{x: 0.5 y: 0.1} EditorialIcon{draw_bg.kind: 1.0}}
+                    tracking_tab_active := RoundedView{visible: false width: Fill height: Fill align: Align{x: 0.5 y: 0.1} show_bg: true draw_bg.color: #xeeecfa draw_bg.border_radius: 22.0 EditorialIcon{draw_bg.kind: 1.0 draw_bg.tint: editorial_accent}}
+                    tracking_tab := Nav{height: 54 text: "关注" align: Align{x: 0.5 y: 1.0} padding: Inset{bottom: 2} draw_text +: {color: editorial_muted color_focus: editorial_accent text_style +: {font_size: 11}} on_click: || select_page("tracking")}
+                }
+                View{width: Fill height: 54 flow: Overlay
+                    View{width: Fill height: Fill align: Align{x: 0.5 y: 0.1} EditorialIcon{draw_bg.kind: 2.0}}
+                    schedule_tab_active := RoundedView{visible: false width: Fill height: Fill align: Align{x: 0.5 y: 0.1} show_bg: true draw_bg.color: #xeeecfa draw_bg.border_radius: 22.0 EditorialIcon{draw_bg.kind: 2.0 draw_bg.tint: editorial_accent}}
+                    schedule_tab := Nav{height: 54 text: "日程" align: Align{x: 0.5 y: 1.0} padding: Inset{bottom: 2} draw_text +: {color: editorial_muted color_focus: editorial_accent text_style +: {font_size: 11}} on_click: || select_page("schedule")}
+                }
+                View{width: Fill height: 54 flow: Overlay
+                    View{width: Fill height: Fill align: Align{x: 0.5 y: 0.1} EditorialIcon{draw_bg.kind: 3.0}}
+                    account_tab_active := RoundedView{visible: false width: Fill height: Fill align: Align{x: 0.5 y: 0.1} show_bg: true draw_bg.color: #xeeecfa draw_bg.border_radius: 22.0 EditorialIcon{draw_bg.kind: 3.0 draw_bg.tint: editorial_accent}}
+                    account_tab := Nav{height: 54 text: "我的" align: Align{x: 0.5 y: 1.0} padding: Inset{bottom: 2} draw_text +: {color: editorial_muted color_focus: editorial_accent text_style +: {font_size: 11}} on_click: || select_page("account")}
                 }
             }
         }
