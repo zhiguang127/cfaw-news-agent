@@ -182,7 +182,7 @@ start_timeout(0.1, || {
             find(text='恢复')
             click(find(text='取消关注'))
             assert not any(w.get('t') == 'Synthetic follow' for w in widgets())
-            find(text='尚未添加关注。也可在新闻条目上关注来源。')
+            find(text='尚未添加关注。可从新闻条目创建话题草稿，确认范围后保存。')
             topics = json.loads((data / 'dev.cfaw.runtime-tests/topics_v2.json').read_text(encoding='utf-8'))
             assert topics['topics'][0]['status'] == 'cancelled' and topics['topics'][0]['version'] == 3
             checks.append('paused topic can be cancelled; hidden immediately and versioned on disk')

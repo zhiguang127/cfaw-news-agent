@@ -2,15 +2,43 @@ fn results_pending_page(offset){ results_pending_offset = offset ui.results_cont
 let AnalysisResultsPage = View{visible: false width: Fill height: Fill flow: Down
     results_content := ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 12 on_render: || {
         Section{text: "本轮目标变化"}
+        Small{text: "从你的目标出发，核对来源，再决定下一步。"}
+        if results_show_all_insights { QuietButton{text: "只看需要关注的判断" on_click: || {results_show_all_insights = false ui.results_content.render()}} }
+        else { QuietButton{text: "查看本轮全部判断与决定" on_click: || {results_show_all_insights = true ui.results_content.render()}} }
         let insights = []
         for value in current_insights() {
-            if value.state == "pending" || value.state == "watch" { insights.push(value) }
+            if results_show_all_insights || value.state == "pending" || value.state == "watch" || value.state == "withdrawn" { insights.push(value) }
         }
         if insights.len() == 0 { Small{text: "尚无当前有效的目标变化；可先保存关注并检查。"} }
         for value in insights {
             Section{text: value.title}
             Small{text: insight_label(value)}
+            let goal = insight_goal(value)
+            if goal != nil {
+                Box{
+                    Small{text: "我的目标" draw_text.color: accent}
+                    if goal.purpose != "" { Text{text: goal.purpose} }
+                    for preference in goal.preferences { Small{text: "约束与偏好：" + preference} }
+                }
+            }
+            Small{text: insight_decision_effect(value) draw_text.color: accent}
+            let comparison = insight_comparison(value)
+            if comparison != nil {
+                Box{
+                    Small{text: "上次判断 · " + age_label(comparison.checked_at)}
+                    Text{text: comparison.insight.summary}
+                    if comparison.insight.next_step != nil { Small{text: "当时的下一步：" + comparison.insight.next_step} }
+                }
+                Section{text: "这次判断"}
+            } else if value.insight.change_kind == "updated" || value.insight.change_kind == "withdrawn" {
+                Small{text: "本轮引用了此前检查；旧判断已不在保留记录中，无法展示完整对照。"}
+            }
             Text{text: value.insight.summary}
+            if record_string(value.insight["material_change"]) && value.insight.material_change != "" {
+                Small{text: "改变判断的新事实：" + value.insight.material_change draw_text.color: accent}
+            }
+            if value.insight.change_kind == "unchanged" { Small{text: "本轮没有报告实质变化，保留已有决定。"} }
+            if value.state == "withdrawn" { Small{text: "此前判断已撤回；请按本轮证据重新核对。" draw_text.color: accent} }
             if value.insight.next_step != nil { Small{text: "下一步核实：" + value.insight.next_step} }
             for uncertainty in value.insight.uncertainties { Small{text: "待核实：" + uncertainty} }
             for id in value.insight.evidence_ids {
@@ -18,7 +46,15 @@ let AnalysisResultsPage = View{visible: false width: Fill height: Fill flow: Dow
                 Small{text: "来源：" + e.title}
                 if e.paragraphs.len() == 0 { Small{text: "标题/摘要证据 · " + e.body_error} }
                 else if e.body_truncated { Small{text: "有界正文证据 · 部分段落已截断"} }
+                if record_array(value.insight["evidence_refs"]) {
+                    for ref in value.insight.evidence_refs {
+                        if ref.news_id == id { Small{text: "原文依据 · " + ref.paragraph_id} Text{text: ref.quote} }
+                    }
+                }
                 SecondaryButton{text: "查看来源与引用段落" on_click: || insight_open_evidence(value, id)}
+            }
+            if value.insight.next_step != nil && value.state != "withdrawn" {
+                SecondaryButton{text: "把核实安排到日程" on_click: || insight_plan_check(value)}
             }
             if value.state != "withdrawn" {
                 View{width: Fill height: Fit flow: Right spacing: 6

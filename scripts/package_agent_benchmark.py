@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import subprocess
 import zipfile
-from assemble import ROOT, ORDER, assemble
+from assemble import ROOT, ORDER, assemble, prompts_script
 
 
 def string(value):
@@ -20,7 +20,7 @@ def string(value):
 
 def build(kind, variant, reference):
     source, _ = assemble(paths=ORDER[:-1])
-    prompts = (ROOT / 'src/agent/prompts/tracking.splash').read_text(encoding='utf-8')
+    prompts = prompts_script()
     names = {'parse_intent': 'intent_prompt', 'parse_schedule_intent': 'schedule_intent_prompt', 'tracking_update': 'tracking_prompt'}
     prompt = json.loads(re.search(r'^let ' + names[kind] + r' = (.*)$', prompts, re.M).group(1))
     if variant == 'before':

@@ -55,7 +55,7 @@ fn test_octos(){
             return
         }
         set_octos_message("Context opened. Waiting for a real model reply...")
-        host.request("octos.turn.start", {text: "Connectivity test. Do not use tools. Reply with only OCTOS_OK."}, fn(reply){
+        host.request("octos.turn.start", {text: connectivity_prompt}, fn(reply){
             if done { return }
             done = true
             stop_timer(timer)

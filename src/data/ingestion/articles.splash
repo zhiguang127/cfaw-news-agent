@@ -1,10 +1,10 @@
 // Read-only reader; bounded paragraphs can also populate the separate evidence
 // cache. Each Agent run preserves exactly the paragraphs it actually received.
-let article_hosts = ["www.airchinagroup.com", "www.theverge.com", "arstechnica.com", "venturebeat.com", "news.mit.edu", "arxiv.org", "www.bbc.com", "www.bbc.co.uk", "www.theguardian.com", "www.cnbc.com", "techcrunch.com", "www.techmeme.com", "news.ycombinator.com"]
-let article_image_hosts = ["ichef.bbci.co.uk", "i.guim.co.uk", "cdn.arstechnica.net", "cdn.vox-cdn.com", "duet-cdn.vox-cdn.com"]
-let article_config = {max_paragraphs: 80 max_text_bytes: 24000 max_nodes: 350 max_images: 6
-    max_image_bytes: 2000000 max_total_image_bytes: 6000000 image_timeout_seconds: 10}
-let article_state = {generation: 0 state: "idle" paragraphs: [] blocks: [] images: [] image_bytes: 0 error: "" truncated: false}
+let article_hosts = ["www.airchinagroup.com", "www.theverge.com", "arstechnica.com", "venturebeat.com", "news.mit.edu", "arxiv.org", "www.bbc.com", "www.bbc.co.uk", "www.theguardian.com", "www.cnbc.com", "techcrunch.com", "www.techmeme.com", "news.ycombinator.com", "www.36kr.com", "36kr.com", "www.ithome.com", "sspai.com", "www.solidot.org", "solidot.org", "www.ifanr.com", "ifanr.com", "www.nasa.gov", "nasa.gov"]
+let article_image_hosts = ["ichef.bbci.co.uk", "i.guim.co.uk", "cdn.arstechnica.net", "cdn.vox-cdn.com", "duet-cdn.vox-cdn.com", "img.36krcdn.com", "img.ithome.com", "cdn.sspai.com", "s3.ifanr.com", "images.ifanr.cn"]
+let article_config = {max_paragraphs: 260 max_text_bytes: 96000 max_nodes: 1500 max_images: 6
+    max_image_bytes: 2000000 max_total_image_bytes: 6000000 image_timeout_seconds: 15 image_target_width: 900}
+let article_state = {generation: 0 state: "idle" paragraphs: [] blocks: [] images: [] image_bytes: 0 error: "" truncated: false requires_verification: false origin: ""}
 let article_http_request = |url, redirects, callback| news_http_request(url, redirects, callback)
 fn article_url_allowed(url){
     if !record_string(url) { return false }
@@ -43,41 +43,121 @@ fn article_add_image(blocks, images, seen, base, value, caption){
     if !article_image_allowed(url) || seen[url] == true || images.len() >= article_config.max_images { return }
     seen[url] = true
     if !record_string(caption) { caption = "" }
-    let block = {kind: "image" url: url text: caption state: "loading" resource: nil}
+    let block = {kind: "image" url: url text: caption state: "loading" resource: nil error: "" origin: "https://" + base.split("/")[2] + "/"}
     images.push(block) blocks.push(block)
 }
+fn article_srcset_url(value){
+    if !record_string(value) || value.len() > 16000 { return nil }
+    let selected = nil let distance = 100000 let pending = nil let visited = 0
+    // Only a width descriptor ends an entry. URL query commas stay intact;
+    // splitting at `w,` also supports compact srcset separators.
+    let tokens = []
+    for line in value.split("\n") { for cell in line.split("\t") { for part in cell.split(" ") { if part.trim() != "" { tokens.push(part.trim()) } } } }
+    for token in tokens {
+        visited = visited + 1 if visited > 96 { break }
+        if pending == nil { pending = token.strip_prefix(",") continue }
+        let parts = token.split("w,")
+        let number = parts[0].strip_suffix("w")
+        if !regex("^[0-9]+$").test(number) || (parts.len() == 1 && !regex("^[0-9]+w$").test(parts[0])) { pending = nil continue }
+        let width = number.to_number()
+        if width >= 320 && width <= 1600 {
+            let delta = if width > article_config.image_target_width {width - article_config.image_target_width} else {article_config.image_target_width - width}
+            if delta < distance { selected = pending distance = delta }
+        }
+        pending = nil
+        if parts.len() > 1 {
+            let rest = parts[1]
+            for i part in parts { if i > 1 { rest = rest + "w," + part } }
+            if rest != "" { pending = rest }
+        }
+    }
+    selected
+}
+fn article_node_image_url(node){
+    // Prefer the publisher's reader-sized source, including lazy images. Never
+    // turn an arbitrary URL into a guessed CDN transformation.
+    for attribute in ["data-srcset" "srcset"] {
+        let candidate = article_srcset_url(node.attr(attribute))
+        if candidate != nil { return candidate }
+    }
+    for attribute in ["data-src" "data-original" "data-lazy-src" "src"] {
+        let candidate = node.attr(attribute)
+        if record_string(candidate) && candidate != "" && !regex("^data:").test(candidate) { return candidate }
+    }
+    nil
+}
+fn article_image_filename(url){
+    let parts = url.split("?")[0].split("#")[0].split("/")
+    // Drupal's responsive derivative can add _0 to the same image filename.
+    parts[parts.len() - 1].replace("_0.", ".")
+}
+fn article_cover_url(doc, base, original){
+    let cover = article_resolve_url(base, original)
+    if !article_image_allowed(cover) { return nil }
+    let visited = 0
+    for node in doc.query("img").array() {
+        visited = visited + 1 if visited > article_config.max_nodes { break }
+        let candidate = article_resolve_url(base, article_node_image_url(node))
+        if !article_image_allowed(candidate) { continue }
+        let width = node.attr("width")
+        if record_string(width) && regex("^[0-9]+$").test(width) && width.to_number() < 640 { continue }
+        if article_image_filename(candidate) == article_image_filename(cover) { return candidate }
+    }
+    cover
+}
 fn article_extract(body, source_url = nil){
+    if source_url != nil && regex("^https://sspai[.]com/post/").test(source_url) {
+        // SSR pages repeat substantial navigation/extension markup. Keep the
+        // publisher's article section before native parsing to fit 64 ms.
+        let parts = body.split("class=\"article__main__content")
+        if parts.len() > 1 {
+            let content = parts[1].split("<div class=\"article__footer")[0]
+            body = "<article><div class=\"article__main__content" + content + "</article>"
+            // Flatten the SSR text with explicit block separators. Embedded
+            // iframe/image-only paragraphs need no script text-node iteration.
+            body = body.replace(regex("</p>", "g"), "</p>CFAW_READER_BLOCK_BREAK")
+            let text = reading_feed_text(body)
+            let paragraphs = text.split("CFAW_READER_BLOCK_BREAK")
+            return {paragraphs: paragraphs blocks: [] images: [] truncated: text.len() > article_config.max_text_bytes || paragraphs.len() > article_config.max_paragraphs}
+        }
+    }
     let doc = body.parse_html()
     // Restrict extraction to article/main containers. Never present navigation,
     // consent pages or the entire HTML document as a news article.
     let container = nil
-    for selector in ["div.news-article--content--body" "div.ArticleBody-articleBody" "div.article-body" "div.article-content" "div.entry-content" "article" "main"] {
+    for selector in ["div.news-article--content--body" "div.ArticleBody-articleBody" "div.article-body" "div.article-content" "div.entry-content" "div.article__main__content" "div.article__content" "div.post__content" "div.p_main" "article" "main"] {
         let found = doc.query(selector + "[0]")
         if found != nil && found.query("p").length > 0 { container = found break }
     }
     let values = []
     if container != nil { values = container.query("p.text") if record_string(values) { values = [values] } }
     let paragraphs = [] let count = 0 let truncated = false
-    for value in values {
-        if !record_string(value) || value.trim() == "" { continue }
-        let text = value.trim()
-        if paragraphs.len() >= article_config.max_paragraphs || count + text.to_bytes().len() > article_config.max_text_bytes { truncated = true break }
-        paragraphs.push(text) count = count + text.to_bytes().len()
+    let value_index = 0
+    while value_index < values.len() {
+        let value = values[value_index]
+        if record_string(value) {
+            let text = value.trim()
+            if text != "" {
+                if paragraphs.len() >= article_config.max_paragraphs || count + text.len() > article_config.max_text_bytes { truncated = true break }
+                paragraphs.push(text) count = count + text.len()
+            }
+        }
+        value_index = value_index + 1
     }
     let blocks = [] let images = [] let seen = {}
     if source_url != nil && container != nil {
         // The cover lives outside the body on several publishers (e.g. MIT).
         for meta in doc.query("meta").array() {
-            if meta.attr("property") == "og:image" { article_add_image(blocks, images, seen, source_url, meta.attr("content"), "") break }
+            if meta.attr("property") == "og:image" { article_add_image(blocks, images, seen, source_url, article_cover_url(doc, source_url, meta.attr("content")), "") break }
         }
         let visited = 0 let text_bytes = 0 let paragraph_count = 0
-        for node in container.query("*").array() {
-            visited = visited + 1
+        let nodes = container.query("*").array()
+        while visited < nodes.len() {
+            let node = nodes[visited] visited = visited + 1
             if visited > article_config.max_nodes { truncated = true break }
             let html = node.html
             if regex("^<img[ >]").test(html) {
-                let value = node.attr("data-src")
-                if !record_string(value) || value == "" { value = node.attr("src") }
+                let value = article_node_image_url(node)
                 article_add_image(blocks, images, seen, source_url, value, node.attr("alt"))
                 continue
             }
@@ -90,8 +170,8 @@ fn article_extract(body, source_url = nil){
             if kind == nil { continue }
             let text = node.text.trim()
             if text == "" { continue }
-            if text_bytes + text.to_bytes().len() > article_config.max_text_bytes || paragraph_count >= article_config.max_paragraphs { truncated = true break }
-            text_bytes = text_bytes + text.to_bytes().len()
+            if text_bytes + text.len() > article_config.max_text_bytes || paragraph_count >= article_config.max_paragraphs { truncated = true break }
+            text_bytes = text_bytes + text.len()
             if kind == "paragraph" { paragraph_count = paragraph_count + 1 }
             blocks.push({kind: kind text: text})
         }
@@ -101,11 +181,29 @@ fn article_extract(body, source_url = nil){
 fn article_cancel(){ article_state.generation = article_state.generation + 1 }
 fn article_prepare(){
     article_cancel()
-    article_state.state = "loading" article_state.paragraphs = [] article_state.blocks = [] article_state.images = [] article_state.image_bytes = 0 article_state.error = "" article_state.truncated = false
+    article_state.state = "loading" article_state.paragraphs = [] article_state.blocks = [] article_state.images = [] article_state.image_bytes = 0 article_state.error = "" article_state.truncated = false article_state.requires_verification = false article_state.origin = ""
+}
+fn article_accept(row, result, origin, complete){
+    article_state.state = "ready" article_state.paragraphs = result.paragraphs article_state.truncated = result.truncated
+    article_state.blocks = result.blocks article_state.images = result.images article_state.origin = origin
+    analysis_article_store(row, result, "")
+    complete()
+    if article_state.state == "ready" { article_images_next(0, article_state.generation, complete) }
 }
 fn article_load(row, complete){
     article_prepare()
     let generation = article_state.generation
+    if record_string(row["body_html"]) && row["body_html"] != "" {
+        let result = nil
+        try { result = article_extract("<article>" + row.body_html + "</article>", row.source_url) } { result = nil }
+        if result != nil {
+            if result.paragraphs.len() == 0 {
+                let text = reading_feed_text(row.body_html)
+                if text != "" { result.paragraphs = [text] result.blocks = [{kind: "paragraph" text: text}] }
+            }
+            if result.paragraphs.len() > 0 { article_accept(row, result, "publisher_rss", complete) return }
+        }
+    }
     if !article_url_allowed(row.source_url) {
         article_state.state = "unavailable"
         article_state.error = "此来源暂不支持应用内提取，请点击“打开图文原文”阅读。"
@@ -116,7 +214,8 @@ fn article_load(row, complete){
         if !reply.success {
             if reply.category == "verification" {
                 article_state.state = "unavailable"
-                article_state.error = "网站要求人机验证，应用暂时无法读取正文。请点击“打开图文原文”在浏览器阅读。"
+                article_state.requires_verification = true
+                article_state.error = "网站需要验证。请在应用内原文页完成验证后继续阅读。"
             } else { article_state.state = "failed" article_state.error = "正文读取失败：" + reply.error }
             complete() return
         }
@@ -125,9 +224,7 @@ fn article_load(row, complete){
         if result == nil || result.paragraphs.len() == 0 {
             article_state.state = "unavailable" article_state.error = "来源网页未提供可读取的正文，以下保留来源摘要。"
         } else {
-            article_state.state = "ready" article_state.paragraphs = result.paragraphs article_state.truncated = result.truncated
-            article_state.blocks = result.blocks article_state.images = result.images
-            analysis_article_store(row, result, "")
+            article_accept(row, result, "publisher_web", complete) return
         }
         complete()
         if article_state.state == "ready" { article_images_next(0, generation, complete) }
@@ -135,25 +232,28 @@ fn article_load(row, complete){
 }
 fn article_image_step(url, redirects, context){
     if context.done { return }
-    if !article_image_allowed(url) { news_http_finish(context, {success: false}) return }
+    if !article_image_allowed(url) { news_http_finish(context, {success: false error: "配图域名未获许可"}) return }
     try {
-        net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET max_response_body_bytes: article_config.max_image_bytes}) do net.HttpEvents{
+        net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET max_response_body_bytes: article_config.max_image_bytes
+            headers: context.headers}) do net.HttpEvents{
             on_response: |response| {
                 if context.done { return }
                 if record_contains([301 302 303 307 308], response.status_code) {
                     let locations = response.headers["location"] if locations == nil { locations = response.headers["Location"] }
                     let target = nil if locations != nil && locations.len() > 0 { target = article_resolve_url(url, locations[0]) }
-                    if target == nil || redirects >= news_config.max_redirects { news_http_finish(context, {success: false}) return }
+                    if target == nil || redirects >= news_config.max_redirects { news_http_finish(context, {success: false error: "配图重定向无效或次数超限"}) return }
                     article_image_step(target, redirects + 1, context)
-                } else { news_http_finish(context, {success: response.status_code == 200 && response.body != nil bytes: response.body}) }
+                } else { news_http_finish(context, {success: response.status_code == 200 && response.body != nil bytes: response.body error: if response.status_code != 200 {"配图请求 HTTP " + response.status_code} else {""}}) }
             }
-            on_error: |error| news_http_finish(context, {success: false})
+            on_error: |error| news_http_finish(context, {success: false error: if regex("body.*(limit|large)").test(error.message) {"配图超过 2 MB 下载限制"} else {error.message}})
         }
-    } { news_http_finish(context, {success: false}) }
+    } { news_http_finish(context, {success: false error: "宿主无法发起配图请求"}) }
 }
-let article_image_request = fn(url, callback){
-    let context = {done: false timer: nil callback: callback}
-    context.timer = start_timeout(article_config.image_timeout_seconds, || news_http_finish(context, {success: false}))
+let article_image_request = fn(url, callback, origin = nil){
+    let headers = {"Accept": ["image/jpeg, image/png, image/webp, image/gif, */*;q=0.1"]}
+    if article_url_allowed(origin) { headers["Referer"] = [origin] }
+    let context = {done: false timer: nil callback: callback headers: headers}
+    context.timer = start_timeout(article_config.image_timeout_seconds, || news_http_finish(context, {success: false error: "配图请求超时"}))
     article_image_step(url, 0, context)
 }
 fn article_image_bytes_supported(bytes){
@@ -168,13 +268,25 @@ fn article_image_bytes_supported(bytes){
 fn article_images_next(index, generation, complete){
     if generation != article_state.generation || index >= article_state.images.len() { return }
     let image = article_state.images[index]
-    article_image_request(image.url, fn(reply){
-        if generation != article_state.generation || image.state != "loading" { return }
-        image.state = "failed"
-        if reply.success && article_image_bytes_supported(reply.bytes) && article_state.image_bytes + reply.bytes.len() <= article_config.max_total_image_bytes {
-            try { image.resource = binary_resource(reply.bytes) image.state = "ready" article_state.image_bytes = article_state.image_bytes + reply.bytes.len() } { image.state = "failed" }
-        }
+    if image.state != "loading" { start_timeout(0.01, || article_images_next(index + 1, generation, complete)) return }
+    article_image_load(image, generation, || {
         complete()
         start_timeout(0.01, || article_images_next(index + 1, generation, complete))
     })
+}
+fn article_retry_image(image, complete){
+    if article_state.state != "ready" || image.state != "failed" { return }
+    image.state = "loading" image.error = "" complete()
+    article_image_load(image, article_state.generation, complete)
+}
+fn article_image_load(image, generation, complete){
+    article_image_request(image.url, fn(reply){
+        if generation != article_state.generation || image.state != "loading" { return }
+        image.state = "failed"
+        image.error = if record_string(reply["error"]) && reply.error != "" {reply.error} else {"配图格式不支持或超过大小限制"}
+        if reply.success && article_image_bytes_supported(reply.bytes) && article_state.image_bytes + reply.bytes.len() <= article_config.max_total_image_bytes {
+            try { image.resource = binary_resource(reply.bytes) image.state = "ready" image.error = "" article_state.image_bytes = article_state.image_bytes + reply.bytes.len() } { image.state = "failed" image.error = "配图资源创建失败" }
+        }
+        complete()
+    }, image.origin)
 }

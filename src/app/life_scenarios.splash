@@ -1,0 +1,46 @@
+// Starter text is editable user context, never a saved goal or fabricated news.
+let life_scenarios = [
+    {id: "learn" title: "每周两小时，AI 值得学什么？"
+        description: "把新功能与自己的工作联系起来"
+        input: "我想用 AI 减少整理会议记录和制作演示文稿的时间。我不会编程，每周只有两小时学习。关注普通人已经能使用的新功能、使用条件和限制，少看融资与模型跑分。帮我判断什么值得试，证据不足时先核实，不要承诺效率收益。"}
+    {id: "buy" title: "换电脑，要不要再等等？"
+        description: "围绕用途判断，减少发布会带来的焦虑"
+        input: "我准备换一台学习和办公用的笔记本，主要写文档和开视频会议。现在的电脑还能用，预算有限。关注续航、软件兼容和实际可用的 AI 功能；只有宣传或跑分变化不足以让我换机。请区分已确认的功能、厂商说法与待实测内容，帮我判断值得核实什么，不要假装掌握实时价格。"}
+    {id: "privacy" title: "家人的云相册，有什么变化？"
+        description: "关注权益与隐私，新证据出现时重新判断"
+        input: "我和家人用云相册保存照片，想关注我们使用的产品在隐私、数据使用、订阅和存储权益上的变化。请先问我具体产品名称。普通功能更新不用强行提醒；适用范围不清楚时说明未知项，重复报道不升级风险，出现澄清或新条款时更新或撤回原判断。下一步只建议我核对设置和条款。"}
+]
+
+fn intent_starter_available(){
+    intent_draft != nil && !analysis_busy && intent_draft.target_topic_id == nil && intent_draft.origin_reminder_id == nil &&
+        intent_draft.original_input.trim() == "" && intent_draft.supplement.trim() == "" && intent_draft.state != "ready"
+}
+fn intent_use_scenario(id){
+    if !intent_starter_available() { return false }
+    let example = tracking_find(life_scenarios, "id", id)
+    if example == nil { return false }
+    intent_draft.intent_kind = "goal"
+    intent_draft.original_input = example.input
+    intent_invalidate()
+    intent_error = ""
+    intent_guidance = "已填入可编辑示例；请按自己的情况修改，再整理并确认。"
+    intent_render()
+    true
+}
+fn insight_plan_check(value){
+    if !tracking_run_current(value.run) { notice("依据或目标已变化，请重新检查") return false }
+    if !record_string(value.insight["next_step"]) || value.insight.next_step.trim() == "" { return false }
+    if analysis_busy { notice("请等待当前分析完成，再安排核实") return false }
+    intent_begin(nil)
+    if !intent_starter_available() {
+        intent_error = "已有草稿已保留；请先完成或丢弃这份草稿，再安排下一步核实。"
+        intent_render()
+        return false
+    }
+    intent_draft.intent_kind = "schedule"
+    intent_draft.original_input = "安排一次核实：" + value.insight.next_step
+    intent_invalidate()
+    intent_guidance = "请补充日期、开始和结束时间；整理后预览确认，才会保存日程。"
+    intent_render()
+    true
+}

@@ -2,6 +2,7 @@
 let intent_open = false
 let intent_draft = nil
 let intent_error = ""
+let intent_guidance = ""
 let intent_save_timer = nil
 let intent_parse_pending = false
 let intent_more = false
@@ -21,6 +22,7 @@ fn intent_begin(topic_id){
     tracking_recall_generation = tracking_recall_generation + 1
     notice("")
     intent_error = ""
+    intent_guidance = ""
     if topic_id == nil && topic_records.draft != nil { intent_draft = topic_records.draft.to_json().parse_json() }
     else { intent_draft = topic_new_draft(topic_id) }
     if topic_id == nil && intent_draft.target_topic_id != nil {

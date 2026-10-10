@@ -1,5 +1,7 @@
 # 图文阅读改进与验证（2026-10-06）
 
+本文保留 10 月 6 日的历史验证。当前应用内原文实现见 [Windows WebReader 修复](../reports/windows-webreader-fix-20261009.md)，配图下载修复见 [配图加载记录](../reports/article-images-fix-20261009.md)。当前原文入口使用应用内 WebReader。
+
 本轮修改位于 cfaw-news-agent-new.2，使用 D:\Hackathon_agenticapp\Rinx-main 的原生库验证。应用外层保持自适应，不恢复此前已回退的固定手机画布。
 
 ## 已完成
