@@ -8,7 +8,10 @@ let feed_data_revision = 0
 
 fn feed_cache_valid(value, source){
     if !record_object(value) || value.schema_version != 1 || value.source_id != source.id || !record_number(value.retrieved_at) || !record_array(value.items) { return false }
-    for row in value.items { if !news_record_valid(row) || row.source_id != source.id { return false } }
+    for row in value.items {
+        if !news_record_valid(row) || row.source_id != source.id { return false }
+        if source["reading_feed"] == true && !record_string(row["body_html"]) { return false }
+    }
     value.items.len() <= news_config.items_per_source
 }
 fn feed_initialize(){

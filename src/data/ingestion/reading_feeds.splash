@@ -1,0 +1,44 @@
+// Publisher RSS adapters preserve body HTML separately from publisher summaries.
+// The host's generic feed parser shortens all descriptions to 280 characters.
+fn reading_feed_field(xml, tag){
+    let parts = xml.split("<" + tag + ">")
+    if parts.len() < 2 { return "" }
+    let value = parts[1].split("</" + tag + ">")[0].trim()
+    if regex("^<!\\[CDATA\\[").test(value) {
+        value = value.strip_prefix("<![CDATA[").strip_suffix("]]> ").strip_suffix("]]>")
+    } else {
+        // XML text encodes HTML markup; decode the XML layer only once.
+        value = value.replace(regex("&lt;", "g"), "<").replace(regex("&gt;", "g"), ">").replace(regex("&quot;", "g"), "\"").replace(regex("&apos;", "g"), "'").replace(regex("&amp;", "g"), "&")
+    }
+    value.trim()
+}
+fn reading_feed_text(html){
+    if html == "" { return "" }
+    let doc = ("<article>" + html + "</article>").parse_html()
+    let node = doc.query("article[0]")
+    if node == nil { return "" }
+    node.text.replace("查看全文", "").trim()
+}
+fn reading_feed_items(body, source){
+    let items = []
+    for i chunk in body.split("<item") {
+        if i == 0 { continue }
+        if items.len() >= news_config.items_per_source { break }
+        let xml = chunk.split("</item>")[0]
+        // Preserve the pinned native parser's URL/date handling per entry.
+        let parsed = ("<rss><channel><item" + xml + "</item></channel></rss>").parse_feed("rss")
+        if parsed == nil { continue }
+        if parsed.len() == 0 { continue }
+        let item = parsed[0]
+        item.summary = ""
+        if source["summary_field"] != "none" { item.summary = reading_feed_text(reading_feed_field(xml, source.summary_field)) }
+        let html = ""
+        if source["body_field"] != "none" { html = reading_feed_field(xml, source.body_field) }
+        item.body_html = html
+        item.body_truncated = false
+        if html.len() > 160000 { item.body_html = "" item.body_truncated = true }
+        item.body_origin = "publisher_rss"
+        items.push(item)
+    }
+    items
+}

@@ -33,9 +33,11 @@ fn records_document_valid(value, kind){
     if !record_array(value["items"]) { return false }
     if kind == "bookmarks" && value["items"].len() > news_config.max_bookmarks { return false }
     if kind == "interests" && value["items"].len() > news_config.max_interests { return false }
-    for item in value["items"] {
-        if kind == "bookmarks" && (!news_record_valid(item) || !record_number(item["bookmarked_at"])) { return false }
-        if kind == "interests" && !interest_record_valid(item) { return false }
+    if value.items.len() > 0 {
+        for item in value.items {
+            if kind == "bookmarks" && (!news_record_valid(item) || !record_number(item["bookmarked_at"])) { return false }
+            if kind == "interests" && !interest_record_valid(item) { return false }
+        }
     }
     if kind == "interests" {
         if !record_array(value["enabled_source_ids"]) { return false }
@@ -106,16 +108,27 @@ fn records_load(){
         { bookmark_file.writable = false records_warn("旧收藏迁移检查失败，原文件已保留") }
     }
     let interests = records_read(interest_file, "interests")
-    if interests != nil {
-        user_interests = interests.items enabled_source_ids = []
-        for id in interests.enabled_source_ids { if news_source(id) != nil && !record_contains(enabled_source_ids, id) { enabled_source_ids.push(id) } }
-    }
+    if interests != nil { records_apply_interests(interests) }
     let tracking = records_read(tracking_file, "tracking")
     if tracking != nil { tracking_state = tracking }
     records_index_unread()
-    user_bookmarks.retain(|row| !news_is_demo(row))
+    if user_bookmarks.len() > 0 { user_bookmarks.retain(|row| !news_is_demo(row)) }
     records_clean_demo_bookmarks(bookmark_file.path)
     records_clean_demo_bookmarks(bookmark_file.path + ".backup")
+}
+fn records_apply_interests(interests){
+    user_interests = interests.items
+    if interests["reading_sources_revision"] != 2 && interests["reading_sources_revision"] != 3 {
+        let error = records_save_interests()
+        if error != "" { records_warn(error) }
+        return true
+    }
+    let selected = {}
+    for id in interests.enabled_source_ids { selected[id] = true }
+    let ids = []
+    for source in news_sources { if selected[source.id] == true { ids.push(source.id) } }
+    enabled_source_ids = ids
+    true
 }
 fn records_clean_demo_bookmarks(path){
     // Clean both snapshots so recovery cannot resurrect removed demo news.
@@ -124,7 +137,7 @@ fn records_clean_demo_bookmarks(path){
         let value = fs.read(path).parse_json()
         if !records_document_valid(value, "bookmarks") { return }
         let count = value.items.len()
-        value.items.retain(|row| !news_is_demo(row))
+        if value.items.len() > 0 { value.items.retain(|row| !news_is_demo(row)) }
         if count != value.items.len() { fs.write(path, value.to_json()) }
     } { records_warn("演示收藏已隐藏，但本地清理保存失败") }
 }
@@ -163,7 +176,7 @@ fn records_save_bookmarks(){
     records_write(bookmark_file, {schema_version: 1 items: user_bookmarks}, "bookmarks")
 }
 fn records_save_interests(){
-    records_write(interest_file, {schema_version: 1 items: user_interests enabled_source_ids: enabled_source_ids}, "interests")
+    records_write(interest_file, {schema_version: 1 reading_sources_revision: 3 items: user_interests enabled_source_ids: enabled_source_ids}, "interests")
 }
 fn records_save_tracking(){ records_write(tracking_file, tracking_state, "tracking") }
 fn records_is_bookmarked(id){

@@ -260,13 +260,18 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
         raise SystemExit('Interest management lost the intent entry')
     click(next(w for w in managed if w.get('t') == '‹ 返回' and w.get('ty') == 'Button'))
     widgets = snapshot('feed-managed-returned')
-    click(next(w for w in widgets if w.get('t') == '关注来源' and w.get('ty') == 'Button'))
-    priority = snapshot('feed-priority', lambda ws: any(w.get('t') == '已跟踪' for w in ws))
-    if any('规则匹配' in w.get('t', '') for w in priority if w.get('ty') in ('Label', 'Button')):
-        raise SystemExit('Lexical recall leaked into product relevance hints')
-    stored = json.loads((work / 'data/dev.cfaw.runtime-tests/interests_v1.json').read_text(encoding='utf-8'))
-    if not any(i.get('kind') == 'source' for i in stored['items']):
-        raise SystemExit('Following a source did not persist')
+    click(next(w for w in widgets if w.get('t') == '关注话题' and w.get('ty') == 'Button'))
+    time.sleep(.65)
+    draft_widgets = snapshot('feed-topic-draft')
+    if not any(w.get('ty') == 'TextInput' and 'Synthetic capacity news' in w.get('t', '') for w in draft_widgets):
+        raise SystemExit('Article follow did not prefill an editable topic draft')
+    stored = json.loads((work / 'data/dev.cfaw.runtime-tests/topics_v2.json').read_text(encoding='utf-8'))
+    if stored['topics'] or stored['draft'] is None:
+        raise SystemExit('Article follow should save only an unconfirmed draft')
+    get('/m', k='scroll', x=200, y=700, dy=600, wait=1)
+    draft_widgets = snapshot('feed-topic-draft-actions')
+    click(next(w for w in draft_widgets if w.get('t') == '取消并保留草稿' and w.get('ty') == 'Button'))
+    time.sleep(.65)
     menu_action('关注动态')
     followed = snapshot('feed-followed')
     if not any('我的关注' in w.get('t', '') for w in followed):

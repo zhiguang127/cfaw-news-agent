@@ -4,14 +4,23 @@
 
 ## 来源目录
 
-| 分类 | 默认启用 | 默认关闭，可在来源页启用 |
+| 默认启用来源 | 标题与摘要 | 正文 |
 | --- | --- | --- |
-| 科技 | Hacker News（Algolia 首页提交记录）、TechMeme、The Verge、Ars Technica | TechCrunch |
-| AI | VentureBeat AI、MIT Research、arXiv cs.AI | arXiv cs.LG |
-| 国际 | BBC World、Guardian World | Reuters、AP News（Google News 聚合） |
-| 财经 | CNBC | — |
-| 出行 | 国航民航动态 RSS | — |
-| 中文 | 金十资讯、工信部（Google News 聚合） | 商务部（Google News 聚合） |
+| 36氪 | RSS 标题；无独立摘要，用户点击后由 Agent 提取 | RSS description 内的文章 HTML |
+| IT之家 | RSS 标题；无独立摘要，用户点击后由 Agent 提取 | RSS description 内的文章 HTML |
+| 少数派 | RSS 标题、来源摘要 | 公开原文的 SSR 文章区域；付费、登录限制不保证读取 |
+| MIT Research | RSS 标题、description 来源摘要 | RSS content:encoded |
+| Solidot | RSS 标题；无独立摘要，用户点击后由 Agent 提取 | RSS description 内的自身短报道 |
+| 爱范儿 | RSS 标题、description 来源摘要 | RSS content:encoded |
+| NASA 新闻发布 | RSS 标题、description 来源摘要（英文） | 官方新闻发布 RSS content:encoded |
+
+原有 Hacker News、TechMeme、The Verge、Ars Technica、VentureBeat、arXiv、BBC、Guardian、CNBC、国航及 Google News 聚合来源默认关闭，目录与手动启用能力保留。MIT 复用原来源 ID，并升级为同时保留摘要和正文的适配器。首次升级将旧来源选择迁移到以上七个来源，在 `interests_v1.json` 保存 `reading_sources_revision: 3`；已使用第一批配置的 revision 2 用户保持其原选择，新来源可手动启用。后续用户选择（包括全部关闭）不会被默认值覆盖。
+
+新增来源用独立的 `reading_feeds.splash` 适配器读取 RSS 原始字段，避免宿主通用解析器将全文 description 缩短为280字符摘要。新闻记录增加可选 `source_summary`、`body_html`、`body_origin`、`body_truncated` 字段；缓存仍兼容 schema 1，旧 MIT 缓存缺少正文字段时重新获取，收藏快照保持可读。单条 RSS HTML 保留上限160 KB，正文提取上限96 KB / 260段；超限不能声明已读取全文。
+
+手动摘要使用宿主 Octos 的 `octos.session.open` / `octos.turn.start` / `octos.turn.interrupt`。正文以完整 Unicode 字符分为至多10 KB的片段；全部片段汇总，大量片段再有界合并。源摘要不调用模型；正文缺失、截断、服务不可用、错误返回和取消都显示实际状态。正文与模型笔记是不可信数据，不授权工具或日程写入。生成摘要仅缓存当前会话，最多20篇。
+
+阅读全文与追踪证据分开保存。追踪缓存仍限六段 / 4 KB，并标记节选；手动摘要直接使用阅读页的全部已提取正文，不受追踪节选限制。原文下载、段落提取或读取上限不足时，不把节选标为全文。
 
 直接请求目录中原始 HTTPS 地址。Google News 来源使用限定站点的 RSS 搜索，不是这些机构的原生 API；保留聚合跳转链接，详情标明聚合。TechMeme 的摘要可能指向原始发布方。HN 展示提交记录，无原文链接的条目指向 HN 讨论页。
 

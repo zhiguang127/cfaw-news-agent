@@ -40,7 +40,7 @@ start_timeout(0.1, || {
         } else { callback({is_ok: true data: {}}) }
     }
     intent_begin(nil)
-    start_interval(0.2, || fs.write("state.json", {open: intent_open state: analysis_state error: intent_error draft: intent_draft topics: topic_records.topics}.to_json()))
+    start_interval(0.2, || fs.write("state.json", {open: intent_open state: analysis_state error: intent_error draft: intent_draft topics: topic_records.topics calls: intent_probe_calls}.to_json()))
 })
 """
     (bundle / 'main.splash').write_text(source, encoding='utf-8', newline='\n')
@@ -71,12 +71,22 @@ start_timeout(0.1, || {
     def menu(label): click(ident='menu_button'); click(label)
     checks=[]
     with (work/'host.log').open('w',encoding='utf-8') as log:
-        process=subprocess.Popen([str(executable),'--bundle',str(bundle),'--app-data',str(data),'--remote='+str(port),'--size','800x1050'],cwd=native,env=env,stdout=log,stderr=log)
+        process=subprocess.Popen([str(executable),'--bundle',str(bundle),'--app-data',str(data),'--remote='+str(port),'--size','430x860'],cwd=native,env=env,stdout=log,stderr=log)
         try:
-            time.sleep(2.0)
-            click('我想做…')
-            click(ident='intent_input')
-            get('/t',t='我想了解最新 AI 进展如何帮助我的工作、学习和日常生活',wait=1)
+            for _ in range(150):
+                try:
+                    find('从生活场景开始')
+                    break
+                except (OSError, StopIteration): time.sleep(.1)
+            else: raise RuntimeError('Intent panel did not initialize')
+            get('/m', k='scroll', x=200, y=650, dy=380, wait=1)
+            (work/'life-starters.png').write_bytes(get('/g',raw=1))
+            click('每周两小时，AI 值得学什么？')
+            time.sleep(.5)
+            counts=json.loads((data/'dev.cfaw.runtime-tests/state.json').read_text(encoding='utf-8'))
+            assert counts['calls']==0 and len(counts['topics'])==0,counts
+            assert counts['draft']['intent_kind']=='goal' and '两小时' in counts['draft']['original_input'],counts
+            checks.append('life starter fills an editable goal without model calls or confirmed topics')
             click('整理我的想法 ↗')
             time.sleep(1.8)
             counts=json.loads((data/'dev.cfaw.runtime-tests/state.json').read_text(encoding='utf-8'))

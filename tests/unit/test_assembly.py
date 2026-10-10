@@ -80,6 +80,10 @@ class AssemblyTests(unittest.TestCase):
                 path = root / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text((ROOT / relative).read_text(encoding='utf-8'), encoding='utf-8')
+            # The prompt catalog now compiles independently maintained files.
+            prompts = json.loads((ROOT / 'src/agent/prompts/catalog.json').read_text(encoding='utf-8'))
+            for filename in prompts['templates'].values():
+                shutil.copy2(ROOT / 'src/agent/prompts' / filename, root / 'src/agent/prompts' / filename)
             with self.assertRaises(SystemExit):
                 build(root, check=True)
 

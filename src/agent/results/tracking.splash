@@ -113,10 +113,16 @@ fn tracking_parse(text, kind, snapshot){
     if !regex("^[{]").test(clean) || !regex("[}]$").test(clean) { return tracking_invalid("invalid_json", "模型回复应为单个 JSON 对象") }
     let value = nil
     try { value = clean.parse_json() } { value = nil }
-    if kind == "tracking_update" && (snapshot["prompt_revision"] == "tracking-v2.0" || snapshot["prompt_revision"] == "tracking-v2.1" || snapshot["prompt_revision"] == "tracking-v2.2") {
+    if kind == "tracking_update" && (snapshot["prompt_revision"] == "tracking-v2.0" || snapshot["prompt_revision"] == "tracking-v2.1" || snapshot["prompt_revision"] == "tracking-v2.2" || snapshot["prompt_revision"] == "tracking-v2.3") {
         if value == nil || value["schema_version"] != 2 { return tracking_invalid("invalid_schema", "新版追踪须返回目标变化与段落引用契约；旧结果仅作历史兼容") }
     }
     if !record_object(value) { return tracking_invalid("invalid_json", "模型回复无法解析为 JSON 对象") }
+    if kind == "article_summary" {
+        if !record_string(value["summary"]) { return tracking_invalid("invalid_schema", "摘要必须为文本") }
+        if value.summary.to_chars().len() > snapshot.max_summary_chars { return tracking_invalid("invalid_schema", "摘要超过本步骤长度上限") }
+        if value.summary.trim() == "" { return tracking_invalid("invalid_schema", "模型未返回有效摘要") }
+        return {valid: true error: "" message: "" result: {summary: value.summary.trim()}}
+    }
     if kind == "parse_schedule_intent" {
         let checked = schedule_intent_validate(value)
         if checked.valid && value.status == "needs_clarification" {
@@ -133,6 +139,6 @@ fn tracking_parse(text, kind, snapshot){
         }
         return checked
     }
-    if kind == "tracking_update" && snapshot["prompt_revision"] == "tracking-v2.2" { tracking_expand_evidence(value, snapshot) }
+    if kind == "tracking_update" && (snapshot["prompt_revision"] == "tracking-v2.2" || snapshot["prompt_revision"] == "tracking-v2.3") { tracking_expand_evidence(value, snapshot) }
     tracking_validate(value, snapshot)
 }

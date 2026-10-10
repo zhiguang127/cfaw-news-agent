@@ -42,6 +42,11 @@ fn test_run(){
     test_assert(article.paragraphs.len() == 2 && article.paragraphs[0] == "First & evidence." && article.paragraphs[1] == "Second paragraph.", "reader extracts decoded article paragraphs and excludes navigation")
     test_assert(article_extract("<html><p>Cookie consent only</p></html>").paragraphs.len() == 0, "reader refuses non-article page text")
     test_assert(article_url_allowed("https://www.bbc.com/news/fixture") && !article_url_allowed("https://www.bbc.com@evil.example/fixture") && !article_url_allowed("javascript:alert(1)"), "reader confines source pages to configured HTTPS hosts")
+    test_assert(article_srcset_url("/small.jpg 320w, /reader.jpg 900w, /print.jpg 3000w") == "/reader.jpg" && article_srcset_url("/print.jpg 3000w") == nil, "reader selects bounded responsive image rather than oversized print source")
+    test_assert(article_srcset_url("/tiny.jpg 320w,https://cdn.vox-cdn.com/photo.jpg?auto=format,compress 900w,/print.jpg 3000w") == "https://cdn.vox-cdn.com/photo.jpg?auto=format,compress", "responsive URL query commas and compact separators are preserved")
+    let responsive = article_extract("<meta property='og:image' content='/images/cover.jpg'><img width='270' src='/thumb/cover.jpg'><img width='900' data-src='/reader/cover_0.jpg' src='/placeholder.jpg'><article><p>Real body fixture</p><img data-srcset='/tiny.jpg 320w, /body.jpg 900w, /large.jpg 3000w' src='data:image/gif;base64,AA=='></article>", "https://news.mit.edu/test")
+    test_assert(responsive.images.len() == 2 && responsive.images[0].url == "https://news.mit.edu/reader/cover_0.jpg" && responsive.images[1].url == "https://news.mit.edu/body.jpg", "cover uses publisher reader derivative and lazy srcset preserves body image")
+    test_assert(!article_image_allowed("https://news.mit.edu@evil.example/photo.jpg") && !article_image_bytes_supported("<html>challenge</html>".to_bytes()), "images retain host permission and reject HTML challenge bytes")
     let old_article_request = article_http_request
     // The standalone data suite omits app/tracking; use its data fingerprint
     // at the reader cache boundary while exercising stale/duplicate replies.
@@ -61,7 +66,8 @@ fn test_run(){
     test_assert(!news_http_verification({}) && !news_http_verification(nil) && !news_http_verification({"x-amzn-waf-action": ["other"]}), "ordinary responses not mistaken for verification")
     article_load(news_normalize({title: "Protected reader fixture" link: "https://arstechnica.com/protected"}, source, 100), || {})
     article_replies[2]({success: false error: "Verification" category: "verification"})
-    test_assert(article_state.state == "unavailable" && article_state.paragraphs.len() == 0 && article_state.error == "网站要求人机验证，应用暂时无法读取正文。请点击“打开图文原文”在浏览器阅读。", "verification displays browser fallback without fabricated body")
+    test_assert(article_state.state == "unavailable" && article_state.requires_verification && article_state.paragraphs.len() == 0 && article_state.error == "网站需要验证。请在应用内原文页完成验证后继续阅读。", "verification routes to in-app original without fabricated body")
+    test_assert(news_http_verification({"cf-mitigated": ["challenge"]}) && !news_http_verification({"cf-mitigated": ["other"]}), "Cloudflare verification distinguished from ordinary responses")
     article_http_request = old_article_request
     analysis_article_key = old_article_key
     test_stage = "HN JSON decode"

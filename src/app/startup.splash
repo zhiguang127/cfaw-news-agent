@@ -1,20 +1,36 @@
+let boot_phase = "准备启动"
+let boot_finished = false
+fn boot_status(phase){
+    boot_phase = phase
+    ui.status.set_text("正在启动：" + phase)
+}
 fn boot(){
-    records_load()
-    schedules_load()
-    history_load()
-    topics_load()
-    agent_preferences_load()
-    schedule_actions_load()
-    check_states_load()
-    agent_metrics_load()
+    start_timeout(12.0, || {
+        if !boot_finished { ui.status.set_text("启动未完成：" + boot_phase + "；请重新 Run 或查看宿主日志") }
+    })
+    boot_load_step(0)
+}
+fn boot_load_step(index){
+    // The host limits each callback to 64 ms. Existing account records must
+    // not share one slice with every other repository and the first render.
+    let loaders = [records_load schedules_load history_load topics_load agent_preferences_load schedule_actions_load check_states_load agent_metrics_load]
+    if index < loaders.len() {
+        let labels = ["收藏与来源设置" "日程" "分析历史" "关注记录" "助手设置" "日程操作" "检查状态" "诊断记录"]
+        boot_status(labels[index])
+        loaders[index]()
+        start_timeout(0.01, || boot_load_step(index + 1))
+        return
+    }
     agent_progress_handler = agent_progress
     foreground_tracking_arm()
     start_timeout(0.01, || boot_loaded())
 }
 fn boot_loaded(){
+    boot_status("准备新闻来源")
     presets_initialize(time_now())
     feed_initialize()
     render_main()
+    boot_finished = true
     start_timeout(0.01, || orb_load())
     start_timeout(0.01, || weather_app_boot())
     if records_warning != "" || schedule_warning != "" || analysis_history_warning != "" || topic_warning != "" { notice(records_warning + " " + schedule_warning + " " + analysis_history_warning + " " + topic_warning) }

@@ -1,0 +1,2 @@
+
+OUTPUT CORRECTION (one final attempt): The previous response failed deterministic validation. Regenerate the COMPLETE JSON object for the SAME SNAPSHOT above, not a patch. Recheck every item and insight against the schema, required nonempty issue_key and summary strings, character limits, supplied IDs/versions, exact quotes and previous_by_target. Keep summaries concise. Do not invent evidence or relax schedule rules to pass validation; express uncertainty and omit unsupported impacts/reschedules. No tools, Markdown or commentary. Validator error: 

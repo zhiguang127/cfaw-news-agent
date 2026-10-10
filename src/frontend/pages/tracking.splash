@@ -40,7 +40,7 @@ let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
         interest_list := View{width: Fill height: Fit flow: Down spacing: 4 on_render: || {
             let has_topics = false
             for topic in topic_records.topics { if topic_is_user_record(topic) && topic.status != "cancelled" { has_topics = true } }
-            if user_interests.len() == 0 && !has_topics { Small{text: "尚未添加关注。也可在新闻条目上关注来源。"} }
+            if user_interests.len() == 0 && !has_topics { Small{text: "尚未添加关注。可从新闻条目创建话题草稿，确认范围后保存。"} }
             for topic in topic_records.topics {
                 if !topic_is_user_record(topic) || topic.status == "cancelled" { continue }
                 Box{

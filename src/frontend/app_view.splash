@@ -55,6 +55,15 @@ HostedView{width: Fill height: Fill
             }
             Divider{}
             story_panel := StoryPage{}
+            original_pane := View{visible: false width: Fill height: Fill flow: Down
+                View{width: Fill height: Fit flow: Down spacing: 6 padding: Inset{left: 18 right: 18 top: 8 bottom: 8}
+                    original_title := Small{width: Fill text: "" max_lines: 2}
+                    original_hint := Small{width: Fill text: ""}
+                    original_error := Small{width: Fill text: ""}
+                    LinkButton{text: "重新打开网页" on_click: || open_original_article()}
+                }
+                original_reader := WebReader{width: Fill height: Fill on_error: || original_article_failed()}
+            }
             settings_panel := SourcesPage{}
             tracking_panel := TrackingEditor{}
             weather_panel := WeatherPage{}

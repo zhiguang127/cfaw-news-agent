@@ -38,15 +38,29 @@ start_timeout(0.1, || {
     schedule_actions.items = [{action_id: "fixture-applied" state: "applied" original: {title: "Synthetic archived reschedule"
         start: "2030-10-06T12:00:00+08:00" end: "2030-10-06T13:00:00+08:00" timezone: "Asia/Shanghai"}
         start: "2030-10-06T14:00:00+08:00" end: "2030-10-06T15:00:00+08:00"}]
-    let current = {title: "Synthetic current target" state: "pending" run: {snapshot: {evidence: []}}
-        insight: {change_kind: "new" summary: "Synthetic current change" uncertainties: [] evidence_ids: [] next_step: nil decision_effect: "review"}}
+    let previous = {target_type: "topic" target_id: "fixture-goal" target_version: 1 issue_key: "fixture-terms"
+        summary: "Synthetic previous interpretation" next_step: "Synthetic previous check"}
+    tracking_cache.runs.push({task_id: "fixture-comparison" checked_at: time_now() - 60
+        snapshot: {prompt_revision: "obsolete" topics: [] schedules: [] legacy_interests: [] evidence: []}
+        result: {insights: [previous] items: [] explanation: "Synthetic previous check"}})
+    let current = {title: "Synthetic current target" state: "pending" run: {snapshot: {evidence: [] topics: [{topic_id: "fixture-goal" version: 1 purpose: "Synthetic family photo goal" preferences: ["Synthetic no repeated headlines"]}]}}
+        insight: {target_type: "topic" target_id: "fixture-goal" target_version: 1 issue_key: "fixture-terms" compared_run_id: "fixture-comparison"
+            change_kind: "updated" summary: "Synthetic current change" material_change: "Synthetic clarified applicability"
+            uncertainties: [] evidence_ids: [] next_step: "Synthetic check terms" decision_effect: "review"}}
+    current.run.ui_fixture_current = true
+    // Synthetic presentation fixture; real stale/version guards have separate tests.
+    tracking_run_current = fn(run){ run["ui_fixture_current"] == true }
     let handled = current.to_json().parse_json()
     handled.title = "Synthetic handled target" handled.state = "handled" handled.insight.summary = "Synthetic archived handled change"
-    current_insights = fn(){ [current handled] }
+    let withdrawn = current.to_json().parse_json()
+    withdrawn.title = "Synthetic withdrawn target" withdrawn.state = "withdrawn"
+    withdrawn.insight.change_kind = "withdrawn" withdrawn.insight.summary = "Synthetic withdrawn interpretation"
+    current_insights = fn(){ [current handled withdrawn] }
     render_main()
     start_timeout(0.1, || refresh())
     start_interval(0.2, || fs.write("record-counts.json", {analyses: analysis_history.len() suggestions: suggestion_history.len()
         runs: tracking_cache.runs.len() actions: schedule_actions.items.len() bookmarks: user_bookmarks.len()}.to_json()))
+    start_interval(0.2, || fs.write("plan-state.json", {draft: intent_draft schedules: user_schedules.len() error: intent_error}.to_json()))
 })
 '''
     (bundle / 'main.splash').write_text(source, encoding='utf-8', newline='\n')
@@ -75,12 +89,18 @@ start_timeout(0.1, || {
     def click(label=None, ident=None):
         x,y,w,h=find(label,ident)['r']; get('/click',x=x+w/2,y=y+h/2,wait=1); time.sleep(.25)
     def menu(label): click(ident='menu_button'); click(label)
+    def seek(label):
+        for _ in range(10):
+            try: return find(label)
+            except StopIteration: get('/m',k='scroll',x=200,y=650,dy=400,wait=1)
+        raise AssertionError('Missing visible result: '+label)
+    def top(): get('/m',k='scroll',x=200,y=650,dy=-10000,wait=1)
     def no_archives():
         labels=texts()
         assert not any('历史' in text or 'Synthetic archived' in text or text in ('最近分析','旧版建议记录') for text in labels),labels
     checks=[]
     with (work/'host.log').open('w',encoding='utf-8') as log:
-        process=subprocess.Popen([str(executable),'--bundle',str(bundle),'--app-data',str(data),'--remote='+str(port),'--size','800x1050'],cwd=native,env=env,stdout=log,stderr=log)
+        process=subprocess.Popen([str(executable),'--bundle',str(bundle),'--app-data',str(data),'--remote='+str(port),'--size','430x860'],cwd=native,env=env,stdout=log,stderr=log)
         try:
             for _ in range(100):
                 try:
@@ -99,15 +119,37 @@ start_timeout(0.1, || {
             (work/'bookmarks.png').write_bytes(get('/g',raw=1))
             checks.append('bookmark category removed; original Chinese bookmark remains under all')
             menu('关注动态'); click('查看分析与建议')
-            find('Synthetic current change'); find('Synthetic pending suggestion'); no_archives()
+            find('Synthetic family photo goal'); no_archives()
+            seek('Synthetic previous interpretation')
+            seek('Synthetic current change')
+            seek('改变判断的新事实：Synthetic clarified applicability')
             (work/'tracking-results.png').write_bytes(get('/g',raw=1))
-            checks.append('tracking entry shows current change and pending suggestion, excludes historical and handled records')
+            seek('Synthetic withdrawn interpretation')
+            (work/'withdrawn.png').write_bytes(get('/g',raw=1))
+            seek('Synthetic pending suggestion'); no_archives(); top()
+            checks.append('current goal and exact previous interpretation are visible; withdrawn changes stay visible; handled records hidden by default')
+            click('查看本轮全部判断与决定')
+            seek('Synthetic archived handled change')
+            top(); click('只看需要关注的判断'); no_archives()
+            checks.append('all-current-results toggle exposes recorded decisions without erasing or reopening them')
+            seek('把核实安排到日程'); click('把核实安排到日程'); time.sleep(.8)
+            plan=json.loads((data/'dev.cfaw.runtime-tests/plan-state.json').read_text(encoding='utf-8'))
+            assert plan['draft']['intent_kind']=='schedule' and 'Synthetic check terms' in plan['draft']['original_input'],plan
+            assert plan['schedules']==0,plan
+            (work/'plan-check.png').write_bytes(get('/g',raw=1))
+            seek('取消并保留草稿'); click('取消并保留草稿'); time.sleep(.6)
+            top(); seek('把核实安排到日程'); click('把核实安排到日程'); time.sleep(.8)
+            blocked=json.loads((data/'dev.cfaw.runtime-tests/plan-state.json').read_text(encoding='utf-8'))
+            assert blocked['draft']['draft_id']==plan['draft']['draft_id'] and '已有草稿已保留' in blocked['error'],blocked
+            assert blocked['schedules']==0,blocked
+            seek('取消并保留草稿'); click('取消并保留草稿'); time.sleep(.6)
+            checks.append('next check becomes an unsaved schedule draft; existing draft is preserved on repeat entry')
             click('‹ 返回'); click(ident='menu_button'); click(ident='suggestions_button')
-            find('Synthetic current change'); no_archives()
-            get('/m',k='scroll',x=400,y=700,dy=550,wait=1); no_archives()
+            seek('Synthetic current change'); no_archives()
+            get('/m',k='scroll',x=200,y=650,dy=550,wait=1); no_archives()
             (work/'menu-results.png').write_bytes(get('/g',raw=1))
             counts=json.loads((data/'dev.cfaw.runtime-tests/record-counts.json').read_text())
-            assert counts=={'analyses':1,'suggestions':2,'runs':1,'actions':1,'bookmarks':1},counts
+            assert counts=={'analyses':1,'suggestions':2,'runs':2,'actions':1,'bookmarks':1},counts
             checks.append('menu entry also excludes archives through page bottom; backing record counts unchanged')
         except Exception:
             (work/'failure-snapshot.json').write_bytes(get('/snap')); (work/'failure.png').write_bytes(get('/g',raw=1)); raise

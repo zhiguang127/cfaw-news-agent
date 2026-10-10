@@ -354,7 +354,7 @@ fn tracking_schedule_check(){
     if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) }
     tracking_auto_timer = start_timeout(tracking_config.auto_check_delay_seconds, || {
         tracking_auto_timer = nil
-        if busy || tracking_in_progress() || octos_testing || analysis_needs_reopen || intent_open { return }
+        if busy || tracking_in_progress() || octos_testing || analysis_needs_reopen || intent_open || reader_summary.state == "running" { return }
         tracking_check_pending = false
         tracking_start(nil)
     })

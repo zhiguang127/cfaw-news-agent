@@ -36,13 +36,20 @@ let IntentPanel = View{width: Fill height: Fill flow: Down on_render: || {
                     else { IntentMode{text: "安排日程" on_click: || intent_pick_mode("schedule")} }
                 }
             }
-            if mode == "goal" { Small{text: "围绕要达成的目标追踪消息，例如选 Agent 框架；保存为目标关注。"} }
+            if mode == "goal" { Small{text: "围绕学习、消费或生活中的下一步决策追踪消息；保存为目标关注。"} }
             else if mode == "news" { Small{text: "持续了解一个话题，例如 Agent 新进展；保存为新闻关注。"} }
             else { Small{text: "保存有明确日期和时间的安排，新闻会结合这段日程检查影响。"} }
             let placeholder = "想关注什么新闻？有哪些内容想多看、少看？"
             if mode == "goal" { placeholder = "想做什么、为什么做？我会帮你关注相关的新消息。" }
             if mode == "schedule" { placeholder = "说说你的安排：日期、几点开始和结束、在哪里做什么。" }
             intent_input := IntentInput{text: intent_draft.original_input empty_text: placeholder on_change: |value| intent_changed(value, false)}
+            if mode != "schedule" && intent_starter_available() {
+                Section{text: "从生活场景开始"}
+                Small{text: "点击只填入示例，不会自动保存或调用 AI。"}
+                for example in life_scenarios {
+                    LinkButton{width: Fill text: example.title on_click: || intent_use_scenario(example.id)}
+                }
+            }
             if mode == "schedule" {
                 View{width: Fill height: 30 flow: Right spacing: 6 align: Align{y: 0.5}
                     Small{width: Fit text: "默认时区"}
@@ -57,6 +64,7 @@ let IntentPanel = View{width: Fill height: Fill flow: Down on_render: || {
                 IntentInput{height: 76 text: intent_draft.supplement empty_text: "继续补充，或回答 AI 的问题…" on_change: |value| intent_changed(value, true)}
             } else { LinkButton{width: Fit text: "+ 补充细节" on_click: || {intent_more = true intent_render()}} }
             if intent_draft.origin_reminder_id != nil { Small{text: "确认关注范围后保存；日程保持原安排。"} }
+            if intent_guidance != "" && intent_draft.state != "ready" { Small{text: intent_guidance} }
             if intent_error != "" { Text{text: intent_error max_lines: 4 draw_text.color: #x637399 draw_text.text_style.font_size: 12} }
             if intent_draft.state == "ready" {
                 Box{draw_bg.color: #xffffffc8 draw_bg.border_radius: 16.0

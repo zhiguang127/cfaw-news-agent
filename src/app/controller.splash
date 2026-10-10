@@ -527,16 +527,21 @@ fn open_suggestion_record(id){
     suggestion_focus_id = id
     ui.story_content.render()
 }
-fn toggle_follow(row){
-    analysis_check_message = ""
-    let error = ""
-    if records_has_interest("source", row.source) { error = records_remove_interest("source:" + row.source) }
-    else { error = records_add_interest("source", row.source) }
-    notice(error)
-    render_feed()
-    if detail_kind == "story" { ui.story_content.render() }
-    render_analysis_controls()
-    tracking_schedule_check()
+fn follow_story(row){
+    if topic_records.draft != nil {
+        if topic_records.draft.original_input.trim() != "" || topic_records.draft.supplement.trim() != "" || topic_records.draft.target_topic_id != nil || topic_records.draft.origin_reminder_id != nil {
+            intent_begin(nil)
+            intent_guidance = "已有未完成草稿，请先完成或丢弃，再从新闻创建新的话题关注。"
+            intent_render()
+            return
+        }
+    }
+    intent_begin(nil)
+    intent_draft.original_input = "持续关注这篇报道涉及的事件或主题的发展：\n「" + row.title + "」"
+    intent_draft.supplement = "参考报道：" + row.source_url + "\n请限定具体对象和话题，跨来源寻找后续进展；不要关注整个媒体的所有内容。"
+    intent_guidance = "先调整你想持续关注的对象和范围，再整理并确认保存；点击此按钮不会订阅整个新闻源。"
+    intent_invalidate()
+    intent_render()
 }
 fn toggle_save(row){
     let existed = records_is_bookmarked(row.news_id)
@@ -547,11 +552,45 @@ fn toggle_save(row){
     if detail_kind == "story" { ui.story_content.render() }
 }
 let story_reset_pending = false
+let original_article_open = false
+let original_article_generation = 0
+fn original_article_failed(){
+    if !original_article_open { return }
+    ui.original_error.set_text("网页加载失败：" + ui.original_reader.error())
+}
+fn close_original_article(){
+    original_article_generation = original_article_generation + 1
+    ui.original_reader.close()
+    original_article_open = false
+    ui.original_pane.set_visible(false)
+    ui.floating_ai.set_visible(true)
+}
+fn open_original_article(){
+    if reading == nil || !article_original_allowed(reading.source_url) { return }
+    close_original_article()
+    original_article_open = true
+    let generation = original_article_generation
+    let url = reading.source_url
+    if regex("^http://").test(url) { url = url.replace("http://", "https://") }
+    ui.story_panel.set_visible(false)
+    ui.original_pane.set_visible(true)
+    ui.floating_ai.set_visible(false)
+    ui.detail_title.set_text("图文原文")
+    ui.original_title.set_text(reading.title)
+    ui.original_hint.set_text(if article_state.requires_verification {"如页面提示验证，请完成后继续阅读原文。"} else {""})
+    ui.original_error.set_text("")
+    // Mount the reader before spawning its native overlay.
+    start_timeout(0.05, || {
+        if !original_article_open || generation != original_article_generation { return }
+        if !ui.original_reader.open(url) { original_article_failed() }
+    })
+}
 fn render_detail(){
-    if detail_kind == "story" && !story_reset_pending { ui.story_content.render() }
+    if detail_kind == "story" && !story_reset_pending && !original_article_open { ui.story_content.render() }
     if detail_kind == "settings" { ui.source_list.render() }
     if detail_kind == "tracking" { ui.interest_list.render() }
-    ui.story_panel.set_visible(detail_kind == "story")
+    ui.story_panel.set_visible(detail_kind == "story" && !original_article_open)
+    ui.original_pane.set_visible(detail_kind == "story" && original_article_open)
     ui.settings_panel.set_visible(detail_kind == "settings")
     ui.tracking_panel.set_visible(detail_kind == "tracking")
     ui.weather_panel.set_visible(detail_kind == "weather")
@@ -559,6 +598,7 @@ fn render_detail(){
     if detail_kind == "weather" { ui.weather_content.render() }
 }
 fn show_detail(kind, title){
+    close_original_article()
     if kind != "story" { article_cancel() }
     detail_kind = kind
     ui.detail_title.set_text(title)
@@ -576,7 +616,9 @@ fn open_story(row){
     suggestion_focus_id = nil
     schedule_confirmation_id = nil
     if !analysis_busy { analysis_result = nil analysis_state = "idle" }
+    reader_summary_cancel()
     reading = row
+    reader_summary_open(row)
     story_show_analysis = false
     let error = records_mark_read(row.news_id)
     notice(error)
@@ -591,7 +633,12 @@ fn open_story(row){
         if detail_kind == "story" && reader_generation == article_state.generation {
             story_reset_pending = false
             ui.story_panel.set_visible(true)
-            article_load(row, || { if detail_kind == "story" { ui.story_content.render() } })
+            article_load(row, || {
+                if detail_kind == "story" {
+                    ui.story_content.render()
+                    if article_state.requires_verification && !original_article_open { open_original_article() }
+                }
+            })
             ui.story_content.render()
         }
     })
@@ -605,7 +652,14 @@ fn update_suggestion_state(id, state){
     render_analysis_controls()
 }
 fn close_detail(){
+    if original_article_open {
+        close_original_article()
+        ui.detail_title.set_text("新闻详情")
+        ui.story_panel.set_visible(true)
+        return
+    }
     if detail_kind == "intent" && intent_open { intent_cancel() return }
+    reader_summary_cancel()
     article_cancel()
     detail_kind = ""
     reading = nil

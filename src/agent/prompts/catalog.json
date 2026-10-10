@@ -1,0 +1,14 @@
+{
+  "revisions": {
+    "tracking_prompt_revision": "tracking-v2.3",
+    "schedule_intent_prompt_revision": "schedule-intent-v1"
+  },
+  "templates": {
+    "schedule_intent_prompt": "schedule-intent-prompt.txt",
+    "intent_prompt": "intent-prompt.txt",
+    "tracking_prompt": "tracking-prompt.txt",
+    "tracking_repair_prompt": "tracking-repair-prompt.txt",
+    "connectivity_prompt": "connectivity-prompt.txt",
+    "article_summary_prompt": "article-summary-prompt.txt"
+  }
+}
