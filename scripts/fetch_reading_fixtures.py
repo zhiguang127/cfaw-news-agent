@@ -15,8 +15,14 @@ def fetch(source):
     (directory / (source['id'] + '.xml')).write_bytes(raw)
     root = ET.fromstring(raw)
     first = root.find('.//item')
-    article = first.findtext('link')
-    report = dict(source=source['id'], bytes=len(raw), items=len(root.findall('.//item')), article=article)
+    items = root.findall('.//item')
+    if first is None:
+        items = root.findall('{http://www.w3.org/2005/Atom}entry')
+        first = items[0]
+        article = first.find('{http://www.w3.org/2005/Atom}link').get('href')
+    else:
+        article = first.findtext('link')
+    report = dict(source=source['id'], bytes=len(raw), items=len(items), article=article)
     if source['id'] == 'sspai':
         with urlopen(Request(article, headers={'User-Agent': 'Mozilla/5.0'}), timeout=25) as response:
             page = response.read(2000000)

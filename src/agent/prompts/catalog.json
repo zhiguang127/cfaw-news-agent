@@ -1,14 +1,18 @@
 {
   "revisions": {
-    "tracking_prompt_revision": "tracking-v2.3",
+    "tracking_prompt_revision": "tracking-v2.11",
+    "intent_prompt_revision": "intent-v1.2",
     "schedule_intent_prompt_revision": "schedule-intent-v1"
   },
   "templates": {
     "schedule_intent_prompt": "schedule-intent-prompt.txt",
     "intent_prompt": "intent-prompt.txt",
+    "intent_repair_prompt": "intent-repair-prompt.txt",
     "tracking_prompt": "tracking-prompt.txt",
     "tracking_repair_prompt": "tracking-repair-prompt.txt",
+    "tracking_output_retry_prompt": "tracking-output-retry-prompt.txt",
     "connectivity_prompt": "connectivity-prompt.txt",
-    "article_summary_prompt": "article-summary-prompt.txt"
+    "article_summary_prompt": "article-summary-prompt.txt",
+    "tracking_timeout_retry_prompt": "tracking-timeout-retry-prompt.txt"
   }
 }

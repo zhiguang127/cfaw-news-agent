@@ -1,6 +1,5 @@
 // Application operations; decisions remain owned by topics_commit.
 let insight_evidence_view = nil
-let results_show_all_insights = false
 fn insight_comparison(value){
     let current = value.insight
     if !record_string(current["compared_run_id"]) { return nil }
@@ -10,7 +9,7 @@ fn insight_comparison(value){
         for old in run.result.insights {
             if old.target_type == current.target_type && old.target_id == current.target_id &&
                 old.target_version == current.target_version && old.issue_key == current.issue_key {
-                return {insight: old checked_at: run.checked_at}
+                return {insight: old checked_at: run.checked_at run: run}
             }
         }
     }
@@ -29,11 +28,84 @@ fn insight_decision_effect(value){
     if label == nil { return "" }
     label
 }
+fn insight_prose(run, text){
+    if !record_string(text) { return "" }
+    // Historical runs can still contain model-facing labels. Resolve them
+    // against that exact run, so E2 never points into a different period.
+    text = text.replace(regex("can_quote_body[ ]*[:=][ ]*false", "g"), "正文尚未读取")
+    text = text.replace(regex("can_quote_body[ ]*[:=][ ]*true", "g"), "已有正文片段")
+    text = text.replace(regex("paragraphs[ ]*[:=][ ]*\\[\\]", "g"), "没有正文段落")
+    for step in run.snapshot.evidence.len() {
+        let index = run.snapshot.evidence.len() - 1 - step
+        let title = bm25_prefix(run.snapshot.evidence[index].title, 64).replace("$", "＄")
+        text = text.replace(regex("(^|[^A-Za-z0-9_])E" + (index + 1) + "([^A-Za-z0-9_]|$)", "g"), "$1「" + title + "」$2")
+    }
+    text
+}
+fn insight_basis_label(insight, e){
+    for ref in insight.evidence_refs { if ref.news_id == e.news_id { return "判断依据 · 正文引用" } }
+    if e.paragraphs.len() > 0 { return "判断依据 · 已读取正文片段，未引用原句" }
+    "判断依据 · " + evidence_summary_label(e)
+}
+fn insight_can_verify(value){
+    for e in results_cited_news(value) {
+        if e.paragraphs.len() == 0 && article_url_allowed(e.source_url) { return true }
+    }
+    false
+}
+fn insight_verify(value){
+    if tracking_in_progress() || busy { notice("正在检查或更新新闻，请完成后再核实") return }
+    tracking_start(nil, value)
+}
+// Saved facts belong to the analysis snapshot, even after the feed rotates.
+// Only source metadata may fall back to a currently visible article.
+fn insight_evidence_source(e){
+    let metadata = {source: "保存的来源" source_id: "" feed_url: ""}
+    if record_array(e["references"]) {
+        for ref in e.references {
+            if record_string(ref["source"]) && ref.source != "" { metadata.source = ref.source }
+            if record_string(ref["source_id"]) { metadata.source_id = ref.source_id }
+            if record_string(ref["feed_url"]) { metadata.feed_url = ref.feed_url }
+            if metadata.source != "保存的来源" { return metadata }
+        }
+    }
+    let current = tracking_current_row(e.news_id)
+    if current != nil {
+        metadata.source = current.source metadata.source_id = current.source_id metadata.feed_url = current.feed_url
+    }
+    metadata
+}
+fn insight_evidence_row(e){
+    let metadata = insight_evidence_source(e)
+    let references = []
+    if record_array(e["references"]) {
+        for ref in e.references {
+            if record_string(ref["source_id"]) && record_string(ref["source"]) && record_url(ref["source_url"]) && record_string(ref["feed_url"]) {
+                references.push(ref.to_json().parse_json())
+            }
+        }
+    }
+    if references.len() == 0 { references.push({source_id: metadata.source_id source: metadata.source source_url: e.source_url feed_url: metadata.feed_url}) }
+    {news_id: e.news_id evidence_id: e.news_id content_version: e.title + "\n" + e.summary
+        title: e.title summary: e.summary source: metadata.source source_id: metadata.source_id
+        source_url: e.source_url feed_url: metadata.feed_url category: "all" language: ""
+        image_url: nil published_at: e.published_at retrieved_at: e.retrieved_at
+        evidence_kind: e.evidence_kind timestamp_kind: if e.timestamp_kind == "submitted" {"submitted"} else {"published"} references: references}
+}
 fn insight_open_evidence(value, id){
-    let row = tracking_current_row(id)
-    if row == nil { notice("来源已离开当前列表，请重新检查") return }
-    insight_evidence_view = {value: value news_id: id}
+    let e = nil
+    if record_object(id) { e = id }
+    else { e = tracking_find(value.run.snapshot.evidence, "news_id", id) }
+    if e == nil { notice("此判断没有保留对应来源，请重新检查") return }
+    let row = insight_evidence_row(e)
+    if !news_record_valid(row) { notice("保存的来源信息不完整，暂时无法打开阅读页") return }
     open_story(row)
+    if detail_kind == "story" && reading != nil && reading.news_id == e.news_id {
+        insight_evidence_view = {value: value news_id: e.news_id}
+        // open_story recreates the scroll child asynchronously. Its deferred
+        // reader render will see this context; rendering the old child here
+        // would enqueue work for a widget already removed from the tree.
+    }
 }
 fn current_insights(){
     let out = [] let covered = {}
@@ -56,6 +128,7 @@ fn current_insights(){
 fn insight_attention_count(){
     let count = 0
     for value in current_insights() {
+        if value.run.result["judgment_origin"] == "no_related_evidence" { continue }
         if value.state == "pending" && (!agent_preferences.important_only || value.insight.decision_effect == "review") { count = count + 1 }
     }
     count
@@ -75,6 +148,7 @@ fn insight_decide(value, state){
 }
 fn insight_label(value){
     let labels = {new: "新增" updated: "更新" withdrawn: "撤回" unchanged: "无变化" watch: "继续观察" handled: "已处理" dismissed: "已忽略" pending: "待关注"}
+    if value.state == "unchanged" && value.insight.decision_effect == "unknown" { return "待核实 · 暂无新增依据" }
     if value.insight.change_kind == value.state { return labels[value.state] }
     labels[value.insight.change_kind] + " · " + labels[value.state]
 }
@@ -101,7 +175,21 @@ fn target_check_label(kind, id, version){
     "上次完成检查：" + age_label(checked) + " · 仅覆盖当时选中的来源与候选"
 }
 fn agent_progress(stage){
-    let labels = {session: "正在连接助手…" model: "助手正在判断，可继续阅读…" repairing: "正在修正分析格式（1/1）…" validation: "正在核对引用与版本…" publishing: "正在保存结果…"}
-    if labels[stage] != nil { tracking_message = labels[stage] if intent_open { intent_error = labels[stage] } }
+    if intent_open && agent_task != nil && agent_task.kind == "parse_intent" {
+        let labels = {session: "正在连接助手…" model: "正在理解你的想法…" repairing: "正在修正理解格式（1/1）…" validation: "正在核对理解格式…" publishing: "正在准备理解预览，请核对后确认保存"}
+        if labels[stage] != nil { intent_error = labels[stage] intent_render() }
+        return
+    }
+    let labels = {session: "正在连接助手…" model: "助手正在判断，可继续阅读…" repairing: "正在修正分析格式（1/1）…" retry_preparation: "回复过长，正在缩减候选并准备简短重试（1/1）…" compact_retry: "助手正在轻量重试（1/1）…" validation: "正在核对引用与版本…" publishing: "正在保存结果…"}
+    if stage == "retry_preparation" && agent_task != nil && agent_task.timeout_retry_count > 0 { labels.retry_preparation = "助手本轮超时，正在缩减材料准备轻量重试（1/1）…" }
+    if stage == "publication_failed" { tracking_status = "failed" tracking_message = analysis_error }
+    if labels[stage] != nil {
+        tracking_message = labels[stage]
+        if agent_task != nil && agent_task.kind == "tracking_update" && record_contains(["session" "model" "repairing" "compact_retry" "retry_preparation"], stage) {
+            let round = if stage == "repairing" {"格式修正"} else {if stage == "model" {"首次分析"} else {if stage == "session" {"连接助手"} else {if agent_task.timeout_retry_count > 0 {"超时缩减重试"} else {"输出缩减重试"}}}}
+            tracking_message = tracking_message + "（" + round + "，已等待 " + floor(time_now() - agent_task.phase_started) + " 秒）"
+        }
+        if intent_open { intent_error = tracking_message }
+    }
     tracking_ui_update()
 }

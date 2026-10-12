@@ -1,22 +1,3 @@
-let TrackingHeader = View{visible: false width: Fill height: Fit flow: Down padding: Inset{left: 18 right: 18 top: 10 bottom: 8} spacing: 6
-    View{width: Fill height: 30 flow: Right align: Align{y: 0.5}
-        tracking_summary := Small{width: Fill text: "我的关注"}
-        LinkButton{text: "管理" on_click: || manage_tracking()}
-    }
-    View{width: Fill height: Fit flow: Right spacing: 8
-        tracking_dynamic_button := Pill{text: "动态" on_click: || tracking_pick_section("dynamic")}
-        suggestions_button := Pill{text: "建议" on_click: || tracking_pick_section("suggestions")}
-        tracking_new_button := Pill{text: "新增 / 继续草稿" on_click: || intent_begin(nil)}
-    }
-    tracking_analysis_actions := View{width: Fill height: Fit flow: Down spacing: 6 on_render: || {
-        Small{text: analysis_check_status() max_lines: 2}
-        View{width: Fill height: Fit flow: Right spacing: 8
-            if !analysis_has_focus() { SecondaryButton{text: "添加关注" on_click: || intent_begin(nil)} }
-            else if tracking_in_progress() { SecondaryButton{text: "停止检查" on_click: || analysis_cancel()} }
-            else { SecondaryButton{text: "检查关注更新" on_click: || analyze_changes()} }
-        }
-    }}
-}
 let TrackingEditor = View{visible: false width: Fill height: Fill flow: Down
     ScrollYView{width: Fill height: Fill flow: Down padding: 18 spacing: 12
         Heading{text: "关注你想持续了解的变化"}

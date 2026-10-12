@@ -1,0 +1,100 @@
+// Startup restores the same documents and contracts as topics_load, but each
+// topic, decision and historical run gets its own native callback budget.
+fn topics_load_async(complete){
+    topic_warning = ""
+    topic_records = {schema_version: 2 revision: 0 topics: [] draft: nil decisions: []}
+    tracking_cache = {schema_version: 1 revision: 0 runs: []}
+    topics_restore_read(topic_file, "topics", |document| {
+        if document != nil { topic_records = document }
+        topics_restore_read(tracking_cache_file, "runs", |cache| {
+            if cache != nil { tracking_cache = cache }
+            start_timeout(0.01, complete)
+        })
+    })
+}
+fn topics_restore_read(file, kind, complete){
+    file.writable = true file.recovered = false file.revision = 0
+    let work = {file: file kind: kind complete: complete phase: "read" backup: false exists: false
+        text: nil value: nil index: 0 ids: {} done: false timer: nil}
+    work.timer = start_timeout(tracking_config.publication_timeout_seconds, || {
+        if work.done { return }
+        work.file.writable = false work.file.recovered = false
+        topic_warning = topic_warning + work.file.path + "：恢复超时（" + work.phase + "），原文件保留且只读；"
+        topics_restore_finish(work, nil)
+    })
+    start_timeout(0.01, || topics_restore_step(work))
+}
+fn topics_restore_finish(work, value){
+    if work.done { return }
+    work.done = true
+    if work.timer != nil { stop_timer(work.timer) work.timer = nil }
+    let complete = work.complete
+    work.value = nil work.text = nil work.ids = nil work.complete = nil
+    start_timeout(0.01, || complete(value))
+}
+fn topics_restore_reject(work, reason){
+    if work.backup {
+        if work.exists { topic_warning = topic_warning + work.file.path + "：备份" + reason + "；" }
+        topics_restore_finish(work, nil)
+        return
+    }
+    if work.exists {
+        work.file.writable = false
+        topic_warning = topic_warning + work.file.path + "：" + reason + "，原文件保留；"
+    }
+    work.backup = true work.exists = false work.text = nil work.value = nil
+    work.ids = {} work.index = 0 work.phase = "read"
+}
+fn topics_restore_step(work){
+    if work.done { return }
+    // Prequeue before native work: a budget interruption cannot strand boot.
+    // Retry the uncommitted step; the deadline ends permanently expensive work.
+    start_timeout(0.01, || topics_restore_step(work))
+    mod.gc.run()
+    let failure = ""
+    try {
+        if work.phase == "read" {
+            let path = work.file.path if work.backup { path = path + ".backup" }
+            work.exists = fs.exists(path)
+            if work.exists { work.text = fs.read(path) work.phase = "parse" }
+            else { topics_restore_reject(work, "未找到记录") return }
+        } else if work.phase == "parse" {
+            work.value = work.text.parse_json()
+            work.text = nil work.phase = "header"
+        } else if work.phase == "header" {
+            let valid = false
+            if work.kind == "topics" { valid = topic_document_header_valid(work.value) }
+            else { valid = tracking_cache_header_valid(work.value) }
+            if !valid { failure = "格式无效或未知版本" }
+            else { work.phase = work.kind work.index = 0 }
+        } else if work.phase == "topics" {
+            if work.index < work.value.topics.len() {
+                let item = work.value.topics[work.index]
+                let seen = work.ids[item["topic_id"]]
+                if !topic_valid(item) || (seen != nil && seen != work.index) { failure = "关注条目无效或重复" }
+                else {
+                    // Repeating an interrupted commit recognizes its own index.
+                    work.ids[item.topic_id] = work.index work.index = work.index + 1
+                }
+            } else if topic_visible_count(work.value.topics) > tracking_config.max_topics { failure = "有效关注超过上限" }
+            else { work.phase = "decisions" work.index = 0 }
+        } else if work.phase == "decisions" {
+            if work.index < work.value.decisions.len() {
+                if !topic_decision_valid(work.value.decisions[work.index]) { failure = "决定记录无效" }
+                else { work.index = work.index + 1 }
+            } else { work.phase = "accept" }
+        } else if work.phase == "runs" {
+            if work.index < work.value.runs.len() {
+                if !tracking_cache_run_valid(work.value.runs[work.index]) { failure = "分析历史未通过证据校验" }
+                else { work.index = work.index + 1 }
+            } else { work.phase = "accept" }
+        } else if work.phase == "accept" {
+            work.file.revision = work.value.revision
+            work.file.recovered = work.backup
+            if work.backup { topic_warning = topic_warning + work.file.path + "：已从备份恢复，继续写入备份；" }
+            topics_restore_finish(work, work.value)
+            return
+        }
+    } { work.file.writable = false failure = "读取或校验失败" }
+    if failure != "" { topics_restore_reject(work, failure) }
+}

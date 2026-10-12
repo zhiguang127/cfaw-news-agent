@@ -10,14 +10,30 @@ fn tracking_strings(value, count, limit){
     for text in value { if !tracking_text(text, limit) || text.trim() == "" { return false } }
     true
 }
-fn topic_understanding_valid(value){
-    if !record_object(value) { return false }
-    if !tracking_text(value["title"], 120) || value["title"].trim() == "" || !tracking_text(value["purpose"], 400) { return false }
-    if !tracking_strings(value["scope"], 6, 160) || value["scope"].len() == 0 || !tracking_strings(value["preferences"], 6, 160) { return false }
-    if !record_array(value["recall_rules"]) || value["recall_rules"].len() == 0 || value["recall_rules"].len() > tracking_config.max_rules { return false }
+fn topic_understanding_error(value){
+    if !record_object(value) { return "understanding 须为包含标题、目的、范围、偏好和检索规则的对象" }
+    if !tracking_text(value["title"], 120) || value["title"].trim() == "" { return "title 须为非空字符串，最多120字符" }
+    if !tracking_text(value["purpose"], 400) { return "purpose 须为字符串，最多400字符；没有明确目的时填空字符串" }
+    if !tracking_strings(value["scope"], 6, 160) || value["scope"].len() == 0 { return "scope 须为1至6项非空字符串数组，每项最多160字符" }
+    if !tracking_strings(value["preferences"], 6, 160) { return "preferences 须为0至6项非空字符串数组，每项最多160字符；请合并相关约束，不要遗漏用户偏好" }
+    if !record_array(value["recall_rules"]) || value["recall_rules"].len() == 0 || value["recall_rules"].len() > tracking_config.max_rules { return "recall_rules 须为1至6项规则对象数组" }
     for rule in value["recall_rules"] {
-        if !record_object(rule) || !tracking_text(rule["value"], 120) || rule["value"].trim() == "" { return false }
-        if rule["kind"] != "keyword" && rule["kind"] != "category" && rule["kind"] != "source" { return false }
+        if !record_object(rule) || !tracking_text(rule["value"], 120) || rule["value"].trim() == "" { return "recall_rules 每项须为含 kind 与非空 value 的对象；value 最多120字符" }
+        if rule["kind"] != "keyword" && rule["kind"] != "category" && rule["kind"] != "source" { return "recall_rules.kind 只支持 keyword、category、source；排除项放在 preferences" }
+    }
+    ""
+}
+fn topic_understanding_valid(value){ topic_understanding_error(value) == "" }
+// Editable text may temporarily be incomplete; keep it outside understanding.
+fn topic_understanding_edit_valid(value){
+    if !record_object(value) { return false }
+    for field in ["title" "purpose" "scope_text" "preferences" "keywords"] {
+        if !tracking_text(value[field], tracking_config.max_input_chars) { return false }
+    }
+    if !record_array(value["extra_rules"]) || value.extra_rules.len() > tracking_config.max_rules { return false }
+    for rule in value.extra_rules {
+        if !record_object(rule) || !tracking_text(rule["value"], 120) || rule.value.trim() == "" { return false }
+        if rule["kind"] != "source" && rule["kind"] != "category" { return false }
     }
     true
 }
@@ -38,6 +54,9 @@ fn topic_draft_valid(value){
     if value["target_version"] != nil && !record_number(value["target_version"]) { return false }
     if value["state"] != "editing" && value["state"] != "ready" && value["state"] != "needs_clarification" { return false }
     if value["understanding"] != nil && !topic_understanding_valid(value["understanding"]) { return false }
+    if value["understanding_edit"] != nil {
+        if value.state != "ready" || value["intent_kind"] == "schedule" || value["understanding"] == nil || !topic_understanding_edit_valid(value.understanding_edit) { return false }
+    }
     if value["origin_reminder_id"] != nil && !tracking_text(value["origin_reminder_id"], 400) { return false }
     if value["intent_kind"] != nil && value.intent_kind != "goal" && value.intent_kind != "news" && value.intent_kind != "schedule" { return false }
     if value["schedule_timezone"] != nil && value.schedule_timezone != "Asia/Shanghai" && value.schedule_timezone != "America/New_York" { return false }

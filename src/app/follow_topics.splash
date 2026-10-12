@@ -1,0 +1,269 @@
+// Topic-first presentation derived from immutable, validated analysis runs.
+// Historical text remains readable; it never gains permission to act again.
+fn follow_topic_run(topic){
+    let historical = nil
+    for step in tracking_cache.runs.len() {
+        let run = tracking_cache.runs[tracking_cache.runs.len() - 1 - step]
+        if !record_array(run.result["insights"]) { continue }
+        for saved in run.snapshot.topics {
+            if saved.topic_id != topic.topic_id { continue }
+            if saved.version == topic.version { return run }
+            if historical == nil { historical = run }
+        }
+    }
+    historical
+}
+fn follow_target_running(id, version){
+    let targets = nil
+    if tracking_status == "recalling" || tracking_status == "enriching" { targets = tracking_recall_targets }
+    if agent_task != nil && agent_task.kind == "tracking_update" && analysis_busy { targets = agent_task.snapshot }
+    if tracking_save_active && tracking_pending_run != nil { targets = tracking_pending_run.snapshot }
+    if targets == nil { return false }
+    for topic in targets.topics { if topic.topic_id == id && topic.version == version { return true } }
+    false
+}
+fn follow_card_evidence(card){
+    let rows = [] let indexed = {}
+    for value in card.values {
+        for row in results_news(value) {
+            let evidence = row.evidence
+            if !record_contains(value.insight.evidence_ids, evidence.news_id) { continue }
+            // Old records may predate the stricter relevance contract. The
+            // same per-target relationship must still support each citation.
+            let item = tracking_find(value.run.result.items, "news_id", evidence.news_id)
+            if item == nil || !insight_item_matches(item, value.insight) { continue }
+            let entry = indexed[evidence.news_id]
+            if entry == nil {
+                entry = {evidence: evidence refs: [] reasons: [] relevance: row.relevance}
+                indexed[evidence.news_id] = entry rows.push(entry)
+            }
+            if row.relevance != "uncertain" { entry.relevance = row.relevance }
+            let reason = insight_prose(value.run, item.why_related)
+            if reason.trim() != "" && !record_contains(entry.reasons, reason) { entry.reasons.push(reason) }
+            for ref in value.insight.evidence_refs {
+                if ref.news_id != evidence.news_id { continue }
+                let duplicate = false
+                for old in entry.refs { if old.paragraph_id == ref.paragraph_id && old.quote == ref.quote { duplicate = true } }
+                if !duplicate { entry.refs.push(ref) }
+            }
+        }
+    }
+    rows
+}
+fn follow_card_steps(card){
+    let steps = []
+    if !card.current { return steps }
+    // A compact card shows its first recommendation, so put withdrawals and
+    // unresolved decisions before ordinary observation without rewriting text.
+    for tier in ["withdrawn" "verify" "ordinary"] {
+        for value in card.values {
+            if record_contains(["handled" "dismissed"], value.state) { continue }
+            let kind = "ordinary"
+            if value.insight.decision_effect == "unknown" || value.insight.decision_effect == "review" { kind = "verify" }
+            if value.state == "withdrawn" { kind = "withdrawn" }
+            if kind != tier { continue }
+            let step = ""
+            if kind == "withdrawn" { step = "此前建议已撤回；请查看变化原因，重新核对此前决定，暂时不要沿用旧建议。" }
+            else if record_string(value.insight["next_step"]) { step = insight_prose(value.run, value.insight.next_step) }
+            if step.trim() != "" && !record_contains(steps, step) { steps.push(step) }
+        }
+    }
+    steps
+}
+fn follow_topic_projection(topic){
+    let run = follow_topic_run(topic)
+    let card = {topic: topic values: [] current: false basis_current: false historical: false checked_at: 0 last_checked_at: 0 attempt_at: 0 source_topic_version: topic.version
+        status: "unseen" status_label: "待检查" note: "尚未取得这个话题的分析结果。" situations: [] next_steps: [] decision_notes: [] news_count: 0 no_related: false}
+    if run != nil {
+        card.checked_at = run.checked_at
+        for saved in run.snapshot.topics { if saved.topic_id == topic.topic_id { card.source_topic_version = saved.version } }
+        card.current = card.source_topic_version == topic.version && tracking_run_current(run)
+        card.basis_current = card.current
+        card.historical = !card.current
+        for insight in run.result.insights {
+            if insight.target_type != "topic" || insight.target_id != topic.topic_id || insight.target_version != card.source_topic_version { continue }
+            let value = {insight: insight run: run state: insight_state(insight, run) current: card.current title: topic.title}
+            card.values.push(value)
+            let situation = results_situation(value)
+            if situation.trim() != "" && !record_contains(card.situations, situation) { card.situations.push(situation) }
+            if record_contains(["watch" "handled" "dismissed"], value.state) {
+                let labels = {watch: "你已选择继续观察" handled: "你已标记处理" dismissed: "你已决定不采纳"}
+                let note = labels[value.state]
+                if !record_contains(card.decision_notes, note) { card.decision_notes.push(note) }
+            }
+        }
+        card.next_steps = follow_card_steps(card)
+        card.news_count = follow_card_evidence(card).len()
+        card.status = "steady" card.status_label = "暂无新增依据"
+        card.note = "本轮仅检查选中的 " + run.snapshot.evidence.len() + " 篇候选报道；实际判断依据 " + card.news_count + " 篇。"
+        if run.snapshot.omitted_candidates > 0 { card.note = card.note + " 另有 " + run.snapshot.omitted_candidates + " 篇候选未纳入本轮。" }
+        let has_new = false let needs_verify = false
+        for value in card.values {
+            if record_contains(["handled" "dismissed"], value.state) { continue }
+            if value.insight.decision_effect == "unknown" || value.insight.decision_effect == "review" { needs_verify = true }
+            if value.state == "pending" || value.state == "withdrawn" {
+                if value.insight.change_kind == "updated" || value.insight.change_kind == "withdrawn" ||
+                    (value.insight.change_kind == "new" && value.insight.evidence_ids.len() > 0) { has_new = true }
+            }
+        }
+        if has_new { card.status = "new" card.status_label = "有新进展" }
+        if needs_verify { card.status = "verify" card.status_label = "待核实" }
+        if run.result["judgment_origin"] == "evidence_gap" {
+            card.status = "verify" card.status_label = "正文待补"
+            card.note = "本轮已完成证据可用性检查；以下为系统待补材料提示，尚未完成内容判断。 " + card.note
+        }
+        if run.result["judgment_origin"] == "no_related_evidence" {
+            card.no_related = true
+            card.status = "steady" card.status_label = "暂未确认新进展"
+            card.note = "本轮检查已完成，但未形成相关报道依据；没有新的行动判断，已有决定保留。 " + card.note
+        }
+        if !card.current {
+            card.status = "stale" card.status_label = "待重新检查"
+            card.note = "下方为上次保存的情况，尚未按当前关注与来源重新核实。"
+            if card.source_topic_version != topic.version { card.note = "关注范围或状态已调整；下方保留上次情况，尚未按当前关注重新核实。" }
+            card.next_steps = ["重新检查这个话题，再决定是否沿用上次建议。"]
+        } else if card.next_steps.len() == 0 {
+            if needs_verify { card.next_steps.push("现有证据不足以确定下一步，请查看依据与尚缺的条件。") }
+            else if card.decision_notes.len() > 0 { card.next_steps.push("你已记录本轮决定；目前无需新增安排，有实质新依据时再判断。") }
+            else { card.next_steps.push("目前无需新增安排；继续关注后续有依据的变化。") }
+        }
+    } else {
+        if topic.purpose.trim() != "" { card.situations.push("关注目的：" + topic.purpose) }
+        card.situations.push("尚未检查相关新闻，暂时没有可汇总的情况。")
+        card.next_steps.push("检查这个话题，获取相关新闻与有依据的建议。")
+    }
+    let state = check_state_find("topic", topic.topic_id, topic.version)
+    if state != nil {
+        card.attempt_at = state.attempt_at
+        card.last_checked_at = state.watermark
+        // A successful watermark survives the bounded run cache. It is not
+        // an analysis snapshot and must not make an evicted result actionable.
+        if run == nil && state.watermark > 0 && state.status != "no_candidates" {
+            card.status = "stale" card.status_label = "需重新检查"
+            card.note = "曾完成检查，但当前没有可展开的分析详情；历史最多保留12轮，较早结果可能已超出保留范围。"
+            card.situations = ["上次检查已完成，但分析详情未保留，暂时无法汇总目前情况。"]
+            card.next_steps = ["单独检查这个话题，重新获取情况、建议与新闻依据。"]
+        }
+        if state.status == "failed" || (state.status == "pending" && !follow_target_running(topic.topic_id, topic.version)) {
+            card.status = "failed" card.status_label = "本次未完成"
+            let reason = "上次检查中断，未取得新的判断。"
+            if state.status == "failed" {
+                reason = state["reason"]
+                if !record_string(reason) || reason.trim() == "" { reason = target_check_label("topic", topic.topic_id, topic.version) }
+            }
+            card.note = reason
+            if run != nil { card.note = card.note + " 下方保留上次情况；本次尚未重新核实。" }
+        }
+        if state.status == "no_candidates" {
+            card.status = "verify" card.status_label = "未找到候选"
+            card.note = "本次在已启用来源中未找到可分析的候选，未请求助手；不能据此认定话题没有新进展。"
+            if run != nil { card.note = card.note + " 下方保留上次分析情况。" }
+            else { card.situations = ["已检查当前来源，尚未找到可分析的相关新闻。来源覆盖有限，不能据此判断外界没有新消息。"] }
+            card.next_steps = ["刷新新闻或调整关注范围后，再检查这个话题。"]
+        }
+    }
+    if follow_target_running(topic.topic_id, topic.version) {
+        card.status = "checking" card.status_label = "正在检查"
+        card.note = tracking_message
+        if run != nil { card.note = card.note + " 上次情况继续保留，待本次结果完成后更新。" }
+    }
+    if topic.status == "paused" {
+        card.status = "paused" card.status_label = "已暂停"
+        card.note = "暂停期间不参与检查；最后情况保留供回顾。"
+        card.next_steps = ["恢复关注后，重新检查这个话题。"]
+    }
+    card
+}
+fn follow_card_time(card){
+    if card.checked_at > 0 { return "最近分析：" + age_label(card.checked_at) }
+    if card.last_checked_at > 0 { return "上次完成检查：" + age_label(card.last_checked_at) + " · 当前无分析详情" }
+    "尚未完成首次分析"
+}
+fn follow_topic_cards(){
+    let important = [] let ordinary = [] let paused = []
+    for topic in topic_records.topics {
+        if !topic_is_user_record(topic) || topic.status == "cancelled" { continue }
+        let card = follow_topic_projection(topic)
+        if topic.status == "paused" { paused.push(card) }
+        else if card.status == "new" || card.status == "verify" { important.push(card) }
+        else { ordinary.push(card) }
+    }
+    for card in ordinary { important.push(card) }
+    {active: important paused: paused}
+}
+fn follow_topic_card(id){
+    let topic = topic_find(id)
+    if topic == nil || !topic_is_user_record(topic) || topic.status == "cancelled" { return nil }
+    follow_topic_projection(topic)
+}
+
+// Evidence is projected from the exact saved run, not the current home feed.
+fn follow_evidence_blocks(row){
+    // The pinned VM needs an explicit branch value after a terminal foreach.
+    // Keep nil at these joins; it is not part of the evidence block array.
+    let e = row.evidence
+    let blocks = [{kind: "heading" text: "为什么与这个关注有关"}]
+    if record_array(row["reasons"]) && row.reasons.len() > 0 {
+        for reason in row.reasons { blocks.push({kind: "text" text: reason}) }
+        nil
+    } else { blocks.push({kind: "caption" text: "关联理由保留在该话题的完整判断中。"}) nil }
+    blocks.push({kind: "divider" text: ""})
+    let has_summary = e.summary.trim() != ""
+    if has_summary {
+        blocks.push({kind: "heading" text: "当时记录的来源摘要"})
+        blocks.push({kind: "text" text: e.summary})
+        if e.summary_truncated == true { blocks.push({kind: "caption" text: "来源摘要已截取，不能视为全文。"}) }
+        nil
+    } else { blocks.push({kind: "caption" text: "来源没有单独提供摘要。"}) }
+    if record_array(e["paragraphs"]) && e.paragraphs.len() > 0 {
+        if record_array(row["refs"]) && row.refs.len() > 0 {
+            blocks.push({kind: "heading" text: "引用原句"})
+            blocks.push({kind: "caption" text: "保留原文语言；上方关联理由是解释，下方引句是来源原文。"})
+            for ref in row.refs {
+                blocks.push({kind: "caption" text: "原文段落 · " + ref.paragraph_id})
+                blocks.push({kind: "paragraph" text: ref.quote})
+            }
+            nil
+        } else {
+            blocks.push({kind: "heading" text: "保存的正文片段"})
+            blocks.push({kind: "caption" text: "当时已读取正文，但这项判断没有选择引用原句；以下展示前两段。"})
+            for index paragraph in e.paragraphs {
+                if index < 2 {
+                    blocks.push({kind: "caption" text: "原文段落 · " + paragraph.paragraph_id})
+                    blocks.push({kind: "paragraph" text: paragraph.text})
+                }
+                nil
+            }
+            nil
+        }
+        if e["body_truncated"] == true { blocks.push({kind: "caption" text: "当时保存了部分正文段落，完整报道请进入阅读页。"}) }
+        nil
+    } else {
+        let status = "当时仅有标题，没有摘要与正文"
+        if has_summary { status = "当时仅有标题与来源摘要，没有正文" }
+        blocks.push({kind: "caption" text: status})
+        if record_string(e["body_error"]) && e.body_error != "" { blocks.push({kind: "caption" text: "当时读取状态：" + e.body_error}) }
+        nil
+    }
+    return blocks
+}
+
+// Prepare evidence text before constructing widgets. Keep the render closure
+// limited to component construction in the pinned native host.
+fn follow_evidence_presentation(row){
+    let presented = {evidence: row.evidence title: row.evidence.title metadata: "" relation: "" blocks: [] retrieved: ""}
+    let e = row.evidence
+    let source = insight_evidence_source(e)
+    let timestamp_label = "发布于 "
+    if e.timestamp_kind == "submitted" { timestamp_label = "提交于 " }
+    let relation_label = "本项判断的新闻依据"
+    if row.relevance == "uncertain" { relation_label = "关联待核实 · 不能据此确认行动" }
+    let blocks = follow_evidence_blocks(row)
+    let published_age = age_label(e.published_at)
+    let retrieved_age = age_label(e.retrieved_at)
+    presented.metadata = source.source + " · " + timestamp_label + published_age
+    presented.relation = relation_label
+    presented.blocks = blocks
+    presented.retrieved = "新闻记录获取于 " + retrieved_age
+    return presented
+}

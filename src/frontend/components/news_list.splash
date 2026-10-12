@@ -6,8 +6,11 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{le
     let image_rows = []
     let text_rows = []
     let ordered_rows = []
-    for row in display_rows {
-        if page == "saved" { ordered_rows.push(row) }
+    if feed_page_offset >= display_rows.len() { feed_page_offset = 0 }
+    for index row in display_rows {
+        if index < feed_page_offset { continue }
+        if index >= feed_page_offset + 40 { break }
+        if page != "feed" { ordered_rows.push(row) }
         else if news_thumbnail_allowed(row) {
             if featured_rows.len() < 3 { featured_rows.push(row) }
             else { image_rows.push(row) }
@@ -30,8 +33,9 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{le
                             }
                         }}
                         View{width: Fill height: Fill flow: Down padding: 16 spacing: 7
-                            RoundedView{width: Fit height: 24 padding: Inset{left: 9 right: 9 top: 4 bottom: 4} show_bg: true draw_bg.color: #x7369c6d9 draw_bg.border_radius: 8.0
-                                Label{text: "今日精选" draw_text.color: white draw_text.text_style: theme.font_regular{font_size: 10}}
+                            RoundedView{width: Fit height: 24 flow: Right align: Align{x: 0.5 y: 0.5}
+                                padding: Inset{left: 9 right: 9 top: 0 bottom: 0} show_bg: true draw_bg.color: #x7369c6d9 draw_bg.border_radius: 12.0
+                                EditorialBadgeText{text: "今日精选" draw_text.color: white}
                             }
                             View{width: Fill height: Fill}
                             Text{text: row.title max_lines: 2 draw_text.color: white draw_text.text_style: theme.font_bold{font_size: 18 line_spacing: 1.15}}
@@ -75,10 +79,12 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{le
             }
         }
     }
-    View{width: Fill height: 30 flow: Right align: Align{y: 0.5} spacing: 9
-        RoundedView{width: 3 height: 16 show_bg: true draw_bg.color: editorial_accent draw_bg.border_radius: 1.5}
-        Section{width: Fill text: if page == "saved" { "收藏文章" } else { "最新文章" } draw_text.color: editorial_ink draw_text.text_style.font_size: 16}
-        EditorialCaption{width: Fit text: "共 " + display_rows.len() + " 条新闻"}
+    if page == "feed" || page == "saved" {
+        View{width: Fill height: 30 flow: Right align: Align{y: 0.5} spacing: 9
+            RoundedView{width: 3 height: 16 show_bg: true draw_bg.color: editorial_accent draw_bg.border_radius: 1.5}
+            Section{width: Fill text: if page == "saved" { "收藏文章" } else { "最新文章" } draw_text.color: editorial_ink draw_text.text_style.font_size: 16}
+            EditorialCaption{width: Fit text: "共 " + display_rows.len() + " 条新闻"}
+        }
     }
     for row in image_rows { ordered_rows.push(row) }
     for row in text_rows { ordered_rows.push(row) }
@@ -89,10 +95,13 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{le
         GestureView{width: Fill height: Fit flow: Down on_swipe: |dx, dy| feed_swipe_refresh(dx, dy)
             EditorialCard{
                 View{width: Fill height: Fit flow: Right spacing: 7 align: Align{y: 0.5}
-                    RoundedView{width: 22 height: 22 show_bg: true draw_bg.color: soft draw_bg.border_radius: 11.0 align: Align{x: 0.5 y: 0.5}
-                        Label{text: news_avatar(row) draw_text.color: secondary draw_text.text_style: theme.font_bold{font_size: 10}}
+                    RoundedView{width: 22 height: 22 padding: 0 flow: Right show_bg: true draw_bg.color: soft draw_bg.border_radius: 11.0 align: Align{x: 0.5 y: 0.5}
+                        EditorialBadgeText{text: news_avatar(row) draw_text.color: secondary draw_text.text_style: theme.font_bold{font_size: 10 line_spacing: 1.0}}
                     }
                     EditorialCaption{width: Fill text: news_meta(row) max_lines: 1}
+                }
+                if page == "tracking" {
+                    Small{text: "关联关注：" + feed_follow_label(agent_hint) max_lines: 2 text_overflow: TextOverflow.Ellipsis draw_text.color: editorial_accent}
                 }
                 View{width: Fill height: Fit flow: Right spacing: 12 align: Align{y: 0.0}
                     View{width: Fill height: Fit flow: Down spacing: 7
@@ -110,15 +119,21 @@ let NewsList = ScrollYView{width: Fill height: Fill flow: Down padding: Inset{le
                 }
                 if cache_note != "" { Small{text: cache_note max_lines: 2}}
                 View{width: Fill height: 26 flow: Right spacing: 5 align: Align{y: 0.5}
-                    EditorialTag{Label{text: category_label(row.category) draw_text.color: editorial_accent draw_text.text_style: theme.font_regular{font_size: 10}}}
-                    if records_has_interest("source", row.source) { LinkButton{text: "已跟踪" on_click: || toggle_follow(row)} }
-                    else { QuietButton{text: "关注来源" on_click: || toggle_follow(row)} }
+                    EditorialTag{EditorialBadgeText{text: news_browse_label(row)}}
+                    QuietButton{text: "关注话题" on_click: || follow_story(row)}
                     if records_is_bookmarked(row.news_id) { LinkButton{text: "已收藏" on_click: || toggle_save(row)} }
                     else { QuietButton{text: "收藏" on_click: || toggle_save(row)} }
                     View{width: Fill height: 1}
                     QuietButton{text: "查看" on_click: || open_story(row)}
                 }
             }
+        }
+    }
+    if display_rows.len() > 40 {
+        ReaderCaption{text: "当前显示 " + (feed_page_offset + 1) + "–" + min(feed_page_offset + 40, display_rows.len()) + " / " + display_rows.len() + " 条"}
+        View{width: Fill height: Fit flow: Right spacing: 10
+            if feed_page_offset > 0 { previous_news_page := SecondaryButton{text: "上一页" on_click: || feed_page_step(-1)} }
+            if feed_page_offset + 40 < display_rows.len() { next_news_page := SecondaryButton{text: "下一页" on_click: || feed_page_step(1)} }
         }
     }
 }}

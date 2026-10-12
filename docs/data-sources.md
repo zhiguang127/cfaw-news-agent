@@ -4,6 +4,10 @@
 
 ## 来源目录
 
+首页阅读入口为“全部、科技、商业、生活”，按文章标题和来源摘要的中英文内容规则筛选，同一条目可归入多个主题。线索不足时才采用来源默认方向，分类不依赖模型。规则与来源回退集中在 `src/data/retrieval/categories.splash`；最多缓存600份派生结果，内容或来源变化时失效。首次筛选分批准备分类（每片最多4条/8ms），以适配宿主64ms回调预算。筛选不修改新闻原始字段、来源选择或持久用户记录。
+
+来源目录中的旧 `category` 仍作为Agent与既有关注规则的兼容字段；新阅读入口使用 `browse_*` ID，不把旧的来源分类规则静默改为新的内容分类。没有来源摘要的新闻只用标题线索及来源回退，不为分类自动获取全文或生成摘要。规则不能保证语义分类完全准确，阅读分类不代表重要性或影响判断。
+
 | 默认启用来源 | 标题与摘要 | 正文 |
 | --- | --- | --- |
 | 36氪 | RSS 标题；无独立摘要，用户点击后由 Agent 提取 | RSS description 内的文章 HTML |
@@ -13,12 +17,21 @@
 | Solidot | RSS 标题；无独立摘要，用户点击后由 Agent 提取 | RSS description 内的自身短报道 |
 | 爱范儿 | RSS 标题、description 来源摘要 | RSS content:encoded |
 | NASA 新闻发布 | RSS 标题、description 来源摘要（英文） | 官方新闻发布 RSS content:encoded |
+| 超能网 | RSS 标题；无独立摘要，用户点击后由 Agent 提取 | 官方 RSS description，侧重硬件评测与选购 |
+| 极客公园 | RSS 标题；无独立摘要，用户点击后由 Agent 提取 | 官方 RSS description，侧重 AI、消费科技与产业变化 |
+| Popular Science · 环境与生活 | RSS 标题、description 来源摘要（英文） | 环境栏目官方 RSS content:encoded |
 
-原有 Hacker News、TechMeme、The Verge、Ars Technica、VentureBeat、arXiv、BBC、Guardian、CNBC、国航及 Google News 聚合来源默认关闭，目录与手动启用能力保留。MIT 复用原来源 ID，并升级为同时保留摘要和正文的适配器。首次升级将旧来源选择迁移到以上七个来源，在 `interests_v1.json` 保存 `reading_sources_revision: 3`；已使用第一批配置的 revision 2 用户保持其原选择，新来源可手动启用。后续用户选择（包括全部关闭）不会被默认值覆盖。
+原有 Hacker News、TechMeme、The Verge、Ars Technica、VentureBeat、arXiv、BBC、Guardian、CNBC、国航及 Google News 聚合来源默认关闭，目录与手动启用能力保留。MIT 复用原来源 ID，并升级为同时保留摘要和正文的适配器。首次升级将旧来源选择迁移到以上十个来源，在 `interests_v1.json` 保存 `reading_sources_revision: 3`；已有 revision 2 或 3 的用户保持其原选择，新来源可在菜单中的“新闻来源”手动启用。后续用户选择（包括全部关闭）不会被默认值覆盖。
+
+可选来源 **The Conversation · 科技与社会** 使用官方 Atom 的 summary/content，并保留作者署名与许可文字。真实公开样本正文解析通过，但当前 Windows 宿主联网连续超时，因此默认关闭，不能宣称已通过宿主联网验证。其跟踪像素域名不在图片许可范围内。
+
+超能网 RSS 将北京时间的时区写为非标准 `+08`。适配器只对启用 `pubdate_short_zone` 的来源将小时简写扩展为标准 `+0800` 再解析，避免宿主按UTC处理造成八小时偏差。已存错误时间的超能网缓存因缺少 `timestamp_parser_revision: 1` 重新获取；其他来源及用户收藏、关注、日程不被重写。真实的未来日期仍如实提示，不通过改成“刚刚”隐藏问题。
 
 新增来源用独立的 `reading_feeds.splash` 适配器读取 RSS 原始字段，避免宿主通用解析器将全文 description 缩短为280字符摘要。新闻记录增加可选 `source_summary`、`body_html`、`body_origin`、`body_truncated` 字段；缓存仍兼容 schema 1，旧 MIT 缓存缺少正文字段时重新获取，收藏快照保持可读。单条 RSS HTML 保留上限160 KB，正文提取上限96 KB / 260段；超限不能声明已读取全文。
 
-手动摘要使用宿主 Octos 的 `octos.session.open` / `octos.turn.start` / `octos.turn.interrupt`。正文以完整 Unicode 字符分为至多10 KB的片段；全部片段汇总，大量片段再有界合并。源摘要不调用模型；正文缺失、截断、服务不可用、错误返回和取消都显示实际状态。正文与模型笔记是不可信数据，不授权工具或日程写入。生成摘要仅缓存当前会话，最多20篇。
+RSS/Atom 每个原始条目在独立定时器中解析，取消或更换刷新代数时放弃旧任务。Popular Science 与 The Conversation 每次最多8条，极客公园最多10条，其他来源沿用20条全局上限。新增来源不自动加载 feed 缩略图，进入阅读页仍可按既有图片限制读取正文配图。新闻合并共享不可变正文字符串，引用数组独立复制；界面每页最多40条，底部可翻页，完整数据仍供筛选和 Agent 检索。
+
+手动摘要使用宿主 Octos 的 `octos.session.open` / `octos.turn.start` / `octos.turn.interrupt`。正文以完整 Unicode 字符分为至多10 KB的片段；全部片段汇总，大量片段再有界合并。分段定时器片间回收临时字符作用域，以适配缓存增多后的32 MiB脚本堆。源摘要不调用模型；正文缺失、截断、服务不可用、错误返回和取消都显示实际状态。正文与模型笔记是不可信数据，不授权工具或日程写入。生成摘要仅缓存当前会话，最多20篇。
 
 阅读全文与追踪证据分开保存。追踪缓存仍限六段 / 4 KB，并标记节选；手动摘要直接使用阅读页的全部已提取正文，不受追踪节选限制。原文下载、段落提取或读取上限不足时，不把节选标为全文。
 

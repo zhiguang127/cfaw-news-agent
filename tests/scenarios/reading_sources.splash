@@ -6,19 +6,40 @@ fn reading_test_check(passed, name){
     if passed { reading_test_results.passed = reading_test_results.passed + 1 } else { reading_test_results.failed = reading_test_results.failed + 1 }
 }
 fn reading_test_write(){ fs.write("reading-report.json", reading_test_results.to_json()) }
+fn reading_test_timestamps(){
+    let source = news_source("expreview")
+    let cases = [{zone: "+08" epoch: 1791605760} {zone: "+0800" epoch: 1791605760}
+        {zone: "-05" epoch: 1791652560} {zone: "GMT" epoch: 1791634560}]
+    let row = nil
+    for example in cases {
+        let xml = "<rss><channel><item><title>Synthetic timestamp fixture</title><link>https://www.expreview.com/timestamp-fixture</link><pubDate>Sat, 10 Oct 2026 12:16:00 " + example.zone + "</pubDate><description>Body fixture</description></item></channel></rss>"
+        row = news_parse(xml, source, time_now())[0]
+        reading_test_check(row.published_at == example.epoch, "publisher timestamp zone " + example.zone)
+    }
+    let xml = "<rss><channel><item><title>Synthetic timestamp fixture</title><link>https://www.expreview.com/timestamp-fixture</link></item></channel></rss>"
+    reading_test_check(news_parse(xml, source, time_now())[0].published_at == nil, "missing publisher date remains unknown")
+    let cache = {schema_version: 1 source_id: source.id retrieved_at: time_now() items: [row]}
+    reading_test_check(feed_cache_valid(cache, source) && news_merge_copy(row).timestamp_parser_revision == 1, "corrected timestamps survive cache and merge")
+    row.timestamp_parser_revision = nil
+    reading_test_check(!feed_cache_valid(cache, source), "old ambiguous-zone cache must refresh")
+    xml = "<rss><channel><item><title>Synthetic timestamp fixture</title><link>https://news.mit.edu/timestamp-fixture</link><pubDate>Sat, 10 Oct 2026 12:16:00 GMT</pubDate></item></channel></rss>"
+    reading_test_check(news_parse(xml, news_source("mit"), time_now())[0].published_at == 1791634560, "other publisher UTC timestamp unchanged")
+}
 fn reading_test_parse(index){
-    let ids = ["mit" "36kr" "ithome" "sspai" "solidot" "ifanr" "nasa"]
+    let ids = ["mit" "36kr" "ithome" "sspai" "solidot" "ifanr" "nasa" "expreview" "popsci" "conversation" "geekpark"]
     if index >= ids.len() { reading_test_load(0) return }
     let id = ids[index] let source = news_source(id)
     reading_test_results.stage = "parse-" + id reading_test_write()
-    let rows = news_parse(fs.read(id + ".xml"), source, time_now())
+    reading_feed_parse_async(fs.read(id + ".xml"), source, time_now(), feed_generation, fn(rows){
     reading_test_check(rows != nil, id + " RSS parsed")
     reading_test_check(rows.len() > 0, id + " nonempty rows")
     let row = rows[0]
     reading_test_check(news_record_valid(row), id + " normalized contract")
+    if id == "conversation" { reading_test_check(row.publisher_byline != "" && row.publisher_license != "" && row.body_origin == "publisher_atom", "Atom preserves author, license and body origin") }
     reading_test_check(row.title != "" && row.source_url != "", id + " title and original URL")
     reading_test_results.stage = "extract-" + id reading_test_write()
     start_timeout(0.05, || reading_test_extract(index, id, row, rows.len()))
+    })
 }
 fn reading_test_extract(index, id, row, row_count){
     let result = nil
@@ -30,11 +51,11 @@ fn reading_test_extract(index, id, row, row_count){
         result = article_extract("<article>" + row.body_html + "</article>", row.source_url)
         if id == "solidot" && result.paragraphs.len() == 0 { result.paragraphs = [reading_feed_text(row.body_html)] }
         reading_test_check(row.body_html != "", id + " original RSS body retained")
-        reading_test_check(record_contains(["mit" "ifanr" "nasa"], id) == (row.source_summary != ""), id + " summary/body distinction")
+        reading_test_check(record_contains(["mit" "ifanr" "nasa" "popsci" "conversation"], id) == (row.source_summary != ""), id + " summary/body distinction")
     }
     reading_test_check(result.paragraphs.len() > 0, id + " readable article body")
     reading_test_check(!result.truncated, id + " sample body not truncated")
-    reading_test_results.sources.push({id: id rows: row_count summary_chars: row.source_summary.len() body_bytes: row.body_html.to_bytes().len() paragraphs: result.paragraphs.len()})
+    reading_test_results.sources.push({id: id rows: row_count summary_chars: row.source_summary.len() body_bytes: row.body_html.len() paragraphs: result.paragraphs.len()})
     reading_test_rows.push(row)
     reading_test_write()
     mod.gc.run()
@@ -56,10 +77,24 @@ fn reading_test_load(index){
     })
 }
 fn reading_test_migration(){
+    mod.gc.run()
+    let original = reading_test_rows[9]
+    let second = news_merge_copy(original)
+    second.retrieved_at = original.retrieved_at + 1
+    second.references = [{source_id: "fixture" source: "合成来源" source_url: second.source_url feed_url: second.feed_url}]
+    let original_group = [original]
+    let second_group = [second]
+    let merged = news_merge([original_group second_group])
+    reading_test_check(merged.len() == 1 && merged[0].body_html == original.body_html && merged[0].publisher_byline == original.publisher_byline && merged[0].references.len() == 2, "merge preserves full body, author and independent provenance")
+    let merged_row = merged[0]
+    let merged_ref = merged_row.references[0]
+    merged_ref.source = "合成引用修改"
+    merged_row.title = "合成合并修改"
+    reading_test_check(original.references.len() == 1 && original.references[0].source != "合成引用修改" && original.title != "合成合并修改", "merged record changes do not mutate source cache")
     let interest = {interest_id: "keyword:保留关注" kind: "keyword" value: "保留关注" enabled: true created_at: time_now()}
     fs.write("interests_v1.json", {schema_version: 1 items: [interest] enabled_source_ids: ["hn" "ars"]}.to_json())
     records_load()
-    reading_test_check(enabled_source_ids.len() == 7 && !record_contains(enabled_source_ids, "hn"), "legacy sources migrate to seven reading sources")
+    reading_test_check(enabled_source_ids.len() == 10 && !record_contains(enabled_source_ids, "hn"), "legacy sources migrate to ten reading sources")
     reading_test_check(user_interests.len() == 1 && user_interests[0].value == "保留关注", "migration preserves user interests")
     enabled_source_ids = ["mit" "ithome"] user_interests = [] records_save_interests() records_load()
     reading_test_check(enabled_source_ids.len() == 2 && record_contains(enabled_source_ids, "ithome") && user_interests.len() == 0, "saved nonempty sources with empty interests reload safely")
@@ -138,6 +173,7 @@ fn reading_test_after_click(){
 start_timeout(0.1, || {
     records_load() schedules_load() topics_load() agent_preferences_load() feed_initialize()
     tracking_schedule_check = fn(){}
+    reading_test_timestamps()
     start_interval(0.2, || {
         if reading_test_results.stage == "ui_ready" && reader_summary.state == "ready" {
             reading_test_results.stage = "summary_ready"

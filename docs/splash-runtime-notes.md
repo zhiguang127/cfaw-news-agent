@@ -109,6 +109,20 @@ trusting it.
 
 ### A JSON object is opaque
 
+`scope` is also a reserved name in Splash object literals. A draft editor literal
+using `scope: some_text` read back as nil and failed whole-object JSON serialization
+in the native Rinx probe. Keep editor text in `scope_text`; when updating the
+domain's existing JSON `scope` field, clone the valid JSON object and assign
+`understanding["scope"] = values`. The keyword itself remains available in the
+domain JSON contract.
+
+For structured JSON draft fields, a dynamic `editor[field] = text` assignment
+can append a second member with the same spelling while a static `editor.title`
+access still reads the first value. This was observed in native intent editing:
+the exported JSON contained duplicate title/purpose/scope_text members. Use
+explicit static-member branches for the fixed editor fields, and validate
+persisted JSON for duplicate members when testing edits.
+
 A value from `parse_json()` cannot be inspected as a collection:
 
 - `obj.len()` reports `0` for any number of members. The real daily rate file
@@ -167,3 +181,27 @@ file with `fs.write` and read it from the app-data directory; there is no
 ## Conditional widget bindings
 
 The current card-host produced `pop_stack_value on empty stack` when a named `TextInput` binding lived in a conditional on_render branch that was skipped. The full intent panel passed after making that optional input anonymous, with edits handled by on_change. Keep identifiers on stable controls, or use a stable outer view for optional UI; do not depend on a conditional binding that has not been emitted.
+
+## Branches ending in a foreach
+
+The 10.11 follow-page native probe reproduced an empty-stack error when the true
+arm of an `if` ended in a `for` loop. The loop built the correct evidence array;
+the error appeared after returning to its caller, so the reported source line
+could misleadingly point at a later timestamp or widget expression. Pure
+variants with an unconditional `nil` after the terminal loop returned normally;
+otherwise identical variants without that branch value failed. Keep an explicit
+branch value at these joins in `follow_evidence_blocks`. This workaround applies
+to the tested pinned binary; it is not a claim about every Makepad version.
+
+## Complete startup with persisted tracking history
+
+Testing a page after calling loaders manually is not the complete startup path.
+The production `boot_load_step` used to run `topics_load` synchronously, including
+all twelve historical `tracking_validate` calls, before scheduling the next
+loader. A native callback budget interruption could therefore leave boot at
+the topic-record stage with no news initialization continuation. Startup now
+uses `topics_load_async`, with separate read/parse/header steps and one topic,
+decision or run per callback. It queues its continuation before native work,
+has a bounded per-document deadline, preserves read-only/backup protections,
+and completes with a warning instead of stranding news when recovery fails.
+Regression tests must include `assemble.ORDER` with the production startup.

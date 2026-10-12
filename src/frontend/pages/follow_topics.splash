@@ -1,0 +1,142 @@
+let FollowOverviewPage = View{width: Fill height: Fill flow: Down
+    follow_toolbar := View{width: Fill height: Fit flow: Down padding: Inset{left: 20 right: 20 top: 20 bottom: 12} spacing: 8 on_render: || {
+        View{width: Fill height: 34 flow: Right align: Align{y: 0.5} spacing: 8
+            Heading{width: Fill text: "我的关注"}
+            LinkButton{text: if topic_records.draft != nil {"添加 / 继续草稿"} else {"添加关注"} on_click: || intent_begin(nil)}
+        }
+        let changed = 0
+        for card in follow_cards_view.active { if card.status == "new" || card.status == "verify" { changed = changed + 1 } }
+        Small{text: "" + follow_cards_view.active.len() + " 个关注话题" + if changed > 0 {" · " + changed + " 项有进展或待核实"} else {" · 围绕你的关注汇总情况"}}
+        View{width: Fill height: 38 flow: Right spacing: 8
+            if follow_check_running || tracking_in_progress() { SecondaryButton{width: Fill height: 36 text: "停止检查" on_click: || follow_stop_checks()} }
+            else { Primary{width: Fill height: 36 text: "检查更新" on_click: || follow_check_all()} }
+            QuietButton{text: "检查设置" on_click: || manage_tracking()}
+            if user_schedules.len() > 0 || suggestion_history.len() > 0 || schedule_actions.items.len() > 0 { QuietButton{text: "建议记录" on_click: || show_analysis_results()} }
+        }
+        if follow_check_progress() != "" { Small{text: follow_check_progress() draw_text.color: accent max_lines: 3} }
+        if tracking_in_progress() { Small{text: tracking_message max_lines: 3} }
+        if tracking_pending_run != nil && !tracking_in_progress() {
+            Small{text: "新结果尚未保存，话题保留上次情况。" draw_text.color: accent}
+            SecondaryButton{width: Fill text: "重试保存结果" on_click: || tracking_retry_save()}
+        }
+    }}
+    ScrollYView{width: Fill height: Fill flow: Down padding: Inset{left: 18 right: 18 top: 4 bottom: 30}
+        follow_overview_content := View{width: Fill height: Fit flow: Down spacing: 14 on_render: || {
+            if follow_cards_view.active.len() == 0 {
+                EditorialCard{
+                    Section{text: "从一个你关心的话题开始" draw_text.text_style.font_size: 17}
+                    Text{text: if follow_cards_view.paused.len() > 0 {"目前的关注都已暂停。可以恢复已有话题，也可以添加新的关注。"} else {"告诉我你想持续了解什么。保存后，这里会汇总目前情况与有依据的下一步建议。"}}
+                    SecondaryButton{width: Fill text: "添加我的关注" on_click: || intent_begin(nil)}
+                }
+            }
+            for card in follow_cards_view.active {
+                EditorialCard{padding: 16 spacing: 10 draw_bg.border_radius: 18.0
+                    View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
+                        Section{width: Fill text: card.topic.title draw_text.text_style.font_size: 17 max_lines: 2}
+                        EditorialTag{EditorialBadgeText{text: card.status_label}}
+                    }
+                    Small{text: follow_card_time(card) + if card.checked_at > 0 {" · 判断依据 " + card.news_count + " 篇"} else {""}}
+                    if card.note != "" { Small{text: card.note max_lines: 3} }
+                    Section{text: if follow_show_previous(card) {"上次情况"} else {"目前情况"} draw_text.color: editorial_accent}
+                    for index situation in card.situations {
+                        if index < 3 { Text{text: situation draw_text.text_style.font_size: 13 max_lines: 4} }
+                    }
+                    Divider{}
+                    Section{text: follow_next_label(card) draw_text.color: editorial_accent}
+                    if card.next_steps.len() > 0 { Text{text: card.next_steps[0] draw_text.text_style.font_size: 13 max_lines: 4} }
+                    if card.next_steps.len() > 1 { Small{text: "另有 " + (card.next_steps.len() - 1) + " 项建议，可在话题详情查看。"} }
+                    for decision in card.decision_notes { Small{text: decision draw_text.color: accent} }
+                    View{width: Fill height: 36 flow: Right spacing: 8
+                        SecondaryButton{width: Fill height: 34 text: "查看依据（" + card.news_count + "）" on_click: || follow_open_evidence(card.topic.topic_id)}
+                        LinkButton{width: Fill height: 34 text: "话题详情" on_click: || follow_open_topic(card.topic.topic_id)}
+                    }
+                }
+            }
+            if follow_cards_view.paused.len() > 0 {
+                LinkButton{width: Fill text: if follow_paused_open {"收起已暂停（" + follow_cards_view.paused.len() + "）"} else {"已暂停（" + follow_cards_view.paused.len() + "）"} on_click: || {follow_paused_open = !follow_paused_open follow_render()}}
+                if follow_paused_open {
+                    for card in follow_cards_view.paused {
+                        EditorialCard{
+                            Section{text: card.topic.title}
+                            Small{text: "已暂停 · " + follow_card_time(card)}
+                            View{width: Fill height: 34 flow: Right spacing: 8
+                                LinkButton{width: Fill text: "查看最后情况" on_click: || follow_open_topic(card.topic.topic_id)}
+                                SecondaryButton{width: Fill height: 34 text: "恢复关注" on_click: || follow_topic_status(card, "active")}
+                            }
+                        }
+                    }
+                }
+            }
+            if user_interests.len() > 0 { Small{text: "旧版关注规则仍保留，可在检查设置中管理；话题卡对应你确认保存的关注。"} }
+        }}
+    }
+}
+let FollowTopicPage = View{visible: false width: Fill height: Fill flow: Down
+    View{width: Fill height: 46 flow: Right padding: Inset{left: 12 right: 18} align: Align{y: 0.5}
+        QuietButton{text: "‹ 我的关注" on_click: || follow_back()}
+        Small{text: "话题详情" align: Align{x: 1.0}}
+    }
+    ScrollYView{width: Fill height: Fill flow: Down padding: Inset{left: 18 right: 18 top: 8 bottom: 30}
+        follow_topic_content := View{width: Fill height: Fit flow: Down spacing: 14 on_render: || {
+            let card = follow_selected_card()
+            if card == nil { Text{text: "这个关注已取消或改变，请返回我的关注。"} }
+            else {
+                Heading{text: card.topic.title}
+                Small{text: card.status_label + " · " + follow_card_time(card) draw_text.color: accent}
+                if card.note != "" { Small{text: card.note} }
+                if card.values.len() == 0 {
+                    EditorialCard{
+                        Section{text: "目前情况"}
+                        for situation in card.situations { Text{text: situation} }
+                        Section{text: "建议下一步"}
+                        for step in card.next_steps { Text{text: step} }
+                    }
+                }
+                for index value in card.values {
+                    EditorialCard{
+                        if card.values.len() > 1 { Small{text: "进展 " + (index + 1) + " / " + card.values.len()} }
+                        Section{text: if follow_show_previous(card) {"上次保存的情况"} else {"目前情况"} draw_text.color: accent}
+                        Text{text: results_situation(value)}
+                        if value.insight.material_change != "" { Small{text: "与上次的区别：" + insight_prose(value.run, value.insight.material_change)} }
+                        for uncertainty in value.insight.uncertainties { Small{text: "尚不清楚：" + insight_prose(value.run, uncertainty)} }
+                        Divider{}
+                        Section{text: if !card.current || value.state == "handled" || value.state == "dismissed" {"当时的建议"} else {follow_next_label(card)} draw_text.color: accent}
+                        Text{text: follow_value_next(value)}
+                        if value.state == "watch" { Small{text: "你的决定：继续观察" draw_text.color: accent} }
+                        if value.state == "handled" { Small{text: "你的决定：已处理" draw_text.color: accent} }
+                        if value.state == "dismissed" { Small{text: "你的决定：不采纳" draw_text.color: accent} }
+                        LinkButton{text: "查看判断依据" on_click: || follow_open_evidence(card.topic.topic_id)}
+                        if card.current && card.topic.status == "active" && value.state != "withdrawn" {
+                            if insight_can_verify(value) && value.state != "handled" && value.state != "dismissed" {
+                                SecondaryButton{width: Fill text: "补充正文并重新判断" on_click: || insight_verify(value)}
+                            }
+                            if value.insight["next_step"] != nil && value.insight.decision_effect == "review" && value.state != "handled" && value.state != "dismissed" {
+                                LinkButton{text: "把核实安排到日程" on_click: || insight_plan_check(value)}
+                            }
+                            if value.state != "handled" && value.state != "dismissed" {
+                                View{width: Fill height: 34 flow: Right spacing: 4
+                                    if value.state != "watch" { QuietButton{width: Fill text: "继续观察" on_click: || follow_decide(value, "watch")} }
+                                    QuietButton{width: Fill text: "已处理" on_click: || follow_decide(value, "handled")}
+                                    QuietButton{width: Fill text: "不采纳" on_click: || follow_decide(value, "dismissed")}
+                                }
+                            }
+                        } else if !card.current { Small{text: "以上为历史记录；重新检查后，才能依据当前情况记录新决定。"} }
+                    }
+                }
+                EditorialCard{
+                    Section{text: "我关注的范围"}
+                    if card.topic.purpose != "" { Text{text: card.topic.purpose} }
+                    for item in card.topic["scope"] { Small{text: "关注：" + item} }
+                    for item in card.topic.preferences { Small{text: "偏好：" + item} }
+                    View{width: Fill height: 36 flow: Right spacing: 8
+                        LinkButton{width: Fill text: "修改关注" on_click: || intent_begin(card.topic.topic_id)}
+                        if card.topic.status == "active" { QuietButton{width: Fill text: "暂停关注" on_click: || follow_topic_status(card, "paused")} }
+                        else { LinkButton{width: Fill text: "恢复关注" on_click: || follow_topic_status(card, "active")} }
+                    }
+                    if card.topic.status == "active" && !tracking_in_progress() && !follow_check_running { SecondaryButton{width: Fill text: "单独检查这个话题" on_click: || follow_check_topic(card.topic.topic_id)} }
+                    QuietButton{text: "取消关注" on_click: || follow_topic_status(card, "cancelled")}
+                }
+            }
+        }}
+    }
+}

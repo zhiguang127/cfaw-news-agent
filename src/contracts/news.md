@@ -16,8 +16,16 @@
 | `evidence_kind` | `rss_summary` 或 `hn_submission` |
 | `references` | 相同链接的收录来源数组，每项保留 source、source_id、source_url、feed_url |
 | `bookmarked_at` | 仅收藏快照必需；旧收藏迁移时为 0，表示未知历史收藏时间 |
+| `source_summary` / `body_html` | 可选独立来源摘要 / 原始 RSS 或 Atom 正文 HTML；不能将正文描述当作独立摘要 |
+| `body_origin` / `body_truncated` | 可选 `publisher_rss` 或 `publisher_atom` / 正文保留是否超限 |
+| `publisher_byline` / `publisher_license` | 可选作者与许可文字，保留在详情页，单字段最多2000字节 |
+| `timestamp_parser_revision` | 可选发布时间解析修订，当前仅为1；超能网简写时区修正后写入，旧缓存缺此标记须重新获取 |
 
 去重保留首次收录的主记录与其他收录引用，不以重复收录推断独立证据。排序按来源时间降序，未知日期在后；相同时间保持输入顺序。
+
+阅读主题是非持久的派生数据：`news_browse_topics(row)` 返回一个或多个 `browse_tech`、`browse_industry`、`browse_life` ID，分别显示科技、商业、生活。标题与摘要的内容匹配优先，来源回退仅用于无匹配时。`news_browse_matches` 支持新阅读主题及旧来源分类；旧关注与Agent类别仍保持原语义。`news_browse_prepare(rows, current, complete)` 逐片准备派生缓存，调用方generation失效时结束并交还控制，不发布旧筛选行。app在筛选前和准备展示后均核对generation。没有来源摘要时不使用正文或模型自动补摘要来分类。
+
+若重复记录的抓取时间更新，则以新记录为主，同时保留两者引用。合并仅复制元数据对象和引用数组，不通过 JSON 再次复制不可变的整篇 HTML 字符串，避免扩展全文来源时耗尽32 MiB脚本堆。修改合并后的引用或标题不会污染来源缓存。
 
 ## 用户记录
 
@@ -33,11 +41,17 @@ source 匹配发布方名称，category 匹配目录分类，keyword 对标题�
 
 `news_parse(body, source, retrieved_at)` 返回有效新闻数组（可为空），无法解析时为 `nil`。`feed_refresh` 最多并发 3 个来源，按代数拒绝过期完成；某来源失败保留该来源的缓存与错误。缓存单源最多 20 条，合并 feed 最多 240 条。
 
+每个来源另有 `source_timeout_seconds`（30秒）截止，覆盖请求成功后的解析、缓存保存和完成回调。仅一次完成会减少 active、增加 completed、交付 on_update；下一轮忽略旧结果。安排下一来源早于界面更新，界面回调中断不会阻止队列继续。
+
+全文 RSS/Atom 的联网刷新通过 `reading_feed_parse_async` 每片解析一个条目，最终一次交付；源配置可降低20条上限。取消后不交付部分旧数据。首页一次构建至多40条 UI 组件，分类、查询和切换页面回到第一页；分页不改变240条合并集合或 Agent 检索集合。
+
 数据层负责获取与记录，`app/controller.splash` 连接用户动作与页面；数据代码不访问 widgets。`records.splash` 是用户记录的唯一写入入口，同步写入函数成功返回空字符串，否则返回可展示的错误，本次内存修改仍可使用但不宣称已保存。
 
 `records_check_tracking(rows, interests, checked_at, current, complete)` 异步分批检查最多 240 条新闻和 2000 个历史 ID，沿用 64 条/8 ms 预算。`current()` 判断调用方任务仍然有效；失效或被后续检查替代时不提交、不回调。完整结果一次性替换检查状态，`complete(error)` 在保存后的独立回调中交付空字符串或写入错误。期间打开详情会改变记录版本，检查从最新已读状态重新开始，不能恢复已移除的未读标记。应用保持刷新状态直至这个回调完成。
 
 Windows 宿主临时回收保护：应用合并同一事件中的列表渲染请求，下一短定时器先调用宿主提供的 `mod.gc.run()` 再更新列表。保持 manifest 的 32 MiB 上限；这是对当前宿主仅按对象数量增长触发 GC 的保护，待上游实现内存压力回收并通过连续刷新复现后移除。
+
+开发宿主补丁 `scripts/patch_news_gc_host.py` 在固定 Makepad 的已计入堆字节达到硬上限的75%时允许维护回收；回收后仍接近上限时释放可复用字符串缓冲和多余容量。硬上限继续生效，未放宽单次脚本时间/指令限制。通过 `scripts/build_news_refresh_host.ps1` 构建并使用 `rinx-news.exe`；该本地补丁不代表未修补的通用宿主已有相同能力。
 
 `feed_build_rows(enabled_ids, complete)` 分批去重与排序，每批最多处理 `work_batch_items` 条，同时以 `work_slice_seconds` 的时间预算让出执行，以适配宿主的 64 ms 回调限制。当前配置为最多 64 条/8 ms；单个操作仍需适配宿主预算。新的数据层构建或取消刷新使旧构建失效，回调只发布完整的新列表。app 合并同一来源选择、同一 refresh generation 内的更新：完成当前快照后展示，再重建累计新数据，避免每次来源完成都取消排序；来源选择或 generation 改变仍拒绝旧结果。
 

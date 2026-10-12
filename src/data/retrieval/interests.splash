@@ -6,6 +6,17 @@ fn literal_pattern(text){
     for c in ["\\" "." "*" "+" "?" "(" ")" "[" "]" "{" "}" "|" "^" "$"] { out = out.replace(c, "\\" + c) }
     out
 }
+fn interest_ascii_word_char(cp){ (cp >= 65 && cp <= 90) || (cp >= 97 && cp <= 122) || (cp >= 48 && cp <= 57) || cp == 95 }
+fn interest_keyword_pattern(text){
+    let pattern = literal_pattern(text)
+    let chars = text.to_chars()
+    if chars.len() == 0 { return pattern }
+    // ASCII word boundaries keep AI out of Daily/AirPods while permitting
+    // Chinese text such as AI助手; Unicode \b would reject that adjacency.
+    if interest_ascii_word_char(chars[0]) { pattern = "(^|[^A-Za-z0-9_])" + pattern }
+    if interest_ascii_word_char(chars[chars.len() - 1]) { pattern = pattern + "([^A-Za-z0-9_]|$)" }
+    pattern
+}
 fn category_label(id){
     if id == "tech" { return "科技" }
     if id == "ai" { return "AI 与研究" }
@@ -21,10 +32,12 @@ fn interest_matches(row, interests){
         if item.kind == "source" && item.value == row.source { out.push("关注来源：" + item.value) }
         if item.kind == "category" && item.value == row.category { out.push("关注主题：" + category_label(item.value)) }
         if item.kind == "keyword" {
-            let matcher = interest_keyword_matchers[item.interest_id]
-            if matcher == nil {
-                matcher = regex(literal_pattern(item.value), "i")
-                interest_keyword_matchers[item.interest_id] = matcher
+            let cached = interest_keyword_matchers[item.interest_id]
+            let matcher = nil
+            if cached != nil && cached.value == item.value { matcher = cached.matcher }
+            else {
+                matcher = regex(interest_keyword_pattern(item.value), "i")
+                interest_keyword_matchers[item.interest_id] = {value: item.value matcher: matcher}
             }
             if matcher.test(row.title) || matcher.test(row.summary) { out.push("匹配关键词：" + item.value) }
         }
@@ -35,7 +48,7 @@ fn news_filter(rows, interests, category, followed_only, query){
     let out = []
     let matcher = regex(literal_pattern(query), "i")
     for row in rows {
-        if category != "all" && row.category != category { continue }
+        if !news_browse_matches(row, category) { continue }
         if followed_only && interest_matches(row, interests).len() == 0 { continue }
         if query != "" && !matcher.test(row.title) && !matcher.test(row.summary) && !matcher.test(row.source) { continue }
         out.push(row)

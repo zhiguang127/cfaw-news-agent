@@ -1,12 +1,16 @@
 let boot_phase = "准备启动"
 let boot_finished = false
+let boot_topics_restoring = false
 fn boot_status(phase){
     boot_phase = phase
     ui.status.set_text("正在启动：" + phase)
 }
 fn boot(){
     start_timeout(12.0, || {
-        if !boot_finished { ui.status.set_text("启动未完成：" + boot_phase + "；请重新 Run 或查看宿主日志") }
+        if !boot_finished {
+            if boot_topics_restoring { ui.status.set_text("正在恢复关注与分析历史，请稍候…") }
+            else { ui.status.set_text("启动未完成：" + boot_phase + "；请重新 Run 或查看宿主日志") }
+        }
     })
     boot_load_step(0)
 }
@@ -17,6 +21,11 @@ fn boot_load_step(index){
     if index < loaders.len() {
         let labels = ["收藏与来源设置" "日程" "分析历史" "关注记录" "助手设置" "日程操作" "检查状态" "诊断记录"]
         boot_status(labels[index])
+        if index == 3 {
+            boot_topics_restoring = true
+            topics_load_async(|| {boot_topics_restoring = false boot_load_step(index + 1)})
+            return
+        }
         loaders[index]()
         start_timeout(0.01, || boot_load_step(index + 1))
         return

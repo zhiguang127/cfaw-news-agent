@@ -29,6 +29,9 @@ fn news_normalize(item, source, retrieved_at){
         row.source_summary = summary row.body_html = item.body_html
         row.body_truncated = item["body_truncated"] == true row.body_origin = item["body_origin"]
     }
+    if record_string(item["publisher_byline"]) { row.publisher_byline = item.publisher_byline }
+    if record_string(item["publisher_license"]) { row.publisher_license = item.publisher_license }
+    if item["timestamp_parser_revision"] == 1 { row.timestamp_parser_revision = 1 }
     if !news_record_valid(row) { return nil }
     return row
 }
@@ -91,6 +94,25 @@ fn news_sort(rows){
     }
     return rows
 }
+fn news_merge_copy(row){
+    // Strings are immutable: reuse full publisher bodies instead of serializing
+    // them again on every source update. Provenance remains independently owned.
+    let copy = {news_id: row.news_id evidence_id: row.evidence_id content_version: row.content_version
+        title: row.title source: row.source source_id: row.source_id source_url: row.source_url
+        feed_url: row.feed_url category: row.category language: row.language summary: row.summary
+        image_url: row.image_url published_at: row.published_at retrieved_at: row.retrieved_at
+        evidence_kind: row.evidence_kind timestamp_kind: row.timestamp_kind
+        references: row.references.to_json().parse_json()}
+    if row["body_html"] != nil {
+        copy.body_html = row.body_html copy.source_summary = row["source_summary"]
+        copy.body_truncated = row["body_truncated"] copy.body_origin = row["body_origin"]
+    }
+    if row["publisher_byline"] != nil { copy.publisher_byline = row.publisher_byline }
+    if row["publisher_license"] != nil { copy.publisher_license = row.publisher_license }
+    if row["bookmarked_at"] != nil { copy.bookmarked_at = row.bookmarked_at }
+    if row["timestamp_parser_revision"] != nil { copy.timestamp_parser_revision = row.timestamp_parser_revision }
+    return copy
+}
 fn news_append_unique(out, indexed, row){
     if news_is_demo(row) { return false }
     let existing_index = indexed[row.news_id]
@@ -98,7 +120,7 @@ fn news_append_unique(out, indexed, row){
         let existing = out[existing_index]
         let references = existing.references
         if row.retrieved_at > existing.retrieved_at {
-            existing = row.to_json().parse_json()
+            existing = news_merge_copy(row)
             existing.references = references
             out[existing_index] = existing
         }
@@ -110,7 +132,7 @@ fn news_append_unique(out, indexed, row){
         return true
     }
     indexed[row.news_id] = out.len()
-    out.push(row.to_json().parse_json())
+    out.push(news_merge_copy(row))
     return true
 }
 fn news_merge(groups){
