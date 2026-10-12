@@ -26,7 +26,7 @@ fn intent_motion_frame(generation, opening, started){
     } else {
         intent_motion_active = false
         ui.intent_overlay.set_visible(false)
-        ui.floating_ai.set_visible(true)
+        ui.floating_ai.set_visible(intent_orb_visible())
         render_analysis_controls()
     }
 }

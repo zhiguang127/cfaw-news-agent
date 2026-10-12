@@ -29,6 +29,9 @@ fn reader_summary_chunks(text, complete){
     start_timeout(0.01, || reader_summary_chunk_step(work))
 }
 fn reader_summary_chunk_step(work){
+    // Character scopes accumulate on the pinned VM until it counts enough
+    // objects; collect between slices so long bodies fit beside feed caches.
+    mod.gc.run()
     let steps = 0 let started = time_now()
     while work.index < work.chars.len() && steps < 200 && time_now() - started < 0.008 {
         let codepoint = work.chars[work.index]

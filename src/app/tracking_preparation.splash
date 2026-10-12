@@ -1,0 +1,235 @@
+// Prepare a bounded immutable analysis context without putting all eight
+// articles, quote choices, historical context and prompt shrinking in one entry.
+let tracking_snapshot_work = nil
+fn tracking_prepare_set(values, index, value){
+    if values.len() == index { values.push(value) }
+    else { values[index] = value }
+}
+fn tracking_prepare_release(work){
+    work.done = true
+    if tracking_snapshot_work == work { tracking_snapshot_work = nil }
+    work.snapshot = nil work.payload = nil work.rows = nil work.targets = nil
+    work.decisions = nil work.units = nil work.history = nil work.seen = nil
+    work.previous_slots = nil work.decision_slots = nil work.payload_decision_slots = nil
+    work.prompt = nil work.key = nil work.decision_key = nil
+    work.retry_task = nil work.prefix = nil
+}
+fn tracking_prepare_candidates(candidates, targets, verification){
+    let snapshot = {schema_version: 1 topics: targets.topics schedules: targets.schedules legacy_interests: targets.legacy_interests
+        evidence: [] previous_result: nil decisions: [] omitted_targets: targets.omitted_targets
+        omitted_candidates: candidates.omitted_candidates omitted_decisions: 0 context_key: tracking_context_key()
+        prompt_revision: tracking_prompt_revision previous_by_target: []
+        check_scope: if verification {"targeted_verification"} else {"recalled_candidates"}}
+    let work = {generation: tracking_recall_generation snapshot: snapshot rows: candidates.rows targets: targets
+        decisions: topic_records.decisions decision_count: topic_records.decisions.len() decision_key: nil
+        units: insight_targets(snapshot) history: tracking_cache.runs index: 0
+        previous_slots: [] decision_slots: [] payload_decision_slots: []
+        phase: "decisions_key" last_phase: "" seen: {} payload: nil key: nil prompt: nil prefix: tracking_prompt retry_task: nil
+        original_count: candidates.rows.len() omitted: candidates.omitted_candidates keep: candidates.rows.len() done: false}
+    tracking_snapshot_work = work
+    start_timeout(0.01, || tracking_prepare_step(work))
+}
+fn tracking_prepare_output_retry(task){
+    if !tracking_snapshot_valid(task.snapshot) || task.snapshot.evidence.len() == 0 { return false }
+    let old = task.snapshot let evidence = []
+    let timeout_retry = task.timeout_retry_count > 0
+    let keep = min(if timeout_retry {2} else {3}, max(1, floor(old.evidence.len() / 2)))
+    for index e in old.evidence { if index < keep { evidence.push(e) } }
+    // A new snapshot record preserves the original immutable evidence and
+    // historical baseline; only the candidate set and declared scope change.
+    let snapshot = {schema_version: old.schema_version topics: old.topics schedules: old.schedules legacy_interests: old.legacy_interests
+        evidence: evidence previous_result: nil decisions: old.decisions omitted_targets: old.omitted_targets
+        omitted_candidates: old.omitted_candidates + old.evidence.len() - keep omitted_decisions: old.omitted_decisions
+        context_key: old.context_key prompt_revision: old.prompt_revision previous_by_target: old.previous_by_target
+        check_scope: if timeout_retry {"reduced_timeout_retry"} else {"reduced_output_retry"}}
+    let work = {generation: tracking_recall_generation snapshot: snapshot rows: [] targets: nil
+        decisions: topic_records.decisions decision_count: topic_records.decisions.len() decision_key: nil
+        units: [] history: [] index: 0 previous_slots: [] decision_slots: [] payload_decision_slots: []
+        phase: "payload_base" last_phase: "" seen: {} payload: nil key: nil prompt: nil retry_task: task
+        prefix: if timeout_retry {tracking_timeout_retry_prompt} else {tracking_prompt + tracking_output_retry_prompt}
+        original_count: keep omitted: snapshot.omitted_candidates keep: keep done: false}
+    tracking_snapshot_work = work
+    // Reuse this task's total deadline. Preparation gets a bounded phase and
+    // the second model turn gets the usual per-turn deadline, never a new total.
+    start_timeout(0.01, || tracking_prepare_step(work))
+    agent_task_phase_deadline(task, tracking_config.preparation_timeout_seconds, "简短重试材料准备超时，已结束检查；保留上次结果")
+    agent_task_stage(task, "retry_preparation")
+    return true
+}
+agent_output_retry_handler = tracking_prepare_output_retry
+agent_preflight_handler = tracking_preflight_notice
+fn tracking_prepare_current(work){
+    if work.done || tracking_snapshot_work != work { return false }
+    if work.retry_task != nil {
+        let task = work.retry_task
+        if agent_task != task || task.terminal || task.stopping { return false }
+        if task.current() != true {
+            agent_task_finish(task, "failed", "关注、新闻依据或决定已变化，简短重试已停止", "stale_context", nil)
+            return false
+        }
+        return true
+    }
+    if tracking_status != "enriching" { return false }
+    if !tracking_preparation_current(work.generation, work.snapshot.context_key) { return false }
+    if topic_records.decisions != work.decisions || topic_records.decisions.len() != work.decision_count {
+        tracking_preparation_fail(work.generation, "stale", "用户决定已变化，本次整理已停止；请重新检查", "stale_context")
+        return false
+    }
+    true
+}
+fn tracking_prepare_step(work){
+    if work.done { return }
+    // Resume uncommitted work after a native budget interruption. The existing
+    // 45-second preparation deadline remains responsible for permanent failure.
+    start_timeout(0.01, || tracking_prepare_step(work))
+    if !tracking_prepare_current(work) { tracking_prepare_release(work) return }
+    mod.gc.run()
+    if work.last_phase != work.phase {
+        work.last_phase = work.phase
+        let info = tracking_preparation_info
+        if work.retry_task == nil {
+            tracking_preparation_progress(work.generation, {phase: "snapshot/" + work.phase scanned: info.scanned total: info.total ranked: info.ranked matched: info.matched})
+            tracking_message = "正在整理本轮证据与上次判断，请稍候…"
+        }
+        start_timeout(0.01, || { if !work.done { render_analysis_controls() } })
+        return
+    }
+    let failure = ""
+    try {
+        if work.phase == "decisions_key" {
+            work.decision_key = work.decisions.to_json()
+            work.phase = "evidence" work.index = 0
+        } else if work.phase == "evidence" {
+            if work.index < work.rows.len() {
+                let e = tracking_snapshot_evidence(work.rows[work.index])
+                evidence_attach_entry(e, work.rows[work.index])
+                tracking_prepare_set(work.snapshot.evidence, work.index, e)
+                work.index = work.index + 1
+            } else { work.phase = "previous" work.index = 0 }
+        } else if work.phase == "previous" {
+            if work.index < work.units.len() {
+                let previous = insight_previous(work.units[work.index])
+                tracking_prepare_set(work.previous_slots, work.index, previous)
+                work.index = work.index + 1
+            } else {
+                let previous = []
+                for item in work.previous_slots { if item != nil { previous.push(item) } }
+                work.snapshot.previous_by_target = previous
+                work.phase = "decisions" work.index = 0
+            }
+        } else if work.phase == "decisions" {
+            if work.index < work.decisions.len() {
+                let d = work.decisions[work.index]
+                let relevant = nil if tracking_decision_matches(d, work.targets) { relevant = d }
+                tracking_prepare_set(work.decision_slots, work.index, relevant)
+                work.index = work.index + 1
+            } else {
+                let decisions = []
+                for d in work.decision_slots { if d != nil { decisions.push(d) } }
+                work.snapshot.omitted_decisions = max(0, decisions.len() - 12)
+                while decisions.len() > 12 { decisions.remove(0) }
+                work.snapshot.decisions = decisions
+                work.phase = "payload_base"
+            }
+        } else if work.phase == "payload_base" {
+            work.payload = tracking_prompt_base(work.snapshot)
+            work.phase = "payload_evidence" work.index = 0
+        } else if work.phase == "payload_evidence" {
+            if work.index < work.snapshot.evidence.len() {
+                let e = tracking_prompt_evidence(work.snapshot.evidence[work.index], work.index, work.snapshot.prompt_revision)
+                tracking_prepare_set(work.payload.evidence, work.index, e)
+                work.index = work.index + 1
+            } else { work.phase = "payload_previous" work.index = 0 }
+        } else if work.phase == "payload_previous" {
+            if work.index < work.snapshot.previous_by_target.len() {
+                let previous = tracking_prompt_previous(work.snapshot.previous_by_target[work.index])
+                tracking_prepare_set(work.payload.previous_by_target, work.index, previous)
+                work.index = work.index + 1
+            } else { work.phase = "payload_decisions" work.index = 0 work.seen = {} }
+        } else if work.phase == "payload_decisions" {
+            if work.index < work.snapshot.decisions.len() {
+                let d = work.snapshot.decisions[work.snapshot.decisions.len() - 1 - work.index]
+                let issue = tracking_decision_issue(d)
+                let projected = nil let seen = work.seen[issue]
+                if seen == nil || seen == work.index {
+                    projected = tracking_prompt_decision(d)
+                    work.seen[issue] = work.index
+                }
+                tracking_prepare_set(work.payload_decision_slots, work.index, projected)
+                work.index = work.index + 1
+            } else {
+                let decisions = []
+                for d in work.payload_decision_slots { if d != nil { decisions.push(d) } }
+                work.payload.decisions = decisions
+                work.phase = "size"
+            }
+        } else if work.phase == "size" {
+            let prompt = work.prefix + work.payload.to_json()
+            if prompt.to_bytes().len() > tracking_config.max_prompt_bytes - 2048 {
+                if work.keep <= 1 { failure = "分析材料超过上下文上限，未发送；请缩小关注范围后重试" }
+                else { work.keep = work.keep - 1 work.phase = "trim" }
+            } else { work.prompt = prompt work.phase = if work.retry_task == nil {"key"} else {"dispatch"} }
+        } else if work.phase == "trim" {
+            // Drop whole tail records once; quote IDs of retained records are
+            // unchanged and omitted counts are derived, not incremented on retry.
+            while work.snapshot.evidence.len() > work.keep { work.snapshot.evidence.pop() }
+            while work.payload.evidence.len() > work.keep { work.payload.evidence.pop() }
+            work.snapshot.omitted_candidates = work.omitted + work.original_count - work.keep
+            work.payload.omitted_candidates = work.snapshot.omitted_candidates
+            work.phase = "size"
+        } else if work.phase == "key" {
+            if work.decisions.to_json() != work.decision_key { failure = "用户决定已变化，本次整理已停止；请重新检查" }
+            else { work.key = tracking_input_key(work.snapshot) work.phase = "reuse" work.index = 0 }
+        } else if work.phase == "reuse" {
+            if work.index < work.history.len() {
+                let run = work.history[work.history.len() - 1 - work.index]
+                if run.input_key == work.key && tracking_run_current(run) {
+                    let snapshot = work.snapshot
+                    tracking_prepare_release(work) tracking_preparation_clear()
+                    tracking_status = run.result.outcome tracking_message = "证据无变化，保留上次判断；未再次调用助手"
+                    check_states_record(snapshot, "checked", "", true) tracking_ui_update()
+                    return
+                }
+                work.index = work.index + 1
+            } else { work.phase = "dispatch" }
+        } else if work.phase == "dispatch" {
+            if !tracking_snapshot_current(work.snapshot) { failure = "目标或新闻依据已变化，请重新检查" }
+            else { work.phase = "handoff" }
+        } else if work.phase == "handoff" {
+            if work.retry_task != nil {
+                let task = work.retry_task let snapshot = work.snapshot let prompt = work.prompt
+                task.snapshot = snapshot task.prompt = prompt task.input_bytes = task.input_bytes + prompt.to_bytes().len()
+                tracking_prompt_work = work.payload
+                tracking_prepare_release(work)
+                start_timeout(0.01, || agent_task_model(task, prompt))
+                return
+            }
+            // A prior entry may have established the task before an interruption.
+            // Never submit it again; the Agent owner's own timers now govern it.
+            if agent_task != nil && agent_task.snapshot == work.snapshot {
+                if agent_task.terminal || agent_task.timer != nil {
+                    tracking_preparation_clear()
+                    if analysis_busy { tracking_status = "running" }
+                } else {
+                    // A partial start has neither requested the host nor gained
+                    // an owner deadline. Fail honestly rather than dropping the
+                    // only remaining watchdog or sending a duplicate request.
+                    agent_task_finish(agent_task, "failed", "连接准备中断，已结束检查；请重试", "service_unavailable", nil)
+                    tracking_preparation_clear()
+                }
+                return
+            }
+            else {
+                let snapshot = work.snapshot let payload = work.payload let key = work.key let decision_key = work.decision_key let prompt = work.prompt
+                tracking_prompt_work = payload
+                tracking_dispatch_snapshot(snapshot, payload, key, decision_key, prompt)
+                return
+            }
+        }
+    } { failure = "整理分析材料失败（" + work.phase + "），已结束本次检查；请重试" }
+    if failure != "" {
+        if work.retry_task != nil { agent_task_finish(work.retry_task, "failed", failure, "invalid_schema", nil) }
+        else { tracking_preparation_fail(work.generation, "failed", failure, "invalid_schema") }
+        tracking_prepare_release(work)
+    }
+}

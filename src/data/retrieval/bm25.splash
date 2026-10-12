@@ -1,14 +1,50 @@
 // Query-adaptive BM25, k1=1.2 b=.75, positive Robertson IDF.
 // Latin words (case-insensitive) and overlapping Han bigrams; no vectors.
-// Source/category rules are exact recall gates; BM25 ranks title/summary hits.
-let bm25_prefix_matchers = {}
+// Topics pass a title gate before evidence retrieval. Other explicit interests
+// and dated schedules retain their existing recall paths; BM25 only ranks.
+fn bm25_broad_keyword(value){
+    record_contains(["ai" "人工智能" "科技" "技术" "商业" "生活" "新闻" "资讯" "动态" "动向" "公司" "产品" "新品" "发布" "更新" "功能" "设备" "数码" "消费" "性能" "耳机" "手机"], bm25_word_key(value.trim()))
+}
+fn bm25_title_filters(targets){
+    let filters = []
+    for topic in targets.topics {
+        let all = [] let specific = [] let anchors = []
+        for rule in topic.recall_rules {
+            if rule.kind != "keyword" || rule.value.trim() == "" { continue }
+            let matcher = regex(interest_keyword_pattern(rule.value.trim()), "i")
+            all.push(matcher)
+            if !bm25_broad_keyword(rule.value) {
+                specific.push(matcher)
+                if record_string(topic["title"]) && matcher.test(topic.title) { anchors.push(matcher) }
+            }
+        }
+        // A concrete subject in the topic title must also occur in the news
+        // title. Shared categories or fragments from a long scope cannot pass.
+        let matchers = if anchors.len() > 0 {anchors} else {if specific.len() > 0 {specific} else {all}}
+        // Practical goals can cover multiple tasks and their explicit aliases;
+        // one literal task in the title must not suppress the other tasks.
+        if topic["intent_kind"] == "goal" && specific.len() > 0 { matchers = specific }
+        if matchers.len() == 0 {
+            for scope_text in topic["scope"] {
+                if scope_text.to_chars().len() <= 24 && !bm25_broad_keyword(scope_text) { matchers.push(regex(interest_keyword_pattern(scope_text), "i")) }
+            }
+        }
+        filters.push(matchers)
+    }
+    filters
+}
+fn bm25_title_matches(title, filters){
+    for matchers in filters { for matcher in matchers { if matcher.test(title) { return true } } }
+    false
+}
 fn bm25_prefix(value, chars){
-    if value.to_chars().len() <= chars { return value }
-    let matcher = bm25_prefix_matchers["" + chars]
-    if matcher == nil { matcher = regex("^[\\s\\S]{0," + chars + "}") bm25_prefix_matchers["" + chars] = matcher }
-    let result = value.match_str(matcher)
-    if result == nil { return "" }
-    result.value
+    // Large counted wildcard repetitions exhaust the pinned regex engine's
+    // DFA on long Unicode text. A bounded codepoint copy needs no regex.
+    let codepoints = value.to_chars()
+    if codepoints.len() <= chars { return value }
+    let prefix = "".to_chars()
+    for i in max(0, chars) { prefix.push(codepoints[i]) }
+    prefix.to_string()
 }
 fn bm25_query_terms(value){
     let words = value.match_all(regex("[A-Za-z0-9_]+|[一-龥]+", "g"))
@@ -24,7 +60,7 @@ fn bm25_query_terms(value){
     out
 }
 fn bm25_terms(targets){
-    let queries = [] let terms = []
+    let queries = [] let terms = [] let seen = {}
     for topic in targets.topics {
         // Preferences are for assessment; avoid recalling financing solely
         // because the user said they want fewer financing stories.
@@ -41,65 +77,142 @@ fn bm25_terms(targets){
     }
     for query_text in queries {
         for term in bm25_query_terms(query_text) {
-            let present = false
-            for old in terms { if regex("^" + literal_pattern(old.value) + "$", "i").test(term) { present = true } }
-            if !present && terms.len() < tracking_config.max_bm25_terms {
-                let pattern = literal_pattern(term)
-                if regex("^[A-Za-z0-9_]+$").test(term) { pattern = "(^|[^A-Za-z0-9_])" + pattern + "([^A-Za-z0-9_]|$)" }
-                terms.push({value: term matcher: regex(pattern, "gi") df: 0})
+            let key = bm25_word_key(term)
+            if seen[key] != true && terms.len() < tracking_config.max_bm25_terms {
+                seen[key] = true terms.push({value: key df: 0})
+                if terms.len() >= tracking_config.max_bm25_terms { return terms }
             }
         }
     }
     terms
 }
 fn bm25_gate(row, targets){
-    for topic in targets.topics { for rule in topic.recall_rules {
-        if rule.kind == "source" && rule.value == row.source { return true }
-        if rule.kind == "category" && rule.value == row.category { return true }
-    } }
     for rule in targets.legacy_interests {
         if rule.kind == "source" && rule.value == row.source { return true }
         if rule.kind == "category" && rule.value == row.category { return true }
     }
     false
 }
-fn bm25_recall(rows, targets, current, complete){
-    let work = {rows: rows targets: targets current: current complete: complete terms: bm25_terms(targets)
-        docs: [] index: 0 phase: "index" total_length: 0 total_docs: 0 seen: {} ranked: [] matched: 0 expired: 0}
-    start_timeout(0.01, || bm25_step(work))
+fn bm25_latin_char(cp){ (cp >= 65 && cp <= 90) || (cp >= 97 && cp <= 122) || (cp >= 48 && cp <= 57) || cp == 95 }
+fn bm25_han_char(cp){ cp >= 19968 && cp <= 40869 }
+fn bm25_word_key(value){
+    let chars = value.to_chars()
+    for i cp in chars { if cp >= 65 && cp <= 90 { chars[i] = cp + 32 } }
+    chars.to_string()
+}
+fn bm25_word_finish(work, doc){
+    if doc.word.len() == 0 { return }
+    let term_index = work.words[doc.word.to_string()]
+    if term_index != nil { doc.counts[term_index] = doc.counts[term_index] + 1 }
+    doc.length = doc.length + 1 doc.word = "".to_chars()
+}
+fn bm25_han_finish(doc){
+    if doc.han_run == 1 { doc.length = doc.length + 1 }
+    doc.han_run = 0 doc.previous_han = nil
+}
+fn bm25_progress(work){
+    if work.progress == nil { return }
+    if time_now() - work.progress_at < 0.5 && work.phase == work.progress_phase { return }
+    work.progress_at = time_now() work.progress_phase = work.phase
+    work.progress({phase: work.phase scanned: if work.phase == "index" {work.index} else {if work.phase == "terms" {0} else {work.rows.len()}} total: work.rows.len() ranked: work.index matched: work.matched})
+}
+fn bm25_recall(rows, targets, current, complete, progress = nil){
+    // Query compilation gets its own native callback, away from record writes
+    // and navigation. The host's 64 ms ceiling applies to each callback.
+    let work = {rows: rows targets: targets current: current complete: complete terms: []
+        docs: [] pending: nil index: 0 phase: "terms" stopped: false total_length: 0 total_docs: 0 seen: {} ranked: [] matched: 0 expired: 0
+        words: {} pairs: {} single_han: {} exact_matchers: [] title_filters: [] title_rejected: 0 gc_tick: 0 progress: progress progress_at: 0 progress_phase: ""}
+    start_timeout(0.01, || bm25_begin(work))
+}
+fn bm25_begin(work){
+    if work.stopped { return }
+    start_timeout(0.01, || { if work.phase == "terms" { bm25_begin(work) } else { bm25_step(work) } })
+    if !work.current() { work.stopped = true return }
+    work.terms = bm25_terms(work.targets) work.words = {} work.pairs = {} work.single_han = {}
+    work.title_filters = bm25_title_filters(work.targets)
+    work.exact_matchers = []
+    for topic in work.targets.topics { for rule in topic.recall_rules {
+        if rule.kind == "keyword" { work.exact_matchers.push(regex(interest_keyword_pattern(rule.value), "i")) }
+    } }
+    for i term in work.terms {
+        let cp = term.value.to_chars()
+        if cp.len() == 1 && bm25_han_char(cp[0]) { work.single_han["" + cp[0]] = i }
+        else if cp.len() == 2 && bm25_han_char(cp[0]) && bm25_han_char(cp[1]) { work.pairs["" + (cp[0] * 65536 + cp[1])] = i }
+        else { work.words[bm25_word_key(term.value)] = i }
+    }
+    work.phase = "index" bm25_progress(work)
 }
 fn bm25_step(work){
-    if !work.current() { return }
-    mod.gc.run()
-    let processed = 0 let started = time_now()
-    while work.index < work.rows.len() && processed < tracking_config.bm25_batch_items && time_now() - started < news_config.work_slice_seconds {
-        let row = work.rows[work.index] work.index = work.index + 1 processed = processed + 1
-        if work.seen[row.news_id] == true { continue } work.seen[row.news_id] = true
-        let body = " " + (row.title + " " + bm25_prefix(row.summary, tracking_config.max_bm25_body_chars)).replace(regex("[^A-Za-z0-9一-龥_]+", "g"), "  ") + " "
-        let words = body.match_all(regex("[A-Za-z0-9_]+|[一-龥]+", "g"))
-        let length = 0
-        for token in words {
-            if regex("^[A-Za-z0-9_]+$").test(token.value) { length = length + 1 }
-            else { length = length + max(1, token.value.to_chars().len() - 1) }
+    if work.stopped || work.phase == "done" { return }
+    if work.phase == "rank" { bm25_rank_step(work) return }
+    // Arm continuation BEFORE any potentially interrupted work. Keep the
+    // document cursor in work; a VM bail no longer discards the callback chain.
+    start_timeout(0.01, || bm25_step(work))
+    // A slice can finish one document and start the next. Collect by slice,
+    // rather than waiting for pending == nil, which may never be observed.
+    work.gc_tick = work.gc_tick + 1
+    if work.gc_tick >= 4 { work.gc_tick = 0 mod.gc.run() }
+    if !work.current() { work.stopped = true return }
+    let processed = 0 let char_steps = 0 let started = time_now()
+    while (work.pending != nil || work.index < work.rows.len()) && processed < tracking_config.bm25_batch_items && char_steps < tracking_config.bm25_char_batch_items && time_now() - started < news_config.work_slice_seconds {
+        if work.pending == nil {
+            let row = work.rows[work.index]
+            if work.seen[row.news_id] == true { work.index = work.index + 1 processed = processed + 1 continue }
+            let topic_only = work.targets.topics.len() > 0 && work.targets.schedules.len() + work.targets.legacy_interests.len() == 0
+            if topic_only && !bm25_title_matches(row.title, work.title_filters) {
+                work.seen[row.news_id] = true work.title_rejected = work.title_rejected + 1
+                work.index = work.index + 1 processed = processed + 1 continue
+            }
+            let text = row.title
+            if !topic_only { text = text + " " + bm25_prefix(row.summary, tracking_config.max_bm25_body_chars) }
+            let chars = text.to_chars() let exact = false
+            for matcher in work.exact_matchers { if matcher.test(text) { exact = true break } }
+            let gate = bm25_gate(row, work.targets)
+            let counts = [] for term in work.terms { counts.push(0) }
+            work.pending = {row: row chars: chars cursor: 0 word: "".to_chars() previous_han: nil han_run: 0 length: 0 counts: counts gate: gate exact: exact}
+            work.seen[row.news_id] = true work.index = work.index + 1
         }
-        length = max(1, length)
-        let counts = [] let hit = bm25_gate(row, work.targets)
-        for term in work.terms {
-            let tf = body.match_all(term.matcher).len() counts.push(tf)
-            if tf > 0 { term.df = term.df + 1 hit = true }
+        let doc = work.pending
+        // Tokenize once, using exact dictionary lookups instead of scanning
+        // the same Unicode string separately for each of the 24 query terms.
+        while doc.cursor < doc.chars.len() && char_steps < tracking_config.bm25_char_batch_items && time_now() - started < news_config.work_slice_seconds {
+            let cp = doc.chars[doc.cursor]
+            if bm25_latin_char(cp) {
+                bm25_han_finish(doc)
+                if cp >= 65 && cp <= 90 { cp = cp + 32 }
+                doc.word.push(cp)
+            } else if bm25_han_char(cp) {
+                bm25_word_finish(work, doc)
+                let single = work.single_han["" + cp]
+                if single != nil { doc.counts[single] = doc.counts[single] + 1 }
+                if doc.previous_han != nil {
+                    let pair = work.pairs["" + (doc.previous_han * 65536 + cp)]
+                    if pair != nil { doc.counts[pair] = doc.counts[pair] + 1 }
+                    doc.length = doc.length + 1
+                }
+                doc.previous_han = cp doc.han_run = doc.han_run + 1
+            } else { bm25_word_finish(work, doc) bm25_han_finish(doc) }
+            doc.cursor = doc.cursor + 1 char_steps = char_steps + 1
         }
-        work.total_docs = work.total_docs + 1 work.total_length = work.total_length + length
-        if hit { work.docs.push({row: row length: length counts: counts gate: bm25_gate(row, work.targets)}) }
+        if doc.cursor < doc.chars.len() { break }
+        bm25_word_finish(work, doc) bm25_han_finish(doc) doc.length = max(1, doc.length)
+        let hit = doc.gate || doc.exact
+        for i tf in doc.counts { if tf > 0 { work.terms[i].df = work.terms[i].df + 1 hit = true } }
+        work.total_docs = work.total_docs + 1 work.total_length = work.total_length + doc.length
+        if hit { work.docs.push({row: doc.row length: doc.length counts: doc.counts gate: doc.gate exact: doc.exact}) }
+        work.pending = nil processed = processed + 1
     }
-    if work.index < work.rows.len() { start_timeout(0.01, || bm25_step(work)) return }
-    work.index = 0 start_timeout(0.01, || bm25_rank_step(work))
+    if work.pending == nil && work.index >= work.rows.len() { work.index = 0 work.phase = "rank" }
+    bm25_progress(work)
 }
 fn bm25_rank_step(work){
-    if !work.current() { return }
-    let processed = 0
+    if work.stopped || work.phase == "done" { return }
+    start_timeout(0.01, || bm25_rank_step(work))
+    if !work.current() { work.stopped = true return }
+    let processed = 0 let started = time_now()
     let average = work.total_length / max(1, work.total_docs)
-    while work.index < work.docs.len() && processed < tracking_config.bm25_batch_items {
-        let doc = work.docs[work.index] work.index = work.index + 1 processed = processed + 1
+    while work.index < work.docs.len() && processed < tracking_config.bm25_batch_items && time_now() - started < news_config.work_slice_seconds {
+        let doc = work.docs[work.index]
         let score = 0
         for i term in work.terms {
             let tf = doc.counts[i]
@@ -108,7 +221,7 @@ fn bm25_rank_step(work){
                 score = score + idf * (tf * (tracking_config.bm25_k1 + 1)) / (tf + tracking_config.bm25_k1 * (1 - tracking_config.bm25_b + tracking_config.bm25_b * doc.length / average))
             }
         }
-        if score <= 0 && !doc.gate { continue }
+        if score <= 0 && !doc.gate && !doc.exact { work.index = work.index + 1 processed = processed + 1 continue }
         let source = news_source(doc.row.source_id)
         if source != nil && source.category == "travel" && source.kind == "rss" && regex("[0-9]{4}[-/年]").test(doc.row.title + " " + doc.row.summary) {
             for schedule in work.targets.schedules {
@@ -117,16 +230,28 @@ fn bm25_rank_step(work){
                 }
             }
         }
-        work.matched = work.matched + 1
-        if doc.row.retrieved_at <= 0 || time_now() - doc.row.retrieved_at > news_config.cache_stale_seconds { work.expired = work.expired + 1 continue }
+        if doc.row.retrieved_at <= 0 || time_now() - doc.row.retrieved_at > news_config.cache_stale_seconds {
+            work.matched = work.matched + 1 work.expired = work.expired + 1 work.index = work.index + 1 processed = processed + 1 continue
+        }
         let next = [] let placed = false
-        for old in work.ranked { if !placed && score > old.score { next.push({row: doc.row score: score}) placed = true } next.push(old) }
-        if !placed { next.push({row: doc.row score: score}) }
+        // Full explicit keyword hits precede broad scope/bigram matches.
+        // This is a recall priority, never proof of relevance or a new fact.
+        for old in work.ranked {
+            if !placed && ((doc.exact && !old.exact) || (doc.exact == old.exact && score > old.score)) {
+                next.push({row: doc.row score: score exact: doc.exact}) placed = true
+            }
+            next.push(old)
+        }
+        if !placed { next.push({row: doc.row score: score exact: doc.exact}) }
         while next.len() > tracking_config.max_candidates { next.pop() }
-        work.ranked = next
+        work.ranked = next work.matched = work.matched + 1 work.index = work.index + 1 processed = processed + 1
     }
-    if work.index < work.docs.len() { start_timeout(0.01, || bm25_rank_step(work)) return }
+    bm25_progress(work)
+    if work.index < work.docs.len() { return }
+    work.phase = "done"
     let rows = [] for item in work.ranked { rows.push(item.row) }
-    work.complete({rows: rows matched: work.matched expired: work.expired omitted_candidates: max(0, work.matched - work.expired - rows.len())
-        retrieval: "BM25 Latin words / Han bigrams; source/category gates; title+bounded summary; stable ties"})
+    let result = {rows: rows matched: work.matched expired: work.expired omitted_candidates: max(0, work.matched - work.expired - rows.len())
+        title_rejected: work.title_rejected
+        retrieval: "topic title gate before evidence; explicit keyword hits first; BM25 Latin words / Han bigrams; legacy source/category and schedule recall; stable ties"}
+    start_timeout(0.01, || { if work.current() { work.complete(result) } })
 }

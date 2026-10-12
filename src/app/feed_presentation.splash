@@ -1,7 +1,92 @@
 // Prepare relevance before drawing. The feed stays a single stable news list.
 let feed_match_hints = {}
+let feed_follow_matches = {}
+let feed_follow_candidates = {}
 let feed_agent_hints = {}
 let feed_schedule_matches = {}
+
+fn feed_follow_judgment(value, kind, id){
+    if value == nil { return nil }
+    if record_object(value["follow_judgments"]) { return value.follow_judgments[kind + ":" + id] }
+    // Compatibility for older fixtures/callers without the transient projection.
+    let item = value["item"] if item == nil { return nil }
+    let ids = item["topic_ids"] if kind == "interest" { ids = item["legacy_interest_ids"] }
+    if !record_array(ids) { ids = [] }
+    let snapshot = nil if value["run"] != nil { snapshot = value.run["snapshot"] }
+    if snapshot != nil {
+        let targets = snapshot["topics"] let field = "topic_id"
+        if kind == "interest" { targets = snapshot["legacy_interests"] field = "interest_id" }
+        if record_array(targets) {
+            for target in targets { if target[field] == id { return item.relevance == "related" && record_contains(ids, id) } }
+        }
+        return nil
+    }
+    if record_contains(ids, id) { return item.relevance == "related" }
+    if record_contains(["unrelated" "uncertain"], item["relevance"]) { return false }
+    nil
+}
+// Recall identifies candidates; only a current positive judgment admits news.
+fn feed_follow_match(row, tracked = nil){
+    if tracked == nil { return false }
+    for topic in topic_records.topics {
+        if topic_is_user_record(topic) && topic.status == "active" && feed_follow_judgment(tracked, "topic", topic.topic_id) == true { return true }
+    }
+    for interest in user_interests {
+        if interest.enabled && feed_follow_judgment(tracked, "interest", interest.interest_id) == true { return true }
+    }
+    false
+}
+fn feed_follow_candidate(row, tracked = nil, rule_hint = nil){
+    if tracked == nil {
+        if tracking_focus_count() == 0 { return false }
+        if rule_hint != nil { return rule_hint != "" }
+        return tracking_rule_hint(row) != ""
+    }
+    for topic in topic_records.topics {
+        if !topic_is_user_record(topic) || topic.status != "active" { continue }
+        let judgment = feed_follow_judgment(tracked, "topic", topic.topic_id)
+        if judgment == true { return true }
+        if judgment == nil && topic_rule_matches(row, topic).len() > 0 { return true }
+    }
+    for interest in user_interests {
+        if !interest.enabled { continue }
+        let judgment = feed_follow_judgment(tracked, "interest", interest.interest_id)
+        if judgment == true { return true }
+        if judgment == nil && interest_matches(row, [interest]).len() > 0 { return true }
+    }
+    false
+}
+fn feed_follow_agent_hint(row, tracked){
+    if tracked == nil { return nil }
+    let label = "" let titles = []
+    for topic in topic_records.topics {
+        if topic_is_user_record(topic) && topic.status == "active" && feed_follow_judgment(tracked, "topic", topic.topic_id) == true { titles.push(topic.title) }
+    }
+    for interest in user_interests {
+        if interest.enabled && feed_follow_judgment(tracked, "interest", interest.interest_id) == true {
+            let title = interest.value
+            if interest.kind == "source" { title = "来源 · " + title }
+            if interest.kind == "category" { title = "分类 · " + category_label(title) }
+            titles.push(title)
+        }
+    }
+    if titles.len() == 0 { return nil } label = titles[0]
+    let reason = tracked["follow_why_related"]
+    if !record_string(reason) || reason == "" {
+        reason = "与关注「" + label + "」相关"
+        if tracked.item.relevance == "related" { reason = tracked.item.why_related }
+    }
+    {text: "Agent · " + reason suggestion_id: nil priority: true group: 1 follow_hint: true follow_titles: titles}
+}
+fn feed_follow_label(hint){
+    if hint == nil || !record_array(hint["follow_titles"]) { return "" }
+    let text = ""
+    for title in hint.follow_titles {
+        if text != "" { text = text + "、" }
+        text = text + title
+    }
+    text
+}
 
 fn feed_context_state(){
     let topics = 0 let first = nil let legacy = 0 let next_schedule = nil let schedules = 0
@@ -38,6 +123,15 @@ fn feed_context_state(){
 }
 
 fn prepare_feed_presentation(rows, generation, complete){
+    // Initialization checks retained judgments; do not share the caller's
+    // budget with row selection and initial navigation/control rendering.
+    start_timeout(0.01, || {
+        if generation != feed_render_generation { complete(nil) return }
+        mod.gc.run()
+        prepare_feed_presentation_begin(rows, generation, complete)
+    })
+}
+fn prepare_feed_presentation_begin(rows, generation, complete){
     let latest_by_news = {}
     let suggestions_by_id = {}
     for item in analysis_history { latest_by_news[item.news_id] = item }
@@ -47,7 +141,7 @@ fn prepare_feed_presentation(rows, generation, complete){
     for run in tracking_cache.runs { for item in run.result.items { tracked_ids[item.news_id] = true } }
     let work = {tracked_ids: tracked_ids tracking_values: tracking_values rows: rows all_rows: app_feed_rows generation: generation complete: complete page: page
         groups: [[], [], [], []] seen: {} schedule_rules: tracking_schedule_rules() schedule_matches: {} schedule_decisions: tracking_schedule_decisions()
-        latest_by_news: latest_by_news suggestions_by_id: suggestions_by_id matches: {} hints: {} phase: "matches" index: 0}
+        latest_by_news: latest_by_news suggestions_by_id: suggestions_by_id matches: {} follow_matches: {} follow_candidates: {} hints: {} phase: "matches" index: 0}
     start_timeout(0.01, || prepare_feed_presentation_step(work))
 }
 fn prepare_feed_presentation_step(work){
@@ -60,6 +154,10 @@ fn prepare_feed_presentation_step(work){
             let row = work.all_rows[work.index]
             let hint = tracking_rule_hint(row)
             work.matches[row.news_id] = hint
+            let tracked = work.tracking_values[row.news_id]
+            let related = feed_follow_match(row, tracked)
+            work.follow_matches[row.news_id] = related
+            work.follow_candidates[row.news_id] = !related && feed_follow_candidate(row, tracked, hint)
             work.schedule_matches[row.news_id] = tracking_schedule_candidate(row, work.schedule_rules, work.schedule_decisions)
         } else if work.phase == "groups" {
             if work.index >= work.rows.len() {
@@ -72,7 +170,7 @@ fn prepare_feed_presentation_step(work){
             if work.seen[row.news_id] != true {
                 work.seen[row.news_id] = true
                 let group = feed_priority_group(row, work.matches, work.hints, work.schedule_matches)
-                if work.page != "tracking" || group > 0 { work.groups[group].push(row) }
+                if work.page != "tracking" || work.follow_matches[row.news_id] == true { work.groups[group].push(row) }
             }
         } else {
             if work.index >= work.rows.len() {
@@ -88,6 +186,10 @@ fn prepare_feed_presentation_step(work){
                 work.matches[row.news_id] = hint
             }
             let tracked = work.tracking_values[row.news_id]
+            if work.page == "tracking" {
+                work.hints[row.news_id] = feed_follow_agent_hint(row, tracked)
+                work.index = work.index + 1 processed = processed + 1 continue
+            }
             if tracked != nil {
                 // Current Agent judgment replaces provisional recall. Handled
                 // reminders must not sneak back to the top as lexical matches.
@@ -138,10 +240,11 @@ fn feed_priority_group(row, matches, hints, schedule_matches){
 }
 fn prioritize_feed_rows(rows){
     let impacts = [] let schedule_candidates = [] let related = [] let other = [] let seen = {}
+    let tracking_values = {} if page == "tracking" { tracking_values = tracking_current_values() }
     for row in rows {
         if seen[row.news_id] == true { continue } seen[row.news_id] = true
         let group = feed_priority_group(row, feed_match_hints, feed_agent_hints, feed_schedule_matches)
-        if page == "tracking" && group == 0 { continue }
+        if page == "tracking" && !feed_follow_match(row, tracking_values[row.news_id]) { continue }
         if group == 3 { impacts.push(row) }
         else if group == 2 { schedule_candidates.push(row) }
         else if group == 1 { related.push(row) }
@@ -152,7 +255,11 @@ fn prioritize_feed_rows(rows){
     for row in other { impacts.push(row) }
     impacts
 }
-fn row_agent_hint(row){ feed_agent_hints[row.news_id] }
+fn row_agent_hint(row){
+    let hint = feed_agent_hints[row.news_id]
+    if page == "tracking" && hint != nil && hint["follow_hint"] != true { return nil }
+    hint
+}
 fn open_feed_hint(row){
     let hint = row_agent_hint(row)
     if hint != nil && hint.suggestion_id != nil { open_suggestion_record(hint.suggestion_id) }

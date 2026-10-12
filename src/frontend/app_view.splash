@@ -1,15 +1,23 @@
+let header_brand_font_size = 28
+let EditorialBrand = GestureView{width: Fill height: 60 flow: Down
+    on_viewport: |w, h| {
+        let size = min(28, max(18, floor(w / 7.0)))
+        if size != header_brand_font_size {
+            header_brand_font_size = size
+            ui.header_brand_content.render()
+        }
+    }
+    header_brand_content := View{width: Fill height: Fill flow: Down align: Align{y: 0.5} spacing: 2 on_render: || {
+        Label{width: Fill padding: 0 text: "cfaw-news" draw_text.color: editorial_ink draw_text.text_style: TextStyle{font_size: header_brand_font_size line_spacing: 1.1
+            font_family: FontFamily{latin := FontMember{res: crate_resource("makepad_widgets:resources/Serif-Bold.ttf") asc: 0.0 desc: 0.0}}} max_lines: 1}
+        Small{text: "NEWS THAT MOVES YOU" draw_text.color: editorial_accent draw_text.text_style.font_size: 7.5 draw_text.text_style.letter_spacing: 1.0}
+    }}
+}
 HostedView{width: Fill height: Fill
     full: View{width: Fill height: Fill flow: Overlay
     app_shell := View{width: Fill height: Fill flow: Down show_bg: true draw_bg.color: white
-        View{width: Fill height: 88 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 18 top: 12 bottom: 8} spacing: 8
-            View{width: Fill height: Fit flow: Down spacing: 2
-                Label{text: "cfaw-news" draw_text.color: editorial_ink draw_text.text_style: TextStyle{font_size: 28 line_spacing: 1.1
-                    font_family: FontFamily{latin := FontMember{res: crate_resource("makepad_widgets:resources/Serif-Bold.ttf") asc: 0.0 desc: 0.0}}} max_lines: 1}
-                Small{text: "NEWS THAT MOVES YOU" draw_text.color: editorial_accent draw_text.text_style.font_size: 7.5 draw_text.text_style.letter_spacing: 1.0}
-            }
-            refresh_toolbar := View{width: Fit height: 42 flow: Down align: Align{x: 0.5 y: 0.5}
-                refresh_news := LinkButton{height: 38 text: "刷新新闻" on_click: || refresh() draw_text.color: editorial_muted}
-            }
+        brand_header := View{width: Fill height: 88 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 18 top: 12 bottom: 8} spacing: 8
+            EditorialBrand{}
             weather_widget := WeatherHeaderWidget{}
         }
         home_tools := View{width: Fill height: 56 flow: Right align: Align{y: 0.5} padding: Inset{left: 18 right: 18 top: 4 bottom: 8} spacing: 8
@@ -21,12 +29,14 @@ HostedView{width: Fill height: Fill
                         draw_text +: {color_empty: #x9aA2b2 color_empty_hover: #x9aA2b2 text_style +: {font_size: 13}}}
                 }
             }
+            refresh_toolbar := View{width: Fit height: 42 flow: Down align: Align{x: 0.5 y: 0.5}
+                refresh_news := LinkButton{height: 38 text: "刷新新闻" on_click: || refresh() draw_text.color: editorial_muted}
+            }
         }
         main := View{width: Fill height: Fill flow: Down
-            pending_suggestions := HintButton{visible: false height: 28 margin: Inset{left: 18 right: 18} text: "" on_click: || show_analysis_results()}
+            pending_suggestions := HintButton{visible: false height: 28 margin: Inset{left: 18 right: 18} text: "" on_click: || select_page("tracking")}
             feed_filters := FeedFilters{}
             feed_context := FeedContext{}
-            tracking_header := TrackingHeader{}
             bookmarks_header := BookmarksHeader{}
             status := EditorialCaption{text: "正在准备新闻来源…" padding: Inset{left: 20 right: 18 top: 4 bottom: 4}}
             feed_list := View{width: Fill height: Fill flow: Overlay
@@ -39,14 +49,17 @@ HostedView{width: Fill height: Fill
                     on_render: || { list := NewsList{} }
                 }
                 View{width: Fill height: Fill align: Align{x: 1.0 y: 1.0} padding: Inset{right: 14 bottom: 18}
-                    back_to_top := Primary{visible: false width: 40 height: 40 text: "↑" on_click: || return_feed_top()
-                        draw_bg +: {border_radius: 20.0 color: #x2e4b75 color_hover: #x3c5d89 color_down: #x496f9e}
-                        draw_text.text_style.font_size: 20}
+                    back_to_top := EditorialBackToTop{visible: false on_click: || return_feed_top()}
                 }
             }
             schedule_page := SchedulePage{}
             account_page := AccountPage{}
             results_panel := AnalysisResultsPage{}
+            follow_page := View{visible: false width: Fill height: Fill flow: Down
+                follow_overview := FollowOverviewPage{}
+                follow_topic_page := FollowTopicPage{}
+                follow_evidence_page := FollowEvidencePage{}
+            }
         }
         detail_pane := View{visible: false width: Fill height: Fill flow: Down
             View{width: Fill height: 44 flow: Right align: Align{y: 0.5} padding: Inset{left: 12 right: 18} spacing: 8

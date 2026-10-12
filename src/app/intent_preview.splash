@@ -1,0 +1,98 @@
+// User edits are local drafts. Applying changes never confirms a follow.
+fn intent_preview_join(values){
+    let text = ""
+    for value in values { if text != "" { text = text + "\n" } text = text + value }
+    text
+}
+fn intent_preview_lines(text){
+    let values = [] let seen = {}
+    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n") {
+        let value = line.trim()
+        if value != "" && seen[value] != true { values.push(value) seen[value] = true }
+    }
+    values
+}
+fn intent_preview_begin(){
+    if intent_draft == nil || analysis_busy || intent_mode() == "schedule" || intent_draft.state != "ready" || intent_draft["understanding_edit"] != nil { return }
+    let idea = intent_draft.understanding
+    let keywords = [] let extra_rules = []
+    for rule in idea.recall_rules {
+        if rule.kind == "keyword" { keywords.push(rule.value) }
+        else { extra_rules.push(rule.to_json().parse_json()) }
+    }
+    let next = intent_draft.to_json().parse_json()
+    next.understanding_edit = {title: idea.title purpose: idea.purpose scope_text: intent_preview_join(idea["scope"])
+        preferences: intent_preview_join(idea.preferences) keywords: intent_preview_join(keywords) extra_rules: extra_rules}
+    next.version = next.version + 1
+    if intent_save_timer != nil { stop_timer(intent_save_timer) intent_save_timer = nil }
+    intent_error = topic_save_draft(next)
+    if intent_error == "" { intent_draft = next }
+    intent_render()
+}
+fn intent_preview_changed(field, text){
+    if intent_draft == nil || intent_draft["understanding_edit"] == nil || analysis_busy { return }
+    if !record_contains(["title" "purpose" "scope_text" "preferences" "keywords"], field) { return }
+    if text.to_chars().len() > tracking_config.max_input_chars { intent_error = "单个编辑框最多1000字符；超出内容未保存" intent_render() return }
+    // Static members replace JSON fields; dynamic keys can append duplicates.
+    let edit = intent_draft.understanding_edit
+    let current = ""
+    if field == "title" { current = edit.title }
+    if field == "purpose" { current = edit.purpose }
+    if field == "scope_text" { current = edit.scope_text }
+    if field == "preferences" { current = edit.preferences }
+    if field == "keywords" { current = edit.keywords }
+    if current == text { return }
+    if field == "title" { edit.title = text }
+    if field == "purpose" { edit.purpose = text }
+    if field == "scope_text" { edit.scope_text = text }
+    if field == "preferences" { edit.preferences = text }
+    if field == "keywords" { edit.keywords = text }
+    intent_draft.version = intent_draft.version + 1 intent_error = ""
+    intent_schedule_draft_save()
+}
+fn intent_preview_remove_rule(kind, value){
+    if intent_draft == nil || intent_draft["understanding_edit"] == nil || analysis_busy { return }
+    intent_draft.understanding_edit.extra_rules.retain(|rule| rule.kind != kind || rule.value != value)
+    intent_draft.version = intent_draft.version + 1 intent_error = ""
+    intent_schedule_draft_save() intent_render()
+}
+fn intent_preview_error(idea){
+    if !tracking_text(idea.title, 120) || idea.title == "" { return "关注名称不能为空，最多120字符。" }
+    if !tracking_text(idea.purpose, 400) { return "关注目的最多400字符，可留空。" }
+    if !tracking_strings(idea["scope"], 6, 160) || idea["scope"].len() == 0 { return "关注范围请填写1至6项，每行一项，每项最多160字符。" }
+    if !tracking_strings(idea.preferences, 6, 160) { return "偏好最多6项，每行一项，每项最多160字符，可留空。" }
+    if idea.recall_rules.len() == 0 || idea.recall_rules.len() > tracking_config.max_rules { return "检索关键词与扩展检索合计须有1至6项。" }
+    for rule in idea.recall_rules { if !tracking_text(rule.value, 120) || rule.value == "" { return "每个检索关键词最多120字符，请每行填写一个。" } }
+    if !intent_rules_known(idea.recall_rules) { return "扩展检索分类已不可用，请移除后重试。" }
+    if !topic_understanding_valid(idea) { return "修改内容未通过校验，请核对后重试。" }
+    ""
+}
+fn intent_preview_apply(){
+    if intent_draft == nil || intent_draft["understanding_edit"] == nil || analysis_busy { return }
+    let edit = intent_draft.understanding_edit
+    let rules = []
+    for keyword in intent_preview_lines(edit.keywords) { rules.push({kind: "keyword" value: keyword}) }
+    for rule in edit.extra_rules { rules.push(rule.to_json().parse_json()) }
+    // `scope` is reserved in Splash literals; retain the plain JSON field.
+    let idea = intent_draft.understanding.to_json().parse_json()
+    idea.title = edit.title.trim() idea.purpose = edit.purpose.trim()
+    idea["scope"] = intent_preview_lines(edit.scope_text)
+    idea.preferences = intent_preview_lines(edit.preferences) idea.recall_rules = rules
+    intent_error = intent_preview_error(idea)
+    if intent_error != "" { intent_render() return }
+    let next = intent_draft.to_json().parse_json()
+    next.understanding = idea next.understanding_edit = nil next.version = next.version + 1
+    if intent_save_timer != nil { stop_timer(intent_save_timer) intent_save_timer = nil }
+    intent_error = topic_save_draft(next)
+    if intent_error == "" { intent_draft = next }
+    intent_render()
+}
+fn intent_preview_cancel(){
+    if intent_draft == nil || intent_draft["understanding_edit"] == nil || analysis_busy { return }
+    let next = intent_draft.to_json().parse_json()
+    next.understanding_edit = nil next.version = next.version + 1
+    if intent_save_timer != nil { stop_timer(intent_save_timer) intent_save_timer = nil }
+    intent_error = topic_save_draft(next)
+    if intent_error == "" { intent_draft = next }
+    intent_render()
+}

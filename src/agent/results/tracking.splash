@@ -36,7 +36,9 @@ fn intent_validate(value){
     if value["status"] != "ready" && value["status"] != "needs_clarification" { return tracking_invalid("invalid_schema", "意图状态无效") }
     if !tracking_text(value["question"], 300) { return tracking_invalid("invalid_schema", "追问无效") }
     if value["status"] == "ready" {
-        if !topic_understanding_valid(value["understanding"]) || value["question"] != "" { return tracking_invalid("invalid_schema", "理解结果不完整") }
+        let error = topic_understanding_error(value["understanding"])
+        if error != "" { return tracking_invalid("invalid_schema", "助手返回的理解格式有误：" + error) }
+        if value["question"] != "" { return tracking_invalid("invalid_schema", "ready 状态的 question 须为空字符串；需要追问时使用 needs_clarification") }
         if !intent_rules_known(value.understanding.recall_rules) { return tracking_invalid("invalid_schema", "理解结果包含未知新闻分类，请重试整理") }
     } else if value["question"].trim() == "" || value["understanding"] != nil { return tracking_invalid("invalid_schema", "请只返回一个关键追问") }
     {valid: true error: "" message: "" result: value}
@@ -113,10 +115,12 @@ fn tracking_parse(text, kind, snapshot){
     if !regex("^[{]").test(clean) || !regex("[}]$").test(clean) { return tracking_invalid("invalid_json", "模型回复应为单个 JSON 对象") }
     let value = nil
     try { value = clean.parse_json() } { value = nil }
-    if kind == "tracking_update" && (snapshot["prompt_revision"] == "tracking-v2.0" || snapshot["prompt_revision"] == "tracking-v2.1" || snapshot["prompt_revision"] == "tracking-v2.2" || snapshot["prompt_revision"] == "tracking-v2.3") {
+    if kind == "tracking_update" && record_contains(["tracking-v2.0" "tracking-v2.1" "tracking-v2.2" "tracking-v2.3" "tracking-v2.4" "tracking-v2.5" "tracking-v2.6" "tracking-v2.7" "tracking-v2.8" "tracking-v2.9" "tracking-v2.10" "tracking-v2.11"], snapshot["prompt_revision"]) {
         if value == nil || value["schema_version"] != 2 { return tracking_invalid("invalid_schema", "新版追踪须返回目标变化与段落引用契约；旧结果仅作历史兼容") }
     }
     if !record_object(value) { return tracking_invalid("invalid_json", "模型回复无法解析为 JSON 对象") }
+    // Only the application can label a result as its availability notice.
+    if kind == "tracking_update" { value.judgment_origin = nil }
     if kind == "article_summary" {
         if !record_string(value["summary"]) { return tracking_invalid("invalid_schema", "摘要必须为文本") }
         if value.summary.to_chars().len() > snapshot.max_summary_chars { return tracking_invalid("invalid_schema", "摘要超过本步骤长度上限") }
@@ -139,6 +143,40 @@ fn tracking_parse(text, kind, snapshot){
         }
         return checked
     }
-    if kind == "tracking_update" && (snapshot["prompt_revision"] == "tracking-v2.2" || snapshot["prompt_revision"] == "tracking-v2.3") { tracking_expand_evidence(value, snapshot) }
-    tracking_validate(value, snapshot)
+    if kind == "tracking_update" && record_contains(["tracking-v2.2" "tracking-v2.3" "tracking-v2.4" "tracking-v2.5" "tracking-v2.6" "tracking-v2.7" "tracking-v2.8" "tracking-v2.9" "tracking-v2.10" "tracking-v2.11"], snapshot["prompt_revision"]) {
+        let error = tracking_expand_evidence(value, snapshot)
+        if error != "" { return tracking_invalid("invalid_reference", error) }
+    }
+    let checked = tracking_validate(value, snapshot)
+    if !checked.valid && checked["reason_code"] == "no_related_policy" {
+        let notice = tracking_no_related_notice(value, snapshot)
+        if notice != nil {
+            let checked_notice = tracking_validate(notice, snapshot)
+            if checked_notice.valid { return tracking_judgment_validate(notice, snapshot) }
+        }
+    }
+    if checked.valid && kind == "tracking_update" && record_contains(["tracking-v2.4" "tracking-v2.5" "tracking-v2.6" "tracking-v2.7" "tracking-v2.8" "tracking-v2.9" "tracking-v2.10" "tracking-v2.11"], snapshot["prompt_revision"]) {
+        let no_related = tracking_no_related_notice(value, snapshot)
+        if no_related != nil {
+            let checked_notice = tracking_validate(no_related, snapshot)
+            if checked_notice.valid { return tracking_judgment_validate(no_related, snapshot) }
+        }
+        let judgment = tracking_judgment_validate(value, snapshot)
+        if !judgment.valid && judgment["reason_code"] == "no_related_policy" {
+            let notice = tracking_no_related_notice(value, snapshot)
+            if notice != nil {
+                let checked_notice = tracking_validate(notice, snapshot)
+                if checked_notice.valid { return tracking_judgment_validate(notice, snapshot) }
+            }
+        }
+        if !judgment.valid && judgment["reason_code"] == "title_only_goal" {
+            let notice = tracking_title_gap_notice(value, snapshot)
+            if notice != nil {
+                let checked_notice = tracking_validate(notice, snapshot)
+                if checked_notice.valid { return tracking_judgment_validate(notice, snapshot) }
+            }
+        }
+        return judgment
+    }
+    checked
 }

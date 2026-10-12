@@ -101,17 +101,26 @@ fn tracking_context_key(){
     for item in user_schedules { schedules.push({schedule_id: item.schedule_id version: item.version status: item["status"]}) }
     {topics: topics legacy: user_interests schedules: schedules revision: tracking_prompt_revision config: tracking_config}.to_json()
 }
+fn tracking_snapshot_evidence(row){
+    let summary = row.summary
+    let truncated = summary.to_chars().len() > tracking_config.max_summary_chars
+    if truncated { summary = bm25_prefix(summary, tracking_config.max_summary_chars) }
+    return {news_id: row.news_id title: row.title summary: summary source_url: row.source_url
+        published_at: row.published_at retrieved_at: row.retrieved_at evidence_kind: row.evidence_kind
+        timestamp_kind: row.timestamp_kind summary_truncated: truncated references: row.references
+        content_key: tracking_evidence_key(row)}
+}
+fn tracking_decision_matches(item, targets){
+    if item["kind"] == "insight" {
+        for topic in targets.topics { if item.target_type == "topic" && item.target_id == topic.topic_id && item.target_version == topic.version { return true } }
+        for schedule in targets.schedules { if item.target_type == "schedule" && item.target_id == schedule.schedule_id && item.target_version == schedule.version { return true } }
+        nil
+    } else { for schedule in targets.schedules { if schedule.schedule_id == item.schedule_id { return true } } nil }
+    false
+}
 fn tracking_snapshot(rows, targets){
     let evidence = []
-    for row in rows {
-        let summary = row.summary
-        let truncated = summary.len() > tracking_config.max_summary_chars
-        if truncated { summary = bm25_prefix(summary, tracking_config.max_summary_chars) }
-        evidence.push({news_id: row.news_id title: row.title summary: summary source_url: row.source_url
-            published_at: row.published_at retrieved_at: row.retrieved_at evidence_kind: row.evidence_kind
-            timestamp_kind: row.timestamp_kind summary_truncated: truncated references: row.references
-            content_key: tracking_evidence_key(row)})
-    }
+    for row in rows { evidence.push(tracking_snapshot_evidence(row)) }
     let previous = nil
     // Old per-item context is restricted to exactly the same target set/version.
     for i in tracking_cache.runs.len() {
@@ -120,12 +129,7 @@ fn tracking_snapshot(rows, targets){
     }
     let decisions = []
     for item in topic_records.decisions {
-        let relevant = false
-        if item["kind"] == "insight" {
-            for topic in targets.topics { if item.target_type == "topic" && item.target_id == topic.topic_id && item.target_version == topic.version { relevant = true } }
-            for schedule in targets.schedules { if item.target_type == "schedule" && item.target_id == schedule.schedule_id && item.target_version == schedule.version { relevant = true } }
-        } else { for schedule in targets.schedules { if schedule.schedule_id == item.schedule_id { relevant = true } } }
-        if relevant { decisions.push(item) }
+        if tracking_decision_matches(item, targets) { decisions.push(item) }
     }
     let omitted_decisions = max(0, decisions.len() - 12)
     while decisions.len() > 12 { decisions.remove(0) }
@@ -139,5 +143,5 @@ fn tracking_snapshot(rows, targets){
 fn tracking_input_key(snapshot){
     let evidence = [] for item in snapshot.evidence { evidence.push({news_id: item.news_id content_key: item.content_key body_key: item["body_key"]}) }
     {context: snapshot.context_key evidence: evidence decisions: snapshot.decisions
-        topics: snapshot.topics schedules: snapshot.schedules omitted_targets: snapshot.omitted_targets omitted_candidates: snapshot.omitted_candidates revision: tracking_prompt_revision}.to_json()
+        topics: snapshot.topics schedules: snapshot.schedules check_scope: snapshot["check_scope"] omitted_targets: snapshot.omitted_targets omitted_candidates: snapshot.omitted_candidates revision: tracking_prompt_revision}.to_json()
 }

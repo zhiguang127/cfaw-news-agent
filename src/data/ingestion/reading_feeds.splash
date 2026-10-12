@@ -1,14 +1,29 @@
 // Publisher RSS adapters preserve body HTML separately from publisher summaries.
 // The host's generic feed parser shortens all descriptions to 280 characters.
 fn reading_feed_field(xml, tag){
-    let parts = xml.split("<" + tag + ">")
-    if parts.len() < 2 { return "" }
-    let value = parts[1].split("</" + tag + ">")[0].trim()
+    let exact = xml.split("<" + tag + ">")
+    let value = ""
+    if exact.len() > 1 { value = exact[1].split("</" + tag + ">")[0].trim() }
+    else {
+        let parts = xml.split("<" + tag)
+        if parts.len() < 2 { return "" }
+        // Atom attributes need the fallback; ordinary RSS keeps its fast path.
+        for index part in parts {
+            if index == 0 { continue }
+            if regex("^(>|[ \\t\\r\\n])").test(part) {
+                value = part.split("</" + tag + ">")[0].replace(regex("^[^>]*>"), "").trim()
+                break
+            }
+        }
+    }
     if regex("^<!\\[CDATA\\[").test(value) {
         value = value.strip_prefix("<![CDATA[").strip_suffix("]]> ").strip_suffix("]]>")
     } else {
         // XML text encodes HTML markup; decode the XML layer only once.
-        value = value.replace(regex("&lt;", "g"), "<").replace(regex("&gt;", "g"), ">").replace(regex("&quot;", "g"), "\"").replace(regex("&apos;", "g"), "'").replace(regex("&amp;", "g"), "&")
+        if regex("&(?:lt|gt|quot|apos|amp);").test(value) {
+            let decoded = ("<div>" + value + "</div>").parse_html().query("div[0]")
+            if decoded != nil { value = decoded.text }
+        }
     }
     value.trim()
 }
@@ -21,15 +36,36 @@ fn reading_feed_text(html){
 }
 fn reading_feed_items(body, source){
     let items = []
-    for i chunk in body.split("<item") {
+    let limit = news_config.items_per_source
+    if record_number(source["max_items"]) { limit = min(limit, source.max_items) }
+    let entry_tag = "item"
+    if source.kind == "atom" { entry_tag = "entry" }
+    for i chunk in body.split("<" + entry_tag) {
         if i == 0 { continue }
-        if items.len() >= news_config.items_per_source { break }
-        let xml = chunk.split("</item>")[0]
+        if items.len() >= limit { break }
+        let xml = chunk.split("</" + entry_tag + ">")[0]
+        // Expreview writes hour-only numeric zones (+08). The native parser
+        // treats these as UTC; expand this publisher's zone before parsing.
+        if source["pubdate_short_zone"] == true {
+            let date = reading_feed_field(xml, "pubDate")
+            let parts = date.split(" ")
+            let zone = parts[parts.len() - 1]
+            if regex("^[+-][0-9]{2}$").test(zone) {
+                let corrected = date.strip_suffix(zone) + zone + "00"
+                xml = xml.replace(date, corrected)
+            }
+        }
         // Preserve the pinned native parser's URL/date handling per entry.
-        let parsed = ("<rss><channel><item" + xml + "</item></channel></rss>").parse_feed("rss")
+        let document = "<rss><channel><item" + xml + "</item></channel></rss>"
+        // Internal parser envelope: native parse_feed identifies Atom by the
+        // feed/entry elements, so no XML namespace or external asset is needed.
+        if source.kind == "atom" { document = "<feed><entry" + xml + "</entry></feed>" }
+        let parsed = document.parse_feed(source.kind)
         if parsed == nil { continue }
         if parsed.len() == 0 { continue }
         let item = parsed[0]
+        if source["pubdate_short_zone"] == true { item.timestamp_parser_revision = 1 }
+        if source["feed_image"] == false { item.image = "" }
         item.summary = ""
         if source["summary_field"] != "none" { item.summary = reading_feed_text(reading_feed_field(xml, source.summary_field)) }
         let html = ""
@@ -38,7 +74,51 @@ fn reading_feed_items(body, source){
         item.body_truncated = false
         if html.len() > 160000 { item.body_html = "" item.body_truncated = true }
         item.body_origin = "publisher_rss"
+        if source.kind == "atom" {
+            item.publisher_byline = reading_feed_text(reading_feed_field(xml, "name"))
+            item.publisher_license = reading_feed_text(reading_feed_field(xml, "rights"))
+            item.body_origin = "publisher_atom"
+        }
         items.push(item)
     }
     items
+}
+
+// Native callbacks have a 64 ms budget. Parse one publisher entry per slice;
+// cancel with the refresh generation instead of publishing a partial old feed.
+fn reading_feed_parse_async(body, source, retrieved_at, generation, complete){
+    mod.gc.run()
+    if !record_string(body) || !regex("<(rss|feed|rdf:RDF)([ >\\r\\n\\t])").test(body) { complete(nil) return }
+    let tag = "item"
+    if source.kind == "atom" { tag = "entry" }
+    let limit = news_config.items_per_source
+    if record_number(source["max_items"]) { limit = min(limit, source.max_items) }
+    let chunks = body.split("<" + tag)
+    chunks[0] = ""
+    let bounded = []
+    for i chunk in chunks { if i > 0 && bounded.len() < limit { bounded.push(chunk) } }
+    // Do not retain entries beyond the display limit in callback scopes.
+    chunks = [] body = ""
+    let work = {chunks: bounded tag: tag index: 0 rows: [] source: source
+        retrieved_at: retrieved_at generation: generation limit: limit complete: complete}
+    start_timeout(0.01, || reading_feed_parse_step(work))
+}
+fn reading_feed_parse_step(work){
+    if work.generation != feed_generation { return }
+    // Publisher HTML/native parser temporaries accumulate across callbacks
+    // on the host's growth-only GC. Reclaim before parsing another entry.
+    mod.gc.run()
+    if work.index >= work.chunks.len() || work.rows.len() >= work.limit {
+        work.chunks = []
+        work.complete(work.rows)
+        return
+    }
+    let chunk = work.chunks[work.index].split("</" + work.tag + ">")[0]
+    let document = "<rss><channel><item" + chunk + "</item></channel></rss>"
+    if work.source.kind == "atom" { document = "<feed><entry" + chunk + "</entry></feed>" }
+    let rows = news_parse(document, work.source, work.retrieved_at)
+    if rows != nil { for row in rows { work.rows.push(row) } }
+    work.chunks[work.index] = ""
+    work.index = work.index + 1
+    start_timeout(0.01, || reading_feed_parse_step(work))
 }

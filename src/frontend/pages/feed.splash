@@ -1,8 +1,8 @@
 let FeedFilters = View{width: Fill height: Fit flow: Down
     categories := View{width: Fill height: 40 flow: Right padding: Inset{left: 18 right: 18 top: 4 bottom: 4} spacing: 5 on_render: || {
         for item in category_filters {
-            if category == item.id { FilterActive{height: 32 text: item.label draw_bg.color: #xeeecfc draw_bg.border_radius: 16.0 draw_text.color: editorial_accent on_click: || pick_category(item.id)} }
-            else { Filter{height: 32 text: item.label draw_text.color: editorial_muted on_click: || pick_category(item.id)} }
+            if category == item.id { FilterActive{width: Fill height: 32 text: item.label draw_bg.color: #xeeecfc draw_bg.border_radius: 16.0 draw_text.color: editorial_accent on_click: || pick_category(item.id)} }
+            else { Filter{width: Fill height: 32 text: item.label draw_text.color: editorial_muted on_click: || pick_category(item.id)} }
         }
     }}
 }

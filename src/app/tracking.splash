@@ -10,18 +10,68 @@ let tracking_message = "确认你的意图后，检查相关变化与日程影�
 let tracking_auto_timer = nil
 let tracking_check_pending = false
 let tracking_pending_run = nil
+let tracking_preparation_timer = nil
+let tracking_preparation_info = {phase: "idle" scanned: 0 total: 0 ranked: 0 matched: 0}
+let tracking_preparation_diagnostic_error = ""
+let tracking_save_active = false let tracking_save_generation = 0 let tracking_save_work = nil
+fn tracking_preparation_progress(generation, progress){
+    if generation != tracking_recall_generation { return }
+    tracking_preparation_info = progress
+    // Bounded local diagnostics, without goals, schedules, titles or prompts.
+    try { fs.write("tracking_preparation_v1.json", {generation: generation status: tracking_status phase: progress.phase
+        scanned: progress.scanned total: progress.total ranked: progress.ranked matched: progress.matched
+        elapsed_seconds: time_now() - tracking_started_at}.to_json()) }
+    { tracking_preparation_diagnostic_error = "准备进度记录未保存" }
+    if tracking_status == "recalling" {
+        if progress.phase == "rank" { tracking_message = "正在排序相关新闻；已检查 " + progress.scanned + "/" + progress.total + " 条" }
+        else { tracking_message = "正在寻找与你意图有关的新消息；已检查 " + progress.scanned + "/" + progress.total + " 条" }
+        render_analysis_controls()
+    }
+}
+fn tracking_preparation_clear(){
+    if tracking_preparation_timer != nil { stop_timer(tracking_preparation_timer) tracking_preparation_timer = nil }
+    if tracking_snapshot_work != nil { tracking_prepare_release(tracking_snapshot_work) }
+}
+fn tracking_preparation_arm(generation){
+    tracking_preparation_timer = start_timeout(tracking_config.preparation_timeout_seconds, || {
+        tracking_preparation_fail(generation, "failed", "准备超时（" + tracking_preparation_info.phase + "，已检查 " + tracking_preparation_info.scanned + "/" + tracking_preparation_info.total + " 条）；已结束本次检查", "timeout")
+    })
+}
+fn tracking_preparation_fail(generation, status, message, category){
+    if generation != tracking_recall_generation { return }
+    if tracking_status != "recalling" && tracking_status != "enriching" { return }
+    tracking_preparation_clear()
+    tracking_recall_generation = tracking_recall_generation + 1 evidence_generation = evidence_generation + 1
+    tracking_status = status tracking_message = message
+    check_states_record_reason(tracking_recall_targets, "failed", category, false, message)
+    tracking_ui_update()
+}
+fn tracking_preparation_current(generation, context_key){
+    if generation != tracking_recall_generation { return false }
+    if intent_open || context_key != tracking_context_key() {
+        tracking_preparation_fail(generation, "stale", "关注或日程已变化，本次检查已停止；请按当前关注重新检查", "stale_context")
+        return false
+    }
+    true
+}
 fn tracking_article_key(row){
     {title: row.title summary: row.summary source_url: row.source_url published_at: row.published_at
         timestamp_kind: row.timestamp_kind evidence_kind: row.evidence_kind}.to_json()
 }
+let tracking_merged_index_rows = nil
+let tracking_merged_index = {}
 fn tracking_current_row(id){
     let newest = analysis_current_row(id)
-    for row in app_feed_rows {
-        if row.news_id == id {
-            // Source callbacks may precede the asynchronous merged-feed build.
-            if newest != nil { if tracking_article_key(newest) != tracking_article_key(row) { return newest } }
-            return row
-        }
+    if tracking_merged_index_rows != app_feed_rows {
+        tracking_merged_index_rows = app_feed_rows
+        tracking_merged_index = {}
+        for row in app_feed_rows { tracking_merged_index[row.news_id] = row }
+    }
+    let row = tracking_merged_index[id]
+    if row != nil {
+        // Source callbacks may precede the asynchronous merged-feed build.
+        if newest != nil { if tracking_article_key(newest) != tracking_article_key(row) { return newest } }
+        return row
     }
     newest
 }
@@ -118,41 +168,116 @@ fn tracking_item_reminders(value){
     }
     out
 }
+let tracking_display_values_cache = nil
+let tracking_display_work = nil
+fn tracking_display_key(){
+    let runs = [] for run in tracking_cache.runs { runs.push(run["task_id"]) }
+    tracking_context_key() + ":" + feed_data_revision + ":" + topic_records.revision + ":" + tracking_cache.revision + ":" + analysis_articles_revision + ":" + runs.to_json()
+}
 fn tracking_current_values(){
-    let values = {} let covered = {} let context_key = tracking_context_key()
-    for i in tracking_cache.runs.len() {
-        let run = tracking_cache.runs[tracking_cache.runs.len() - 1 - i]
-        let current = run.snapshot.prompt_revision == tracking_prompt_revision && tracking_snapshot_current_in(run.snapshot, context_key)
-        for item in run.result.items {
-            let remaining = {} let any = false
-            for topic in run.snapshot.topics {
-                let key = item.news_id + ":topic:" + topic.topic_id
-                if covered[key] != true { remaining[topic.topic_id] = true any = true } covered[key] = true
-            }
-            for interest in run.snapshot.legacy_interests {
-                let key = item.news_id + ":interest:" + interest.interest_id
-                if covered[key] != true { remaining[interest.interest_id] = true any = true } covered[key] = true
-            }
-            for schedule in run.snapshot.schedules {
-                let key = item.news_id + ":schedule:" + schedule.schedule_id
-                if covered[key] != true { remaining[schedule.schedule_id] = true any = true } covered[key] = true
-            }
-            if !current || !any { continue }
-            // A later check of another target cannot erase a known relationship.
-            let candidate = item.to_json().parse_json()
-            candidate.topic_ids.retain(|id| remaining[id] == true)
-            candidate.legacy_interest_ids.retain(|id| remaining[id] == true)
-            candidate.schedule_impacts.retain(|impact| remaining[impact["schedule_id"]] == true)
-            if candidate.relevance == "related" && candidate.topic_ids.len() + candidate.legacy_interest_ids.len() == 0 { candidate.relevance = "unrelated" }
-            let value = {item: candidate run: run}
-            let existing = values[item.news_id]
-            if existing == nil { values[item.news_id] = value }
-            else if tracking_item_reminders(existing).len() == 0 {
-                if tracking_item_reminders(value).len() > 0 || (existing.item.relevance != "related" && value.item.relevance == "related") { values[item.news_id] = value }
-            }
+    if tracking_cache.runs.len() == 0 { tracking_display_work = nil return {} }
+    let key = tracking_display_key()
+    let cached = tracking_display_values_cache
+    if cached != nil && cached.key == key && cached.rows == app_feed_rows && time_now() < cached.expires_at { return cached.values }
+    if tracking_display_work == nil || tracking_display_work.key != key || tracking_display_work.rows != app_feed_rows {
+        let work = {key: key rows: app_feed_rows runs: tracking_cache.runs index: tracking_cache.runs.len() - 1
+            context_key: tracking_context_key() values: {} covered: {} expires_at: time_now() + news_config.cache_stale_seconds
+            run: nil phase: "validate" current: false item_index: 0}
+        tracking_display_work = work
+        start_timeout(0.01, || tracking_display_step(work))
+    }
+    // Discard stale badges during recovery. Browsing does not wait for these
+    // optional annotations, and write actions retain their strict live guard.
+    {}
+}
+fn tracking_display_step(work){
+    if tracking_display_work != work { return }
+    if work.key != tracking_display_key() || work.rows != app_feed_rows { tracking_display_work = nil return }
+    mod.gc.run()
+    if work.index < 0 && work.run == nil {
+        tracking_display_values_cache = {key: work.key rows: work.rows expires_at: work.expires_at values: work.values}
+        tracking_display_work = nil
+        start_timeout(0.01, || tracking_ui_update())
+        return
+    }
+    if work.run == nil {
+        work.run = work.runs[work.index] work.index = work.index - 1
+        work.phase = "validate" work.current = false work.item_index = 0
+    }
+    // Validation and projection must not share the native 64 ms entry.
+    // Queue the next slice first; a lost read-only annotation cannot block news.
+    start_timeout(0.01, || tracking_display_step(work))
+    let run = work.run
+    if work.phase == "validate" {
+        work.phase = "items"
+        work.current = run.snapshot.prompt_revision == tracking_prompt_revision && tracking_snapshot_current_in(run.snapshot, work.context_key)
+        return
+    }
+    if work.item_index < run.result.items.len() {
+        let item = run.result.items[work.item_index] work.item_index = work.item_index + 1
+        tracking_display_add_item(work, run, item, work.current)
+        return
+    }
+    if work.current {
+        for e in run.snapshot.evidence {
+            let row = tracking_current_row(e.news_id)
+            if row != nil { work.expires_at = min(work.expires_at, row.retrieved_at + news_config.cache_stale_seconds) }
+            if record_number(e["body_retrieved_at"]) { work.expires_at = min(work.expires_at, e.body_retrieved_at + news_config.cache_stale_seconds) }
         }
     }
-    values
+    work.run = nil
+}
+fn tracking_display_add_item(work, run, item, current){
+    let values = work.values let covered = work.covered
+    let remaining = {} let follow_remaining = {} let any = false
+    for topic in run.snapshot.topics {
+        let key = item.news_id + ":topic:" + topic.topic_id
+        if covered[key] != true { remaining[topic.topic_id] = true follow_remaining["topic:" + topic.topic_id] = true any = true } covered[key] = true
+    }
+    for interest in run.snapshot.legacy_interests {
+        let key = item.news_id + ":interest:" + interest.interest_id
+        if covered[key] != true { remaining[interest.interest_id] = true follow_remaining["interest:" + interest.interest_id] = true any = true } covered[key] = true
+    }
+    for schedule in run.snapshot.schedules {
+        let key = item.news_id + ":schedule:" + schedule.schedule_id
+        if covered[key] != true { remaining[schedule.schedule_id] = true any = true } covered[key] = true
+    }
+    if !any || !current { return }
+    // A later check of another target cannot erase a known relationship.
+    let candidate = item.to_json().parse_json()
+    candidate.topic_ids.retain(|id| remaining[id] == true)
+    candidate.legacy_interest_ids.retain(|id| remaining[id] == true)
+    candidate.schedule_impacts.retain(|impact| remaining[impact["schedule_id"]] == true)
+    if candidate.relevance == "related" && candidate.topic_ids.len() + candidate.legacy_interest_ids.len() == 0 { candidate.relevance = "unrelated" }
+    // A missing key means this target has not been checked. Negative judgments
+    // are retained separately from whichever item supplies a schedule reminder.
+    let judgments = {} let reason = ""
+    for topic in run.snapshot.topics {
+        if follow_remaining["topic:" + topic.topic_id] == true {
+            let related = candidate.relevance == "related" && record_contains(candidate.topic_ids, topic.topic_id)
+            judgments["topic:" + topic.topic_id] = related
+            if related { reason = candidate.why_related }
+        }
+    }
+    for interest in run.snapshot.legacy_interests {
+        if follow_remaining["interest:" + interest.interest_id] == true {
+            let related = candidate.relevance == "related" && record_contains(candidate.legacy_interest_ids, interest.interest_id)
+            judgments["interest:" + interest.interest_id] = related
+            if related { reason = candidate.why_related }
+        }
+    }
+    let value = {item: candidate run: run follow_judgments: judgments follow_why_related: reason}
+    let existing = values[item.news_id]
+    if existing == nil { values[item.news_id] = value return }
+    if record_object(existing["follow_judgments"]) {
+        for key judgment in existing.follow_judgments { judgments[key] = judgment }
+    }
+    if record_string(existing["follow_why_related"]) && existing.follow_why_related != "" { reason = existing.follow_why_related }
+    value.follow_why_related = reason
+    existing.follow_judgments = judgments existing.follow_why_related = reason
+    if tracking_item_reminders(existing).len() == 0 {
+        if tracking_item_reminders(value).len() > 0 || (existing.item.relevance != "related" && value.item.relevance == "related") { values[item.news_id] = value }
+    }
 }
 fn tracking_active_reminders(){
     let reminders = [] let seen = {}
@@ -211,68 +336,178 @@ fn tracking_publish(snapshot, key, result, task_id){
     error
 }
 fn tracking_retry_save(){
-    if tracking_pending_run == nil { return }
+    if tracking_pending_run == nil || tracking_in_progress() { return }
     let run = tracking_pending_run
-    let error = tracking_publish(run.snapshot, run.input_key, run.result, run.task_id)
-    if error == "" { tracking_status = run.result.outcome tracking_message = "结果已保存" } else { tracking_message = error }
+    tracking_status = "publishing" tracking_message = "正在重试保存结果…"
+    tracking_publish_async(run, || tracking_snapshot_current(run.snapshot), fn(error){
+        tracking_publication_apply(run, error, nil)
+    })
     tracking_ui_update()
 }
-fn tracking_prompt_snapshot(snapshot){
-    // Deep-copy once before projection: do not alias mutable domain arrays in
-    // a payload that outlives this callback on the host's script heap.
-    let payload = snapshot.to_json().parse_json()
-    payload.context_key = nil payload.previous_result = nil
+fn tracking_publish_async(run, current, complete){
+    tracking_pending_run = run tracking_save_active = true tracking_save_generation = tracking_save_generation + 1
+    let work = {run: run current: current complete: complete generation: tracking_save_generation prepared: false done: false timer: nil}
+    tracking_save_work = work
+    start_timeout(0.01, || tracking_publish_prepare(work))
+    // Covers an interruption before the storage owner has created its timer.
+    work.timer = start_timeout(tracking_config.publication_timeout_seconds, || {
+        tracking_publish_finish(work, "保存未完成，结果保留，可重试保存", nil)
+    })
+}
+fn tracking_publish_finish(work, error, next){
+    if work.done || work.generation != tracking_save_generation { return }
+    work.done = true tracking_save_active = false
+    if work.timer != nil { stop_timer(work.timer) work.timer = nil }
+    if error == "" { tracking_cache = next tracking_pending_run = nil }
+    let complete = work.complete
+    work.current = nil work.complete = nil work.run = nil
+    tracking_save_work = nil
+    start_timeout(0.01, || complete(error))
+}
+fn tracking_cancel_save(){
+    if tracking_save_work == nil || !tracking_save_active { return }
+    tracking_publish_finish(tracking_save_work, "保存已停止，结果保留，可重试保存", nil)
+}
+fn tracking_publish_prepare(work){
+    if work.done || work.prepared || work.generation != tracking_save_generation { return }
+    start_timeout(0.01, || tracking_publish_prepare(work))
+    mod.gc.run()
+    if !work.current() { tracking_publish_finish(work, "结果已过期或保存已停止，未保存", nil) return }
+    for old in tracking_cache.runs {
+        if old.task_id == work.run.task_id {
+            if old.input_key != work.run.input_key || old.result.to_json() != work.run.result.to_json() { tracking_publish_finish(work, "已有同任务的不同结果，未覆盖", nil) }
+            else { tracking_publish_cache(work, tracking_cache) }
+            return
+        }
+    }
+    // Stored runs are immutable. Copy the collection, avoiding a deep JSON
+    // clone of twelve complete snapshots in the same callback.
+    let runs = [] for old in tracking_cache.runs { runs.push(old) } runs.push(work.run)
+    while runs.len() > tracking_config.max_runs { runs.remove(0) }
+    let next = {schema_version: 1 revision: tracking_cache.revision + 1 runs: runs}
+    tracking_publish_cache(work, next)
+}
+fn tracking_publish_cache(work, next){
+    work.prepared = true
+    tracking_cache_save(next, || !work.done && work.generation == tracking_save_generation && work.current(), fn(error){
+        tracking_publish_finish(work, error, next)
+    })
+}
+fn tracking_publication_apply(run, error, acknowledged){
+    let saved = error == ""
+    if saved { tracking_status = run.result.outcome tracking_message = run.result.explanation }
+    else { tracking_status = "failed" tracking_message = error }
+    analysis_state = if saved {"succeeded"} else {"failed"}
+    analysis_error = error analysis_error_category = if saved {""} else {"storage_error"}
+    // Release the task only after verified persistence and domain state update.
+    if acknowledged != nil { acknowledged(saved, error, analysis_error_category) }
+    let generation = tracking_save_generation
+    let message = tracking_message
+    start_timeout(0.01, || {
+        if generation != tracking_save_generation { return }
+        check_states_record_reason(run.snapshot, if saved {"checked"} else {"failed"}, if saved {""} else {"storage_error"}, saved, message)
+    })
+    start_timeout(0.01, || tracking_ui_update())
+}
+fn tracking_prompt_base(snapshot){
+    // Copy only context the model uses, without cloning bodies, fingerprints,
+    // full prior results or user fact records merely to delete them afterwards.
+    let base = {schema_version: snapshot.schema_version topics: snapshot.topics schedules: snapshot.schedules
+        legacy_interests: snapshot.legacy_interests evidence: [] previous_result: nil decisions: []
+        omitted_targets: snapshot.omitted_targets omitted_candidates: snapshot.omitted_candidates
+        omitted_decisions: snapshot.omitted_decisions context_key: nil prompt_revision: snapshot.prompt_revision
+        previous_by_target: [] check_scope: snapshot["check_scope"]}
+    let payload = base.to_json().parse_json()
     for topic in payload.topics {
         topic.original_input = nil topic.supplement = nil topic.recall_rules = nil
         topic.created_at = nil topic.updated_at = nil
     }
     payload.reference_format = "evidence-labels-v1"
-    for i evidence in payload.evidence {
-        evidence.content_key = nil evidence.body_key = nil
-        evidence.news_id = "E" + (i + 1)
-        evidence.allowed_paragraph_ids = []
-        if record_array(evidence["paragraphs"]) {
-            for paragraph in evidence.paragraphs { evidence.allowed_paragraph_ids.push(paragraph.paragraph_id) }
-        }
-        evidence.can_quote_body = evidence.allowed_paragraph_ids.len() > 0
-    }
+    if tracking_uses_quote_choices(snapshot.prompt_revision) { payload.quote_format = "paragraph-choices-v1" }
     payload.reschedule_enabled = tracking_config.enable_reschedule_proposals
-    for previous in payload.previous_by_target {
-        for insight in previous.insights {
-            insight.summary_truncated = insight.summary.to_chars().len() > 250
-            insight.summary = bm25_prefix(insight.summary, 250)
-            insight.uncertainties = nil insight.evidence_refs = nil insight.next_step = nil insight.reschedule = nil
-            // Previous-run evidence is not a current candidate citation pool.
-            insight.evidence_ids = nil
+    return payload
+}
+fn tracking_prompt_evidence(evidence, index, revision){
+    let ids = [] let paragraphs = []
+    if record_array(evidence["paragraphs"]) {
+        for paragraph in evidence.paragraphs {
+            ids.push(paragraph.paragraph_id)
+            if tracking_uses_quote_choices(revision) {
+                paragraphs.push({paragraph_id: paragraph.paragraph_id quote_choices: tracking_quote_choices(paragraph)})
+            } else { paragraphs.push(paragraph.to_json().parse_json()) }
         }
+        nil
     }
-    // Native decisions retain full fact/version checks; the model receives the
-    // latest state per issue and a labeled excerpt rather than duplicate bodies.
-    let decisions = [] let seen = {}
-    for i in payload.decisions.len() {
-        let d = payload.decisions[payload.decisions.len() - 1 - i]
-        let issue = d["reminder_id"]
-        if d["kind"] == "insight" { issue = d.target_type + ":" + d.target_id + ":" + d.target_version + ":" + d.issue_key }
+    return {news_id: "E" + (index + 1) title: evidence.title summary: evidence.summary
+        source_url: evidence.source_url published_at: evidence.published_at timestamp_kind: evidence.timestamp_kind
+        summary_truncated: evidence.summary_truncated paragraphs: paragraphs allowed_paragraph_ids: ids
+        can_quote_body: ids.len() > 0 available_evidence: if ids.len() > 0 {"body_excerpt"} else {if evidence.summary.trim() != "" {"title_summary"} else {"title_only"}}
+        body_error: evidence["body_error"] body_truncated: evidence["body_truncated"]}
+}
+fn tracking_prompt_previous(previous){
+    let projected = previous.to_json().parse_json()
+    for insight in projected.insights {
+        insight.summary_truncated = insight.summary.to_chars().len() > 250
+        insight.summary = bm25_prefix(insight.summary, 250)
+        insight.uncertainties = nil insight.evidence_refs = nil insight.next_step = nil insight.reschedule = nil
+        insight.evidence_ids = nil
+    }
+    return projected
+}
+fn tracking_prompt_decision(d){
+    if d["kind"] == "insight" {
+        let excerpt = "" if d.evidence_facts.len() > 0 { excerpt = bm25_prefix(d.evidence_facts[0], 800) }
+        return {kind: d.kind target_type: d.target_type target_id: d.target_id target_version: d.target_version
+            issue_key: d.issue_key state: d.state decided_at: d.decided_at baseline_excerpt: excerpt
+            baseline_truncated: true evidence_facts: nil}
+    }
+    return {reminder_id: d.reminder_id goal_key: d.goal_key schedule_id: d.schedule_id schedule_version: d.schedule_version
+        state: d.state decided_at: d.decided_at evidence: nil}
+}
+fn tracking_decision_issue(d){
+    if d["kind"] == "insight" { return d.target_type + ":" + d.target_id + ":" + d.target_version + ":" + d.issue_key }
+    d["reminder_id"]
+}
+fn tracking_prompt_snapshot(snapshot){
+    let payload = tracking_prompt_base(snapshot)
+    for i evidence in snapshot.evidence { payload.evidence.push(tracking_prompt_evidence(evidence, i, snapshot.prompt_revision)) }
+    for previous in snapshot.previous_by_target { payload.previous_by_target.push(tracking_prompt_previous(previous)) }
+    let seen = {}
+    for i in snapshot.decisions.len() {
+        let d = snapshot.decisions[snapshot.decisions.len() - 1 - i]
+        let issue = tracking_decision_issue(d)
         if seen[issue] == true { continue } seen[issue] = true
-        if d["kind"] == "insight" {
-            d.baseline_excerpt = ""
-            if d.evidence_facts.len() > 0 { d.baseline_excerpt = bm25_prefix(d.evidence_facts[0], 800) }
-            d.baseline_truncated = true d.evidence_facts = nil
-        } else { d.evidence = nil }
-        decisions.push(d)
+        payload.decisions.push(tracking_prompt_decision(d))
     }
-    payload.decisions = decisions
     tracking_prompt_work = payload
-    payload
+    return payload
 }
 
-fn tracking_start(row){
+fn tracking_start(row, verification = nil, target_override = nil){
     if tracking_in_progress() || octos_testing || analysis_needs_reopen { tracking_message = "助手忙碌或中断未确认，请稍后重试" tracking_ui_update() return }
     if busy { tracking_message = "新闻正在更新，整轮结束后再检查" tracking_ui_update() return }
     let targets = tracking_targets()
+    if target_override != nil { targets = target_override }
+    if verification != nil {
+        if !tracking_run_current(verification.run) { notice("目标或依据已变化，请重新检查关注更新") return }
+        targets = {topics: verification.run.snapshot.topics schedules: verification.run.snapshot.schedules
+            legacy_interests: verification.run.snapshot.legacy_interests omitted_targets: verification.run.snapshot.omitted_targets}
+    }
     tracking_recall_targets = targets
     if targets.topics.len() + targets.schedules.len() + targets.legacy_interests.len() == 0 { tracking_status = "no_targets" tracking_message = "先保存关注或有效日程" tracking_ui_update() return }
     let rows = app_feed_rows if row != nil { rows = [row] }
+    let verification_ids = []
+    if verification != nil {
+        rows = []
+        for old in verification.run.snapshot.evidence { let found = tracking_current_row(old.news_id) if found != nil { rows.push(found) } }
+        for id in verification.insight.evidence_ids {
+            let old = tracking_find(verification.run.snapshot.evidence, "news_id", id)
+            if old != nil && old.paragraphs.len() == 0 && verification_ids.len() < tracking_config.max_evidence_requests { verification_ids.push(id) }
+        }
+        // Explicit user retry can bypass the short failed-read cooldown.
+        for id in verification_ids { analysis_articles.retain(|entry| entry.news_id != id) }
+        if verification_ids.len() > 0 { analysis_articles_revision = analysis_articles_revision + 1 }
+    }
     tracking_recall_generation = tracking_recall_generation + 1
     let generation = tracking_recall_generation
     let context_key = tracking_context_key()
@@ -280,57 +515,72 @@ fn tracking_start(row){
     tracking_started_at = started tracking_enrichment_seconds = 0
     tracking_status = "recalling" tracking_message = "正在寻找与你意图有关的新消息…"
     check_states_record(targets, "pending", "", false)
-    bm25_recall(rows, targets, || generation == tracking_recall_generation && context_key == tracking_context_key() && !intent_open, fn(candidates){
+    tracking_preparation_clear()
+    tracking_preparation_arm(generation)
+    tracking_preparation_progress(generation, {phase: "terms" scanned: 0 total: rows.len() ranked: 0 matched: 0})
+    bm25_recall(rows, targets, || tracking_preparation_current(generation, context_key), fn(candidates){
         tracking_recall_candidates = candidates
         tracking_recall_seconds = time_now() - started
-        tracking_status = "enriching" tracking_message = "正在准备有界证据；最多补充两篇来源正文"
+        tracking_status = "enriching" tracking_message = "正在读取来源已提供的正文，并补充最多两篇相关网页"
+        tracking_preparation_progress(generation, {phase: "evidence" scanned: rows.len() total: rows.len() ranked: candidates.rows.len() matched: candidates.matched})
         tracking_ui_update()
         let enrichment_started = time_now()
-        let enrich_rows = []
-        if row != nil { enrich_rows = candidates.rows }
-        else {
-            for candidate in candidates.rows {
-                if !regex("[0-9]{4}[-/年]").test(candidate.title + " " + candidate.summary) { continue }
-                for schedule in tracking_recall_targets.schedules {
-                    if record_string(schedule["location"]) && schedule.location.trim() != "" {
-                        if regex(literal_pattern(schedule.location)).test(candidate.title + " " + candidate.summary) { enrich_rows.push(candidate) break }
-                    }
-                }
-            }
+        let enrich_rows = evidence_select(candidates.rows, tracking_recall_targets, row != nil || verification != nil)
+        if verification != nil {
+            let preferred = [] let seen = {}
+            for id in verification_ids { let candidate = tracking_find(candidates.rows, "news_id", id) if candidate != nil { preferred.push(candidate) seen[id] = true } }
+            for candidate in enrich_rows { if seen[candidate.news_id] != true { preferred.push(candidate) } }
+            enrich_rows = preferred
         }
-        evidence_enrich(enrich_rows, || generation == tracking_recall_generation && context_key == tracking_context_key() && !intent_open, || {
+        evidence_enrich(enrich_rows, || tracking_preparation_current(generation, context_key), || {
             tracking_enrichment_seconds = time_now() - enrichment_started
-            tracking_start_candidates(tracking_recall_candidates, tracking_recall_targets)
+            tracking_preparation_progress(generation, {phase: "snapshot" scanned: rows.len() total: rows.len() ranked: candidates.rows.len() matched: candidates.matched})
+            tracking_start_candidates(tracking_recall_candidates, tracking_recall_targets, verification != nil)
         })
-    })
+    }, fn(progress){ tracking_preparation_progress(generation, progress) })
     tracking_ui_update()
 }
-fn tracking_start_candidates(candidates, targets){
-    if analysis_busy || octos_testing || analysis_needs_reopen { return }
+fn tracking_start_candidates(candidates, targets, verification = false){
+    if analysis_busy || octos_testing || analysis_needs_reopen {
+        tracking_preparation_clear()
+        tracking_status = "failed" tracking_message = "助手忙碌或中断未确认，本次检查已结束，请稍后重试"
+        check_states_record_reason(targets, "failed", "service_unavailable", false, tracking_message)
+        tracking_ui_update() return
+    }
     if candidates.rows.len() == 0 {
+        tracking_preparation_clear()
         tracking_status = "no_candidates" tracking_message = "无候选新闻，本次未调用助手"
+        if targets.topics.len() > 0 { tracking_message = "本轮标题未发现匹配候选，未调用助手；可刷新新闻或调整关注关键词，不能据此断言没有新动态" }
         if candidates.expired > 0 { tracking_status = "stale" tracking_message = "候选证据已过期，请刷新来源" }
         check_states_record(targets, if candidates.expired > 0 {"failed"} else {"no_candidates"}, if candidates.expired > 0 {"stale_evidence"} else {""}, candidates.expired == 0)
         tracking_ui_update() return
     }
-    let snapshot = tracking_snapshot(candidates.rows, targets) snapshot.omitted_candidates = candidates.omitted_candidates
-    // Shrink whole records, never truncate serialized JSON. Explicit omissions.
-    let payload = tracking_prompt_snapshot(snapshot)
-    while (tracking_prompt + payload.to_json()).to_bytes().len() > tracking_config.max_prompt_bytes - 2048 && snapshot.evidence.len() > 1 {
-        snapshot.evidence.pop() snapshot.omitted_candidates = snapshot.omitted_candidates + 1 payload = tracking_prompt_snapshot(snapshot)
+    // Keep the existing direct candidate entry useful to bounded callers; the
+    // full recall path is already enriching with its original deadline armed.
+    if tracking_status != "enriching" {
+        tracking_preparation_clear()
+        tracking_recall_generation = tracking_recall_generation + 1
+        tracking_recall_targets = targets tracking_started_at = time_now()
+        tracking_status = "enriching"
+        tracking_preparation_arm(tracking_recall_generation)
+        tracking_preparation_progress(tracking_recall_generation, {phase: "snapshot" scanned: candidates.rows.len() total: candidates.rows.len() ranked: candidates.rows.len() matched: candidates.matched})
     }
-    let key = tracking_input_key(snapshot)
-    let decision_key = topic_records.decisions.to_json()
-    for i in tracking_cache.runs.len() {
-        let run = tracking_cache.runs[tracking_cache.runs.len() - 1 - i]
-        if run.input_key == key && tracking_run_current(run) { tracking_status = "no_change" tracking_message = "输入无变化，复用已保存结果；未再次调用助手" check_states_record(snapshot, "checked", "", true) tracking_ui_update() return }
-    }
-    tracking_status = "running" tracking_message = "正在检查 " + snapshot.evidence.len() + " 条候选；未覆盖目标 " + snapshot.omitted_targets + "，候选 " + snapshot.omitted_candidates
-    let error = agent_task_start("tracking_update", snapshot, tracking_prompt + payload.to_json(), || {
+    tracking_prepare_candidates(candidates, targets, verification)
+}
+fn tracking_dispatch_snapshot(snapshot, payload, key, decision_key, prompt){
+    let error = agent_task_start("tracking_update", snapshot, prompt, || {
         if !tracking_snapshot_current(snapshot) { return false }
         topic_records.decisions.to_json() == decision_key
-    }, fn(reply){
+    }, fn(reply, acknowledged = nil){
+        let completed_snapshot = snapshot
+        if reply["snapshot"] != nil && agent_task != nil && agent_task.id == reply.task_id && agent_task.snapshot == reply.snapshot { completed_snapshot = reply.snapshot }
+        let completed_key = key
+        if completed_snapshot != snapshot { completed_key = tracking_input_key(completed_snapshot) }
         if !reply.success {
+            if reply.result != nil && (tracking_pending_run == nil || tracking_pending_run.task_id != reply.task_id) {
+                tracking_pending_run = {task_id: reply.task_id checked_at: time_now() input_key: completed_key snapshot: completed_snapshot result: reply.result}
+            }
+            tracking_save_active = false
             tracking_status = "failed"
             if reply.category == "stale_context" { tracking_status = "stale" }
             if reply.category == "cancelled" { tracking_status = "cancelled" notice(reply.error) }
@@ -338,23 +588,36 @@ fn tracking_start_candidates(candidates, targets){
             tracking_message = reply.error
         }
         else {
-            let error = tracking_publish(snapshot, key, reply.result, reply.task_id)
-            if error != "" { tracking_status = "failed" tracking_message = error notice(error) analysis_state = "failed" analysis_error_category = "storage_error" }
-            else { tracking_status = reply.result.outcome tracking_message = reply.result.explanation notice("") }
+            tracking_status = "publishing"
+            let run = {task_id: reply.task_id checked_at: time_now() input_key: completed_key snapshot: completed_snapshot result: reply.result}
+            let publication_current = || agent_task != nil && agent_task.id == reply.task_id && agent_task.publication_pending && tracking_snapshot_current(snapshot) && tracking_snapshot_current(completed_snapshot) && topic_records.decisions.to_json() == decision_key
+            tracking_publish_async(run, publication_current, fn(error){
+                if agent_task == nil { return }
+                if agent_task.id != reply.task_id || !agent_task.publication_pending { return }
+                tracking_publication_apply(run, error, acknowledged)
+            })
+            return
         }
-        check_states_record_reason(snapshot, if reply.success && tracking_pending_run == nil {"checked"} else {"failed"}, analysis_error_category, reply.success && tracking_pending_run == nil, if reply.success {tracking_message} else {reply.error})
+        check_states_record_reason(completed_snapshot, if reply.success && tracking_pending_run == nil {"checked"} else {"failed"}, analysis_error_category, reply.success && tracking_pending_run == nil, if reply.success {tracking_message} else {reply.error})
         tracking_ui_update()
-    })
+    }, true)
+    // Keep the preparation continuation alive until the Agent owner has
+    // accepted the task. A fresh handoff entry performs no full-evidence scan.
+    tracking_preparation_clear()
     if error != "" { tracking_status = "failed" tracking_message = error }
+    else if analysis_busy {
+        tracking_status = "running" tracking_message = "正在检查 " + snapshot.evidence.len() + " 条候选；未覆盖目标 " + snapshot.omitted_targets + "，候选 " + snapshot.omitted_candidates
+    }
     tracking_ui_update()
 }
 fn tracking_schedule_check(){
+    if follow_check_running { return }
     if agent_preferences.paused { return }
     tracking_check_pending = true
     if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) }
     tracking_auto_timer = start_timeout(tracking_config.auto_check_delay_seconds, || {
         tracking_auto_timer = nil
-        if busy || tracking_in_progress() || octos_testing || analysis_needs_reopen || intent_open || reader_summary.state == "running" { return }
+        if follow_check_running || busy || tracking_in_progress() || octos_testing || analysis_needs_reopen || intent_open || reader_summary.state == "running" { return }
         tracking_check_pending = false
         tracking_start(nil)
     })
@@ -363,7 +626,8 @@ fn tracking_ui_update(){
     render_feed() render_analysis_controls()
     if detail_kind == "story" { ui.story_content.render() }
     if page == "tracking" && tracking_section == "suggestions" && detail_kind == "" { ui.results_content.render() }
+    if page == "tracking" && tracking_section == "topics" && detail_kind == "" { follow_render() }
     if detail_kind == "tracking" { ui.interest_list.render() ui.continuous_controls.render() }
     if detail_kind == "intent" { intent_render() }
 }
-fn tracking_in_progress(){ analysis_busy || tracking_status == "recalling" || tracking_status == "enriching" }
+fn tracking_in_progress(){ analysis_busy || tracking_save_active || tracking_status == "publishing" || tracking_status == "recalling" || tracking_status == "enriching" }

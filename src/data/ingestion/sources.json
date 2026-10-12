@@ -244,6 +244,62 @@
       "reading_feed": true,
       "summary_field": "description",
       "body_field": "content:encoded"
+    },
+    {
+      "id": "expreview",
+      "pubdate_short_zone": true,
+      "label": "超能网",
+      "category": "tech",
+      "language": "zh",
+      "kind": "rss",
+      "enabled": true,
+      "url": "https://www.expreview.com/rss.php",
+      "reading_feed": true,
+      "summary_field": "none",
+      "body_field": "description",
+      "feed_image": false
+    },
+    {
+      "id": "popsci",
+      "label": "Popular Science · 环境与生活",
+      "category": "other",
+      "language": "en",
+      "kind": "rss",
+      "enabled": true,
+      "url": "https://www.popsci.com/category/environment/feed/",
+      "reading_feed": true,
+      "summary_field": "description",
+      "body_field": "content:encoded",
+      "max_items": 8,
+      "feed_image": false
+    },
+    {
+      "id": "conversation",
+      "label": "The Conversation · 科技与社会",
+      "category": "tech",
+      "language": "en",
+      "kind": "atom",
+      "enabled": false,
+      "url": "https://theconversation.com/uk/technology/articles.atom",
+      "reading_feed": true,
+      "summary_field": "summary",
+      "body_field": "content",
+      "max_items": 8,
+      "feed_image": false
+    },
+    {
+      "id": "geekpark",
+      "label": "极客公园",
+      "category": "tech",
+      "language": "zh",
+      "kind": "rss",
+      "url": "https://www.geekpark.net/rss",
+      "enabled": true,
+      "reading_feed": true,
+      "summary_field": "none",
+      "body_field": "description",
+      "feed_image": false,
+      "max_items": 10
     }
   ],
   "reading_revision": 3

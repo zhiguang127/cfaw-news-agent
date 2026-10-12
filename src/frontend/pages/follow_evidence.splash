@@ -1,0 +1,51 @@
+// Render the precomputed saved-evidence presentation.
+let FollowEvidencePage = View{visible: false width: Fill height: Fill flow: Down
+    View{width: Fill height: 46 flow: Right padding: Inset{left: 12 right: 18} align: Align{y: 0.5}
+        QuietButton{text: "‹ 返回" on_click: || follow_back()}
+        Small{text: "判断依据" align: Align{x: 1.0}}
+    }
+    ScrollYView{width: Fill height: Fill flow: Down padding: Inset{left: 18 right: 18 top: 18 bottom: 36}
+        follow_evidence_content := View{width: Fill height: Fit flow: Down spacing: 14 on_render: || {
+            let card = follow_selected_card()
+            if card == nil {
+                Heading{text: "判断依据"}
+                Small{text: "这个关注已变化或取消，请返回我的关注。"}
+                SecondaryButton{text: "返回我的关注" on_click: || follow_back()}
+            } else {
+                Heading{text: "判断依据"}
+                Section{text: card.topic.title draw_text.color: accent}
+                if card.checked_at > 0 { Small{text: "判断时间：" + age_label(card.checked_at)} }
+                if card.note != "" { Small{text: card.note draw_text.color: accent} }
+                Small{text: "以下列出这项判断实际使用的报道。保存的摘要、正文片段与原句来自当时的证据版本。"}
+                Section{text: "为什么这样判断"}
+                for value in card.values {
+                    Text{text: results_situation(value)}
+                    for uncertainty in value.insight.uncertainties { Small{text: "判断限制：" + insight_prose(value.run, uncertainty)} }
+                }
+                if follow_evidence_rows.len() == 0 {
+                    Box{
+                        Section{text: "本轮没有可展开的新闻依据"}
+                        Small{text: if card.no_related && card.current {"本轮候选检查已完成，但没有报道被确认为这个话题的新依据，因此未引用新闻。来源覆盖有限；可返回话题查看下一步，或刷新来源后再检查。"} else {if card.last_checked_at > 0 && card.checked_at == 0 {"已完成过检查，但当前没有可展开的分析详情；请单独重查这个话题。没有引用不代表外界没有相关消息。"} else {"尚未检查，或现有线索不足以支持判断。没有引用不代表外界没有相关消息。"}}}
+                    }
+                }
+                for row in follow_evidence_rows {
+                    Box{
+                        Section{text: row.title draw_text.text_style.font_size: 16}
+                        Small{text: row.metadata}
+                        Small{text: row.relation draw_text.color: accent}
+                        for block in row.blocks {
+                            if block.kind == "heading" { Section{text: block.text} }
+                            else if block.kind == "paragraph" { ReaderParagraph{text: block.text} }
+                            else if block.kind == "text" { Text{text: block.text} }
+                            else if block.kind == "divider" { Divider{} }
+                            else { Small{text: block.text} }
+                        }
+                        Small{text: row.retrieved}
+                        SecondaryButton{width: Fill text: "阅读报道与保存的段落" on_click: || follow_read_evidence(row.evidence)}
+                    }
+                }
+                SecondaryButton{text: if follow_evidence_return == "topic" {"返回关注话题"} else {"返回我的关注"} on_click: || follow_back()}
+            }
+        }}
+    }
+}

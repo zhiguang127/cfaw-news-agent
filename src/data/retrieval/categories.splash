@@ -1,0 +1,77 @@
+// Reading facets are separate from persisted Agent/interest category IDs.
+// Title/summary signals may overlap; source defaults only fill an empty result.
+let news_browse_rules = [
+    {topic: "browse_tech" label: "AI" name: "AI 进展" pattern: "人工智能|大模型|机器学习|深度学习|生成式|智能体|具身智能|(^|[^A-Za-z0-9_])(AI|LLM|GPT|ChatGPT|Claude|Gemini|DeepSeek|Copilot|agentic|artificial intelligence|machine learning)([^A-Za-z0-9_]|$)"}
+    {topic: "browse_tech" label: "数码" name: "数码产品" pattern: "手机|电脑|笔记本|平板|显卡|处理器|芯片|主板|存储|硬盘|耳机|相机|游戏|主机|评测|显示器|(^|[^A-Za-z0-9_])(iPhone|iPad|MacBook|Android|GPU|CPU|RTX|Xbox|PlayStation|smartphone|laptop|gaming|hardware)([^A-Za-z0-9_]|$)"}
+    {topic: "browse_tech" label: "效率" name: "工具与效率" pattern: "工作流|效率|办公|笔记工具|笔记应用|笔记软件|笔记管理|笔记整理|笔记同步|知识管理|浏览器|开源|开发者|编程|代码|软件|应用|文档|自动化|(^|[^A-Za-z0-9_])(app|apps|software|workflow|productivity|browser|coding|developer|open source)([^A-Za-z0-9_]|$)"}
+    {topic: "browse_tech" label: "科学" name: "科学探索" pattern: "研究|科学|科研|实验|科学发现|航天|太空|宇宙|卫星|月球|火星|量子|物理|生物|(^|[^A-Za-z0-9_])(research|scientist|science|study|discovery|space|NASA|moon|Mars|quantum|biology)([^A-Za-z0-9_]|$)"}
+    {topic: "browse_industry" label: "产业" name: "产业与商业" pattern: "融资|财报|营收|上市公司|并购|收购|市场|销量|供应链|产业|商业|企业|创业|投资|政策|监管|(^|[^A-Za-z0-9_])(IPO|funding|revenue|earnings|acquisition|startup|business|market|regulation)([^A-Za-z0-9_]|$)"}
+    {topic: "browse_life" label: "生活" name: "生活与环境" pattern: "隐私|订阅|权益|健康|环境|气候|天气|生态|污染|能源|出行|旅行|交通|铁路|航班|生活|家庭|消费|(^|[^A-Za-z0-9_])(privacy|subscription|health|environment|climate|weather|hurricane|wildlife|pollution|energy|travel|transport|home|consumer)([^A-Za-z0-9_]|$)"}]
+let news_browse_categories = [{id: "all" label: "全部"}
+    {id: "browse_tech" label: "科技"}
+    {id: "browse_industry" label: "商业"}
+    {id: "browse_life" label: "生活"}]
+let news_browse_cache = {}
+let news_browse_cache_size = 0
+fn news_browse_category(id){
+    for item in news_browse_categories { if item.id == id { return item } }
+    nil
+}
+fn news_browse_topics(row){
+    let key = row.title + "\n" + row.summary + "\n" + row.source_id + "\n" + row.category
+    let saved = news_browse_cache[row.news_id]
+    if saved != nil && saved.key == key { return saved.topics }
+    let topics = []
+    let text = row.title + "\n" + row.summary
+    for item in news_browse_rules {
+        if !record_contains(topics, item.topic) && regex(item.pattern, "i").test(text) { topics.push(item.topic) }
+    }
+    if topics.len() == 0 {
+        let fallback = "browse_industry"
+        if record_contains(["ithome" "expreview" "ifanr" "verge"], row.source_id) { fallback = "browse_tech" }
+        else if record_contains(["sspai" "hn" "ars"], row.source_id) { fallback = "browse_tech" }
+        else if record_contains(["mit" "nasa" "solidot"], row.source_id) { fallback = "browse_tech" }
+        else if row.source_id == "popsci" || row.category == "travel" || row.category == "world" { fallback = "browse_life" }
+        else if row.category == "ai" { fallback = "browse_tech" }
+        else if row.category == "tech" { fallback = "browse_tech" }
+        topics.push(fallback)
+    }
+    // Bound derived state without changing articles, bookmarks or user rules.
+    if news_browse_cache_size >= news_config.browse_cache_entries { news_browse_cache = {} news_browse_cache_size = 0 }
+    if news_browse_cache[row.news_id] == nil { news_browse_cache_size = news_browse_cache_size + 1 }
+    news_browse_cache[row.news_id] = {key: key topics: topics}
+    topics
+}
+fn news_browse_matches(row, id){
+    if id == "all" { return true }
+    if news_browse_category(id) != nil { return record_contains(news_browse_topics(row), id) }
+    // Older callers and saved interest rules keep their original semantics.
+    row.category == id
+}
+fn news_browse_label(row){
+    let topics = news_browse_topics(row)
+    let label = ""
+    for i id in topics {
+        if i >= 2 { break }
+        if label != "" { label = label + " · " }
+        label = label + news_browse_category(id).label
+    }
+    label
+}
+fn news_browse_prepare(rows, current, complete){
+    // Reserve a full pass so eviction cannot force synchronous reclassification
+    // while filtering up to 500 saved articles.
+    if news_browse_cache_size + rows.len() > news_config.browse_cache_entries { news_browse_cache = {} news_browse_cache_size = 0 }
+    let work = {rows: rows index: 0 current: current complete: complete}
+    start_timeout(0.01, || news_browse_prepare_step(work))
+}
+fn news_browse_prepare_step(work){
+    if !work.current() { work.complete() return }
+    let count = 0 let started = time_now()
+    while work.index < work.rows.len() && count < news_config.browse_batch_items && time_now() - started < news_config.work_slice_seconds {
+        news_browse_topics(work.rows[work.index])
+        work.index = work.index + 1 count = count + 1
+    }
+    if work.index < work.rows.len() { start_timeout(0.01, || news_browse_prepare_step(work)) }
+    else { start_timeout(0.01, || work.complete()) }
+}

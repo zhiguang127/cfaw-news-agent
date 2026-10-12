@@ -1,7 +1,7 @@
 // Read-only reader; bounded paragraphs can also populate the separate evidence
 // cache. Each Agent run preserves exactly the paragraphs it actually received.
-let article_hosts = ["www.airchinagroup.com", "www.theverge.com", "arstechnica.com", "venturebeat.com", "news.mit.edu", "arxiv.org", "www.bbc.com", "www.bbc.co.uk", "www.theguardian.com", "www.cnbc.com", "techcrunch.com", "www.techmeme.com", "news.ycombinator.com", "www.36kr.com", "36kr.com", "www.ithome.com", "sspai.com", "www.solidot.org", "solidot.org", "www.ifanr.com", "ifanr.com", "www.nasa.gov", "nasa.gov"]
-let article_image_hosts = ["ichef.bbci.co.uk", "i.guim.co.uk", "cdn.arstechnica.net", "cdn.vox-cdn.com", "duet-cdn.vox-cdn.com", "img.36krcdn.com", "img.ithome.com", "cdn.sspai.com", "s3.ifanr.com", "images.ifanr.cn"]
+let article_hosts = ["www.airchinagroup.com", "www.theverge.com", "arstechnica.com", "venturebeat.com", "news.mit.edu", "arxiv.org", "www.bbc.com", "www.bbc.co.uk", "www.theguardian.com", "www.cnbc.com", "techcrunch.com", "www.techmeme.com", "news.ycombinator.com", "www.36kr.com", "36kr.com", "www.ithome.com", "sspai.com", "www.solidot.org", "solidot.org", "www.ifanr.com", "ifanr.com", "www.nasa.gov", "nasa.gov", "www.expreview.com", "www.popsci.com", "theconversation.com", "www.geekpark.net"]
+let article_image_hosts = ["ichef.bbci.co.uk", "i.guim.co.uk", "cdn.arstechnica.net", "cdn.vox-cdn.com", "duet-cdn.vox-cdn.com", "img.36krcdn.com", "img.ithome.com", "cdn.sspai.com", "s3.ifanr.com", "images.ifanr.cn", "img.expreview.com", "i0.wp.com", "images.theconversation.com", "imgslim.geekpark.net"]
 let article_config = {max_paragraphs: 260 max_text_bytes: 96000 max_nodes: 1500 max_images: 6
     max_image_bytes: 2000000 max_total_image_bytes: 6000000 image_timeout_seconds: 15 image_target_width: 900}
 let article_state = {generation: 0 state: "idle" paragraphs: [] blocks: [] images: [] image_bytes: 0 error: "" truncated: false requires_verification: false origin: ""}
@@ -201,7 +201,7 @@ fn article_load(row, complete){
                 let text = reading_feed_text(row.body_html)
                 if text != "" { result.paragraphs = [text] result.blocks = [{kind: "paragraph" text: text}] }
             }
-            if result.paragraphs.len() > 0 { article_accept(row, result, "publisher_rss", complete) return }
+            if result.paragraphs.len() > 0 { article_accept(row, result, row.body_origin, complete) return }
         }
     }
     if !article_url_allowed(row.source_url) {

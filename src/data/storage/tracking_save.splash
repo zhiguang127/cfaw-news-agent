@@ -1,0 +1,98 @@
+// The cache can hold twelve full runs. Validate one run per callback; keep
+// backup, write and readback in separate budget slices. No host rename exists.
+fn tracking_cache_save(value, current, complete){
+    let path = tracking_cache_file.path
+    if tracking_cache_file.recovered { path = path + ".backup" }
+    let work = {value: value current: current complete: complete file: tracking_cache_file path: path
+        revision: tracking_cache_file.revision phase: "value" index: 0 done: false timer: nil
+        text: nil previous: nil previous_text: nil}
+    work.timer = start_timeout(tracking_config.publication_timeout_seconds, || {
+        tracking_cache_save_finish(work, "本地保存超时（" + work.phase + "）；结果保留，可重试")
+    })
+    start_timeout(0.01, || tracking_cache_save_step(work))
+    work
+}
+fn tracking_cache_save_finish(work, error){
+    if work.done { return }
+    work.done = true
+    if work.timer != nil { stop_timer(work.timer) work.timer = nil }
+    let complete = work.complete
+    // Cancelled/queued native timers may still retain the small work object.
+    // They must not retain three full parsed copies of twelve historical runs.
+    work.value = nil work.previous = nil work.text = nil work.previous_text = nil
+    work.current = nil work.complete = nil
+    start_timeout(0.01, || complete(error))
+}
+fn tracking_cache_save_step(work){
+    if work.done { return }
+    // Queue continuation before native work. A budget bail repeats this
+    // phase, including an idempotent write of the exact same serialized bytes.
+    start_timeout(0.01, || tracking_cache_save_step(work))
+    mod.gc.run()
+    if !work.current() { tracking_cache_save_finish(work, "结果已过期或保存已停止，未继续写入") return }
+    let error = ""
+    try {
+        if work.phase == "value" {
+            if !tracking_cache_header_valid(work.value) { error = "记录未通过校验，未保存" }
+            else if !work.file.writable && !work.file.recovered { error = "原文件已保留，存储只读；请恢复有效备份后重开" }
+            else if work.index < work.value.runs.len() {
+                if !tracking_cache_run_valid(work.value.runs[work.index]) { error = "记录未通过校验，未保存" }
+                else { work.index = work.index + 1 }
+            } else { work.phase = "serialize" }
+        } else if work.phase == "serialize" {
+            work.text = work.value.to_json() work.phase = "read"
+        } else if work.phase == "read" {
+            if fs.exists(work.path) {
+                work.previous_text = fs.read(work.path)
+                if work.previous_text == work.text {
+                    // The candidate was validated before serialization. Exact
+                    // readback bytes prove an earlier write of that same value.
+                    work.file.revision = work.value.revision
+                    tracking_cache_save_finish(work, "") return
+                }
+                if !regex("^\\s*\\{").test(work.previous_text) {
+                    work.file.writable = false work.file.recovered = false
+                    tracking_cache_save_finish(work, "磁盘记录已损坏，原文件已保留") return
+                }
+                work.previous = work.previous_text.parse_json()
+                if !tracking_cache_header_valid(work.previous) {
+                    work.file.writable = false work.file.recovered = false error = "磁盘记录已损坏，原文件已保留"
+                } else if work.previous.revision != work.revision { error = "磁盘记录版本已变化，请重开后再保存" }
+                else { work.index = 0 work.phase = "previous" }
+            } else if work.revision != 0 { error = "磁盘记录已移除，请重开后恢复" }
+            else { work.phase = "write" }
+        } else if work.phase == "previous" {
+            if work.index < work.previous.runs.len() {
+                if !tracking_cache_run_valid(work.previous.runs[work.index]) {
+                    work.file.writable = false work.file.recovered = false error = "磁盘记录已损坏，原文件已保留"
+                } else { work.index = work.index + 1 }
+            } else { work.phase = "backup" }
+        } else if work.phase == "backup" {
+            if !work.file.recovered { tracking_storage_write(work.path + ".backup", work.previous_text) }
+            work.previous = nil
+            work.phase = "write"
+        } else if work.phase == "write" {
+            // Recheck disk immediately before writing: an external revision
+            // change between validation and backup must not be overwritten.
+            let exists = fs.exists(work.path)
+            let disk = nil if exists { disk = fs.read(work.path) }
+            if disk == work.text { work.phase = "readback" }
+            else if (work.previous_text != nil && disk != work.previous_text) || (work.previous_text == nil && exists) {
+                error = "磁盘记录版本已变化，请重开后再保存"
+            } else {
+                tracking_storage_write(work.path, work.text) work.phase = "readback"
+            }
+        } else if work.phase == "readback" {
+            work.previous = nil work.previous_text = nil
+            let text = fs.read(work.path)
+            if text != work.text { error = "写入核验失败，已有备份可恢复" }
+            else {
+                // Compare against the serialization of the already validated
+                // candidate, avoiding a third full parsed copy on a 32MiB VM.
+                work.file.revision = work.value.revision
+                tracking_cache_save_finish(work, "") return
+            }
+        }
+    } { error = "本地写入失败，结果保留，可重试；已有记录和备份保留" }
+    if error != "" { tracking_cache_save_finish(work, error) }
+}

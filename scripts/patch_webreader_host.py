@@ -1,8 +1,38 @@
 """Install the Windows WebReader backend into an explicitly selected Makepad host."""
 import argparse
+import json
 import os
 from pathlib import Path
+import re
 from patch_reader_host import replace
+
+
+def webreader_manifest(contents, relative):
+    """Retarget an existing backend without discarding dependency options."""
+    header = "[target.'cfg(windows)'.dependencies.cfaw-windows-webreader]"
+    path_line = 'path = ' + json.dumps(relative) + '\n'
+    sections = list(re.finditer(
+        r'''(?m)^\[target\.(?:'cfg\(windows\)'|"cfg\(windows\)")\.dependencies\.cfaw-windows-webreader\][ \t]*(?:\n|$)''',
+        contents))
+    if len(sections) > 1:
+        raise SystemExit('Duplicate Windows WebReader dependency; preserve and inspect Cargo.toml')
+    if not sections:
+        if 'dependencies.cfaw-windows-webreader' in contents:
+            raise SystemExit('Unexpected Windows WebReader dependency layout; preserve and inspect Cargo.toml')
+        return contents.rstrip('\n') + '\n\n' + header + '\n' + path_line
+    start = sections[0].end()
+    following = re.search(r'(?m)^\[', contents[start:])
+    end = start + following.start() if following else len(contents)
+    body = contents[start:end]
+    paths = list(re.finditer(r'(?m)^[ \t]*path[ \t]*=.*(?:\n|$)', body))
+    if len(paths) > 1:
+        raise SystemExit('Duplicate Windows WebReader paths; preserve and inspect Cargo.toml')
+    if paths:
+        path = paths[0]
+        body = body[:path.start()] + path_line + body[path.end():]
+    else:
+        body = body.rstrip('\n') + '\n' + path_line
+    return contents[:start] + body + contents[end:]
 
 
 def main():
@@ -14,10 +44,10 @@ def main():
     evidence = project / 'build/webreader-host-patches'
     relative = Path(os.path.relpath(project / 'native/windows-webreader', root / 'platform')).as_posix()
     manifest = root / 'platform/Cargo.toml'
-    dependency = f'\n[target.\'cfg(windows)\'.dependencies.cfaw-windows-webreader]\npath = "{relative}"\n'
     contents = manifest.read_text(encoding='utf-8')
-    if 'dependencies.cfaw-windows-webreader' not in contents:
-        manifest.write_text(contents + dependency, encoding='utf-8', newline='\n')
+    updated = webreader_manifest(contents, relative)
+    if updated != contents:
+        manifest.write_text(updated, encoding='utf-8', newline='\n')
     windows = root / 'platform/src/os/windows/windows.rs'
     replace(windows, '''        let mut geom_changes = Vec::new();
         while let Some(op) = self.platform_ops.pop_front() {''', '''        let mut geom_changes = Vec::new();

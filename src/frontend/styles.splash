@@ -58,7 +58,33 @@ let editorial_muted = #x8790a3
 let editorial_accent = #x7369c6
 let EditorialTitle = Text{draw_text.color: editorial_ink draw_text.text_style: theme.font_bold{font_size: 17 line_spacing: 1.16}}
 let EditorialCaption = Small{draw_text.color: editorial_muted draw_text.text_style.font_size: 11}
-let EditorialTag = RoundedView{width: Fit height: 22 padding: Inset{left: 9 right: 9 top: 3 bottom: 3} show_bg: true draw_bg.color: #xf1f0fb draw_bg.border_radius: 11.0}
+let EditorialBadgeText = Label{width: Fit height: Fit padding: 0 margin: 0
+    draw_text.ink_centered: true draw_text.color: editorial_accent
+    draw_text.text_style: theme.font_regular{font_size: 10 line_spacing: 1.0}}
+let EditorialTag = RoundedView{width: Fit height: 22 flow: Right align: Align{x: 0.5 y: 0.5}
+    padding: Inset{left: 9 right: 9 top: 0 bottom: 0} show_bg: true draw_bg.color: #xf1f0fb draw_bg.border_radius: 11.0}
+let EditorialBackToTop = ButtonFlat{width: 32 height: 32 text: "" padding: 0 margin: 0 spacing: 0
+    label_walk: Walk{width: 0 height: 0} icon_walk: Walk{width: 0 height: 0}
+    draw_bg +: {
+        color: #xf8f7fe color_hover: #xeeeafa color_down: #xe4ddf6 color_focus: #xeeeafa
+        pixel: fn(){
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let center = self.rect_size * 0.5
+            let fill = self.color.mix(self.color_focus, self.focus).mix(self.color_hover, self.hover).mix(self.color_down, self.down)
+            sdf.circle(center.x, center.y, 15.0)
+            sdf.fill(fill)
+            sdf.stroke(#xd8d2ef, 1.0)
+            sdf.move_to(center.x - 4.5, center.y - 0.5)
+            sdf.line_to(center.x, center.y - 5.0)
+            sdf.line_to(center.x + 4.5, center.y - 0.5)
+            sdf.stroke(#x7369c6, 1.6)
+            sdf.move_to(center.x, center.y - 5.0)
+            sdf.line_to(center.x, center.y + 5.0)
+            sdf.stroke(#x7369c6, 1.6)
+            return sdf.result
+        }
+    }
+}
 let EditorialCard = RoundedView{width: Fill height: Fit flow: Down padding: 15 spacing: 9 show_bg: true
     draw_bg +: {color: white border_size: 1.0 border_color: #xeeeff5 border_radius: 20.0}}
 let EditorialImage = Image{fit: ImageFit.CropToFill draw_bg +: {

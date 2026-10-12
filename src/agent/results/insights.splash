@@ -40,14 +40,135 @@ fn insight_refs_error(refs, ids, snapshot){
         let paragraph = tracking_find(evidence.paragraphs, "paragraph_id", ref["paragraph_id"])
         if paragraph == nil { return "paragraph_id 不属于该新闻提供的段落，请使用原段落标识" }
         if !tracking_text(ref["quote"], 400) || ref.quote.trim() == "" { return "quote 须为非空原文字符串，最多400字符" }
-        if !regex(literal_pattern(ref.quote)).test(paragraph.text) { return "quote 与指定段落原文不一致；不得翻译、改写或拼接引文" }
+        if !regex(literal_pattern(ref.quote)).test(paragraph.text) { return tracking_evidence_label(evidence.news_id, snapshot) + " / " + paragraph.paragraph_id + " 的 quote 与原文不一致；请选用提供的 quote_id，或复制连续原句，不得翻译、改写或拼接" }
     }
     ""
 }
 fn insight_refs_valid(refs, ids, snapshot){ insight_refs_error(refs, ids, snapshot) == "" }
+fn insight_item_matches(item, insight){
+    if item.relevance == "unrelated" { return false }
+    if insight.target_type == "topic" { return record_contains(item.topic_ids, insight.target_id) }
+    // Schedule-only uncertainty has no confirmed schedule impact yet.
+    true
+}
+// Structural guarantees for the strongest evidence gaps; this does not prove
+// factual entailment or replace model reasoning about a supplied summary.
+fn tracking_judgment_validate(value, snapshot){
+    let prose = [value.explanation] let missing = false let other = false let cited = 0
+    for item in value.items { prose.push(item.why_related) for text in item.uncertainties { prose.push(text) } }
+    for insight in value.insights {
+        cited = cited + insight.evidence_ids.len()
+        prose.push(insight.summary) prose.push(insight.material_change)
+        if insight["next_step"] != nil { prose.push(insight.next_step) }
+        for text in insight.uncertainties { prose.push(text) }
+        let title_only = true
+        for id in insight.evidence_ids {
+            let e = tracking_find(snapshot.evidence, "news_id", id)
+            if e.summary.trim() != "" || e.paragraphs.len() > 0 { title_only = false }
+        }
+        let target = insight_target(snapshot, insight.target_type, insight.target_id)
+        if target.mode == "goal" && title_only && (snapshot["prompt_revision"] != "tracking-v2.11" || insight.evidence_ids.len() > 0) {
+            missing = true
+            if insight.decision_effect != "unknown" || insight.uncertainties.len() == 0 || insight["next_step"] == nil {
+                let error = tracking_invalid("invalid_schema", "相关报道仍只有标题，暂不能判断是否值得尝试；请补充正文或摘要后重新检查")
+                error.reason_code = "title_only_goal" return error
+            }
+        } else { other = true }
+    }
+    if snapshot["prompt_revision"] == "tracking-v2.11" && cited == 0 && value.outcome != "insufficient_evidence" {
+        let error = tracking_invalid("invalid_schema", "本轮没有形成相关报道依据，暂不能报告实质变化；保留已有决定")
+        error.reason_code = "no_related_policy" return error
+    }
+    if missing && !other && value.outcome != "insufficient_evidence" {
+        let error = tracking_invalid("invalid_schema", "本目标所选依据仍只有标题，尚不能确认变化；请补充内容后再判断")
+        error.reason_code = "title_only_goal" return error
+    }
+    let internal = regex("can_quote_body|allowed_paragraph_ids|quote_choices|quote_id|paragraphs[ ]*[:=]|evidence_refs[ ]*[:=]")
+    for text in prose { if internal.test(text) { return tracking_invalid("invalid_schema", "面向用户的说明包含内部字段；请用新闻标题、仅有标题、来源摘要、正文尚未读取等自然语言描述证据，不要展示字段或JSON") } }
+    {valid: true error: "" message: "" result: value}
+}
+// A separate, deterministic availability notice, never acceptance of the
+// model's unsupported advice. Caller must first validate all IDs/quotes/versions.
+fn tracking_title_gap_notice(value, snapshot){
+    if !record_contains(["tracking-v2.9" "tracking-v2.10" "tracking-v2.11"], snapshot["prompt_revision"]) || snapshot.topics.len() != 1 || snapshot.schedules.len() + snapshot.legacy_interests.len() != 0 { return nil }
+    let topic = snapshot.topics[0]
+    if topic["intent_kind"] != "goal" { return nil }
+    let items = [] let selected = 0
+    for item in value.items {
+        let belongs = item.relevance != "unrelated" && record_contains(item.topic_ids, topic.topic_id)
+        let ids = [] let gaps = [] let relevance = "unrelated"
+        let reason = "本轮未将这条候选作为本目标的判断依据。"
+        if belongs {
+            let evidence = tracking_find(snapshot.evidence, "news_id", item.news_id)
+            // Available content must go through actual model assessment. Do
+            // not hide such a failure behind a missing-content notice.
+            if evidence.summary.trim() != "" || evidence.paragraphs.len() > 0 { return nil }
+            selected = selected + 1 ids.push(topic.topic_id) relevance = "uncertain"
+            reason = "标题初筛可能相关；尚无摘要或正文，实际关联和使用条件待核实。"
+            gaps.push("来源摘要与正文尚未取得，不能依据标题作决策。")
+        }
+        items.push({news_id: item.news_id relevance: relevance topic_ids: ids legacy_interest_ids: []
+            why_related: reason evidence_ids: [item.news_id] uncertainties: gaps schedule_impacts: []})
+    }
+    if selected == 0 { return nil }
+    let insights = []
+    for old in value.insights {
+        let ids = old.evidence_ids let first = nil
+        for id in ids {
+            let evidence = tracking_find(snapshot.evidence, "news_id", id)
+            if evidence.summary.trim() != "" || evidence.paragraphs.len() > 0 { return nil }
+            if first == nil { first = evidence }
+        }
+        if first == nil { return nil }
+        let previous = nil
+        for entry in snapshot.previous_by_target { if entry.target_type == "topic" && entry.target_id == topic.topic_id { previous = entry } }
+        let change = "new" let compared = nil
+        if previous != nil {
+            compared = previous.run_id
+            if tracking_find(previous.insights, "issue_key", old.issue_key) != nil { change = "unchanged" }
+        }
+        insights.push({target_type: "topic" target_id: topic.topic_id target_version: topic.version
+            issue_key: old.issue_key change_kind: change compared_run_id: compared
+            summary: "已选出 " + ids.len() + " 篇可能相关报道，但当前仅有标题，摘要和正文尚未取得；暂不能归纳实际功能、使用条件或是否值得尝试。保留已有决定。"
+            decision_effect: "unknown" material_change: "" uncertainties: ["来源内容尚未读取，未完成内容判断。"]
+            next_step: "查看判断依据，先为《" + bm25_prefix(first.title, 80) + "》补充正文并核实与“" + bm25_prefix(topic.title, 60) + "”相关的功能和使用条件；若网站要求验证，可在应用内原文页核实。"
+            evidence_ids: ids evidence_refs: [] reschedule: nil})
+    }
+    {schema_version: 2 outcome: "insufficient_evidence" judgment_origin: "evidence_gap"
+        explanation: "系统证据检查：本目标所选依据仍只有标题，已停止推断，改为提供待补内容提示；尚未完成实质判断。"
+        items: items insights: insights}
+}
+// Entirely missing content is known locally. Do not spend a model turn asking
+// for a decision the application must reject; publish an explicit gap notice.
+fn tracking_preflight_notice(snapshot){
+    if !record_object(snapshot) || !record_contains(["tracking-v2.10" "tracking-v2.11"], snapshot["prompt_revision"]) { return nil }
+    if !record_array(snapshot["topics"]) || !record_array(snapshot["schedules"]) || !record_array(snapshot["legacy_interests"]) || !record_array(snapshot["evidence"]) { return nil }
+    if snapshot.topics.len() != 1 || snapshot.schedules.len() + snapshot.legacy_interests.len() != 0 || snapshot.evidence.len() == 0 { return nil }
+    let topic = snapshot.topics[0]
+    if topic["intent_kind"] != "goal" { return nil }
+    let ids = [] let items = []
+    for e in snapshot.evidence {
+        if !record_string(e["summary"]) || e.summary.trim() != "" || !record_array(e["paragraphs"]) || e.paragraphs.len() > 0 { return nil }
+        ids.push(e.news_id)
+        items.push({news_id: e.news_id relevance: "uncertain" topic_ids: [topic.topic_id] legacy_interest_ids: []
+            why_related: "标题初筛候选，摘要与正文仍待取得。" evidence_ids: [e.news_id] uncertainties: ["内容未读取"] schedule_impacts: []})
+    }
+    if !tracking_snapshot_valid(snapshot) { return nil }
+    let compared = nil
+    for previous in snapshot.previous_by_target { if previous.target_type == "topic" && previous.target_id == topic.topic_id { compared = previous.run_id } }
+    let seed = {schema_version: 2 outcome: "insufficient_evidence" explanation: "系统证据可用性检查，未发起模型分析。"
+        items: items insights: [{target_type: "topic" target_id: topic.topic_id target_version: topic.version
+            issue_key: "source-content-pending" change_kind: "new" summary: "来源内容尚未读取。"
+            decision_effect: "unknown" material_change: "" uncertainties: ["摘要与正文尚未取得"] next_step: "补充正文后核实"
+            evidence_ids: ids evidence_refs: [] compared_run_id: compared reschedule: nil}]}
+    if !tracking_validate(seed, snapshot).valid { return nil }
+    tracking_title_gap_notice(seed, snapshot)
+}
 fn insights_validate(value, snapshot){
     if !record_array(value["insights"]) || value.insights.len() > 6 { return tracking_invalid("invalid_schema", "每个目标最多3项变化") }
-    let counts = {} let seen = {}
+    // Preserve validation of historical records under their original contract.
+    let situation_contract = record_contains(["tracking-v2.5" "tracking-v2.6" "tracking-v2.7" "tracking-v2.8" "tracking-v2.9" "tracking-v2.10" "tracking-v2.11"], snapshot["prompt_revision"])
+    let counts = {} let seen = {} let policy_error = nil
     for insight in value.insights {
         if !record_object(insight) { return tracking_invalid("invalid_schema", "目标变化必须为对象") }
         let target = insight_target(snapshot, insight["target_type"], insight["target_id"])
@@ -62,7 +183,26 @@ fn insights_validate(value, snapshot){
         if insight["next_step"] != nil { if !tracking_text(insight.next_step, 400) || insight.next_step.trim() == "" { return tracking_invalid("invalid_schema", "核实建议无效") } }
         if !tracking_text(insight["material_change"], 400) { return tracking_invalid("invalid_schema", "material_change 须为字符串，无新增依据时填空字符串，最多400字符") }
         if !tracking_strings(insight["uncertainties"], 6, 300) { return tracking_invalid("invalid_schema", "uncertainties 须为字符串数组，最多6项，每项最多300字符") }
-        if !tracking_refs(insight["evidence_ids"], snapshot.evidence, "news_id", false) { return tracking_invalid("invalid_reference", "insights.evidence_ids 须包含本次候选新闻标识，不得为空、重复或使用原文地址代替 E 标识") }
+        if !tracking_refs(insight["evidence_ids"], snapshot.evidence, "news_id", situation_contract) { return tracking_invalid("invalid_reference", "insights.evidence_ids 须使用本次候选标识，不得重复或用原文地址代替 E 标识") }
+        if situation_contract {
+            for id in insight.evidence_ids {
+                let item = tracking_find(value.items, "news_id", id)
+                if item == nil || !insight_item_matches(item, insight) { return tracking_invalid("invalid_reference", "判断引用了无关报道或其他目标的报道；本目标无相关新闻时返回空evidence_ids，不得强行引用") }
+            }
+            if insight.evidence_ids.len() == 0 {
+                for item in value.items { if insight_item_matches(item, insight) { return tracking_invalid("invalid_reference", "已有本目标相关或待核实报道，须明确引用支持本项判断的来源") } }
+                if insight.decision_effect != "unknown" || insight.material_change.trim() != "" || insight["reschedule"] != nil ||
+                    (snapshot["prompt_revision"] != "tracking-v2.11" && value.outcome != "insufficient_evidence") {
+                    let error = tracking_invalid("invalid_schema", "本话题没有关联报道，暂不能作出行动判断；应保留已有决定")
+                    if snapshot["prompt_revision"] != "tracking-v2.11" { return error }
+                    // Check every remaining reference, quote, version and
+                    // history relation before offering a neutral notice.
+                    error.reason_code = "no_related_policy" policy_error = error
+                }
+            }
+            if insight.change_kind == "unchanged" && insight.material_change.trim() != "" { return tracking_invalid("invalid_schema", "unchanged须将material_change设为空字符串，不能声称有新依据") }
+            if value.outcome == "no_change" && (insight.change_kind == "updated" || insight.change_kind == "withdrawn") { return tracking_invalid("invalid_schema", "no_change不能同时声称更新或撤回判断") }
+        }
         let refs_error = insight_refs_error(insight["evidence_refs"], insight.evidence_ids, snapshot)
         if refs_error != "" { return tracking_invalid("invalid_reference", refs_error) }
         if target.mode == "goal" && insight.decision_effect == "review" && insight["next_step"] == nil { return tracking_invalid("invalid_schema", "目标决策变化须给出具体核实项") }
@@ -86,7 +226,40 @@ fn insights_validate(value, snapshot){
     for target in insight_targets(snapshot) {
         if counts[target.target_type + ":" + target.target_id] == nil { return tracking_invalid("invalid_schema", "每个目标需明确报告变化或证据不足") }
     }
+    if policy_error != nil { return policy_error }
     {valid: true result: value error: "" message: ""}
+}
+// The model associated no current article with any topic. Keep that limited
+// classification, discard its unsupported action verdict, and say so explicitly.
+fn tracking_no_related_notice(value, snapshot){
+    if snapshot["prompt_revision"] != "tracking-v2.11" || snapshot.topics.len() == 0 || snapshot.schedules.len() + snapshot.legacy_interests.len() != 0 { return nil }
+    for insight in value.insights {
+        if insight.evidence_ids.len() > 0 { return nil }
+        for item in value.items { if insight_item_matches(item, insight) { return nil } }
+    }
+    let items = [] let insights = []
+    for item in value.items {
+        items.push({news_id: item.news_id relevance: item.relevance topic_ids: [] legacy_interest_ids: []
+            why_related: "本轮未被确认为关注话题的判断依据。" evidence_ids: [item.news_id] uncertainties: [] schedule_impacts: []})
+    }
+    for topic in snapshot.topics {
+        let compared = nil let change = "new"
+        for previous in snapshot.previous_by_target {
+            if previous.target_type == "topic" && previous.target_id == topic.topic_id {
+                compared = previous.run_id
+                if tracking_find(previous.insights, "issue_key", "no-related-news") != nil { change = "unchanged" }
+            }
+        }
+        insights.push({target_type: "topic" target_id: topic.topic_id target_version: topic.version issue_key: "no-related-news"
+            change_kind: change compared_run_id: compared
+            summary: "本轮 " + snapshot.evidence.len() + " 篇候选中，暂未确认与“" + bm25_prefix(topic.title, 80) + "”相关的报道，尚未形成新的判断依据。来源和候选范围有限，不能据此认定外界没有新进展；已有决定保持不变。"
+            decision_effect: "unknown" next_step: "先保留已有决定；可刷新新闻，或检查关注关键词是否准确，再检查这个话题。不要因本轮没有相关报道而取消原安排。"
+            material_change: "" uncertainties: ["已启用来源和本轮候选覆盖有限，话题现状尚未重新确认。"]
+            evidence_ids: [] evidence_refs: [] reschedule: nil})
+    }
+    {schema_version: 2 outcome: "insufficient_evidence" judgment_origin: "no_related_evidence"
+        explanation: "系统检查提示：模型本轮未为这些话题关联任何报道，未接受其行动结论；没有新的判断依据，保留已有决定。"
+        items: items insights: insights}
 }
 fn insight_facts(insight, snapshot){
     let facts = []

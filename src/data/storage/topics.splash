@@ -7,36 +7,43 @@ let tracking_cache_file = {path: "tracking_results_v1.json" writable: true recov
 let topic_warning = ""
 let tracking_storage_write = |path, text| fs.write(path, text)
 fn topic_document_valid(value){
-    if !record_object(value) || value["schema_version"] != 2 || !record_number(value["revision"]) { return false }
-    if !record_array(value["topics"]) || value["topics"].len() > tracking_config.max_topic_records || !topic_draft_valid(value["draft"]) { return false }
-    if !record_array(value["decisions"]) || value["decisions"].len() > tracking_config.max_decisions { return false }
+    if !topic_document_header_valid(value) { return false }
     let ids = {}
     for item in value["topics"] { if !topic_valid(item) || ids[item.topic_id] == true { return false } ids[item.topic_id] = true }
     if topic_visible_count(value.topics) > tracking_config.max_topics { return false }
-    for item in value["decisions"] {
-        if item["kind"] == "insight" {
-            if !record_contains(["topic" "schedule"], item["target_type"]) || !tracking_text(item["target_id"], 200) || !record_number(item["target_version"]) || !tracking_text(item["issue_key"], 120) || !record_contains(["watch" "handled" "dismissed"], item["state"]) || !record_number(item["decided_at"]) || !tracking_strings(item["evidence_facts"], 8, 16000) { return false }
-            continue
-        }
-        if !record_object(item) || !tracking_text(item["reminder_id"], 400) || !tracking_text(item["goal_key"], 120) || !tracking_text(item["schedule_id"], 200) { return false }
-        if item["state"] != "dismissed" && item["state"] != "followed" { return false }
-        if !record_number(item["schedule_version"]) || !record_number(item["decided_at"]) || !record_array(item["evidence"]) { return false }
-        if item["evidence"].len() == 0 || item["evidence"].len() > tracking_config.max_candidates { return false }
-        for evidence in item["evidence"] {
-            if !record_object(evidence) || !tracking_text(evidence["news_id"], 4000) || !tracking_text(evidence["key"], 16000) { return false }
-        }
+    for item in value["decisions"] { if !topic_decision_valid(item) { return false } }
+    true
+}
+fn topic_document_header_valid(value){
+    if !record_object(value) || value["schema_version"] != 2 || !record_number(value["revision"]) { return false }
+    if !record_array(value["topics"]) || value.topics.len() > tracking_config.max_topic_records || !topic_draft_valid(value["draft"]) { return false }
+    record_array(value["decisions"]) && value.decisions.len() <= tracking_config.max_decisions
+}
+fn topic_decision_valid(item){
+    if !record_object(item) { return false }
+    if item["kind"] == "insight" {
+        return record_contains(["topic" "schedule"], item["target_type"]) && tracking_text(item["target_id"], 200) && record_number(item["target_version"]) && tracking_text(item["issue_key"], 120) && record_contains(["watch" "handled" "dismissed"], item["state"]) && record_number(item["decided_at"]) && tracking_strings(item["evidence_facts"], 8, 16000)
+    }
+    if !tracking_text(item["reminder_id"], 400) || !tracking_text(item["goal_key"], 120) || !tracking_text(item["schedule_id"], 200) { return false }
+    if item["state"] != "dismissed" && item["state"] != "followed" { return false }
+    if !record_number(item["schedule_version"]) || !record_number(item["decided_at"]) || !record_array(item["evidence"]) { return false }
+    if item.evidence.len() == 0 || item.evidence.len() > tracking_config.max_candidates { return false }
+    for evidence in item.evidence {
+        if !record_object(evidence) || !tracking_text(evidence["news_id"], 4000) || !tracking_text(evidence["key"], 16000) { return false }
     }
     true
 }
 fn tracking_cache_valid(value){
-    if !record_object(value) || value["schema_version"] != 1 || !record_number(value["revision"]) || !record_array(value["runs"]) { return false }
-    if value["runs"].len() > tracking_config.max_runs { return false }
-    for run in value["runs"] {
-        if !record_object(run) || !record_string(run["task_id"]) || !record_number(run["checked_at"]) || !record_string(run["input_key"]) || !record_object(run["snapshot"]) { return false }
-        let checked = tracking_validate(run["result"], run["snapshot"])
-        if !checked.valid { return false }
-    }
+    if !tracking_cache_header_valid(value) { return false }
+    for run in value.runs { if !tracking_cache_run_valid(run) { return false } }
     true
+}
+fn tracking_cache_header_valid(value){
+    record_object(value) && value["schema_version"] == 1 && record_number(value["revision"]) && record_array(value["runs"]) && value.runs.len() <= tracking_config.max_runs
+}
+fn tracking_cache_run_valid(run){
+    if !record_object(run) || !record_string(run["task_id"]) || !record_number(run["checked_at"]) || !record_string(run["input_key"]) || !record_object(run["snapshot"]) { return false }
+    tracking_validate(run["result"], run["snapshot"]).valid
 }
 fn tracking_store_read(file, valid){
     file.writable = true file.recovered = false
@@ -99,7 +106,7 @@ fn topic_visible_count(topics){
 }
 fn topic_new_draft(id){
     let draft = {draft_id: "draft-" + time_now() version: 1 target_topic_id: nil target_version: nil
-        original_input: "" supplement: "" understanding: nil state: "editing" question: "" origin_reminder_id: nil
+        original_input: "" supplement: "" understanding: nil understanding_edit: nil state: "editing" question: "" origin_reminder_id: nil
         intent_kind: "news" schedule_understanding: nil schedule_timezone: "America/New_York"}
     let topic = topic_find(id)
     if topic != nil {
@@ -123,6 +130,7 @@ fn topic_set_status(id, version, status){
     topics_commit(next)
 }
 fn topic_confirm(draft){
+    if draft["understanding_edit"] != nil { return "请先应用修改，再确认保存" }
     if draft.state != "ready" || !topic_understanding_valid(draft.understanding) { return "请先取得待确认的理解结果" }
     let current = topic_find(draft.target_topic_id)
     if draft.target_topic_id != nil {

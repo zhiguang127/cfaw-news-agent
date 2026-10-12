@@ -16,29 +16,115 @@ let agent_task_counter = 0
 let agent_last_error = ""
 let agent_last_category = ""
 let agent_progress_handler = |stage| {}
-fn agent_task_stage(task, stage){ task.stage = stage agent_progress_handler(stage) }
+// The app owns material selection; the adapter owns the same task and total
+// deadline across a single corrective turn, whether format or output length.
+let agent_output_retry_handler = |task| false
+let agent_preflight_handler = |snapshot| nil
+fn agent_output_truncated(error){
+    record_string(error) && regex("output.{0,30}truncat|response.{0,30}incomplete", "i").test(error)
+}
+fn agent_host_turn_timeout(error){
+    record_string(error) && regex("assistant.{0,3} turn timed out", "i").test(error)
+}
+fn agent_compact_retry(task){ task.output_retry_count > 0 || task.timeout_retry_count > 0 }
+fn agent_task_stage(task, stage){ task.stage = stage task.phase_started = time_now() agent_progress_handler(stage) }
+fn agent_task_clear_phase(task){
+    let generation = task["wait_generation"] if generation == nil { generation = 0 }
+    task.wait_generation = generation + 1
+    if task["phase_timer"] != nil { stop_timer(task.phase_timer) task.phase_timer = nil }
+}
+fn agent_task_clear_wait(task){
+    agent_task_clear_phase(task)
+    if task["progress_timer"] != nil { stop_timer(task.progress_timer) task.progress_timer = nil }
+}
+fn agent_task_phase_deadline(task, seconds, message){
+    if task.kind != "tracking_update" { return }
+    agent_task_clear_phase(task)
+    let generation = task.wait_generation
+    task.phase_timer = start_timeout(seconds, || {
+        if agent_task == nil { return }
+        if agent_task.id != task.id || task.terminal || task.stopping || task.wait_generation != generation { return }
+        task.timeout_phase = task.stage
+        agent_task_stop("failed", message, "timeout")
+    })
+}
 fn agent_task_finish(task, state, error, category, result){
     if agent_task == nil { return }
     if agent_task.id != task.id || task.terminal { return }
     task.terminal = true
     if task.timer != nil { stop_timer(task.timer) task.timer = nil }
+    agent_task_clear_wait(task)
+    if state == "succeeded" && task["async_publication"] == true {
+        // The model turn is terminal; application publication is not. Keep
+        // the queue locked until the owner acknowledges verified persistence.
+        task.publication_pending = true task.publication_result = result task.publication_started = time_now()
+        analysis_state = "publishing" analysis_terminal = false
+        task.publication_timer = start_timeout(tracking_config.publication_timeout_seconds + 1, || {
+            agent_task_publication_abort(task, "保存未完成，结果保留，可重试保存", "storage_error")
+        })
+        start_timeout(0.01, || {
+            if agent_task == nil { return }
+            if agent_task.id != task.id || !task.publication_pending { return }
+            mod.gc.run()
+            task.complete({success: true result: result error: "" category: "" task_id: task.id snapshot: task.snapshot},
+                fn(saved, message, failure){ agent_task_publication_done(task, saved, message, failure) })
+        })
+        agent_task_stage(task, "publishing") return
+    }
     analysis_busy = false analysis_terminal = true analysis_state = state
     analysis_error = error analysis_error_category = category
     agent_last_error = error agent_last_category = category
     let published = time_now()
     if state == "succeeded" { agent_task_stage(task, "publishing") }
-    task.complete({success: state == "succeeded" result: result error: error category: category task_id: task.id})
+    task.complete({success: state == "succeeded" result: result error: error category: category task_id: task.id snapshot: task.snapshot})
+    agent_task_record_metrics(task, published, result, analysis_state, analysis_error_category)
+    intent_after_interrupt()
+    if tracking_check_pending && !intent_open && !analysis_needs_reopen { tracking_schedule_check() }
+}
+fn agent_task_record_metrics(task, published, result, state, category){
+    if task["metrics_recorded"] == true { return }
+    task.metrics_recorded = true
     let calls = agent_launch_calls[task.kind] if calls == nil { calls = 0 } agent_launch_calls[task.kind] = calls + 1
     agent_metrics_record({task_type: task.kind task_id: task.id started_at: task.started sample_origin: agent_metrics_origin launch_id: agent_launch_id call_phase: if calls == 0 {"cold"} else {"warm"}
         recall_seconds: task.recall_seconds session_seconds: task.session_seconds model_seconds: task.model_seconds
         enrichment_seconds: task.enrichment_seconds
         validation_seconds: task.validation_seconds publish_seconds: time_now() - published
         total_seconds: time_now() - task.started input_bytes: task.input_bytes output_bytes: task.output_bytes
-        error_category: analysis_error_category success: analysis_state == "succeeded" valid_json: result != nil prompt_revision: task.snapshot["prompt_revision"]})
-    intent_after_interrupt()
-    if tracking_check_pending && !intent_open && !analysis_needs_reopen { tracking_schedule_check() }
+        error_category: category error_phase: task["timeout_phase"] repair_count: task.repair_count
+        success: state == "succeeded" valid_json: result != nil prompt_revision: task.snapshot["prompt_revision"]})
 }
-// One bounded correction turn; the original deadline and snapshot remain in force.
+fn agent_task_publication_done(task, saved, error, category){
+    if agent_task == nil { return }
+    if agent_task.id != task.id || !task.publication_pending { return }
+    task.publication_pending = false
+    if task.publication_timer != nil { stop_timer(task.publication_timer) task.publication_timer = nil }
+    analysis_busy = false analysis_terminal = true analysis_state = if saved {"succeeded"} else {if category == "cancelled" {"cancelled"} else {"failed"}}
+    analysis_error = error analysis_error_category = category agent_last_error = error agent_last_category = category
+    task.stage = if saved {"completed"} else {"publication_failed"}
+    let state = analysis_state
+    start_timeout(0.01, || agent_task_record_metrics(task, task.publication_started, task.publication_result, state, category))
+    start_timeout(0.01, || {
+        if agent_task == nil { return }
+        if agent_task.id != task.id { return }
+        agent_progress_handler(task.stage)
+        intent_after_interrupt()
+        if saved && tracking_check_pending && !intent_open && !analysis_needs_reopen { tracking_schedule_check() }
+    })
+}
+fn agent_task_publication_abort(task, error, category){
+    if agent_task == nil { return }
+    if agent_task.id != task.id || !task.publication_pending { return }
+    agent_task_publication_done(task, false, error, category)
+    // Deliver a local publication failure, without interrupting an already
+    // completed host turn. Late storage callbacks cannot acknowledge success.
+    start_timeout(0.01, || {
+        if agent_task == nil { return }
+        if agent_task.id != task.id { return }
+        task.complete({success: false result: task.publication_result error: error category: category task_id: task.id snapshot: task.snapshot}, nil)
+    })
+}
+// Each host turn gets its own bounded wait; a total task deadline and immutable
+// snapshot still bound the original turn plus the single correction.
 fn agent_task_model(task, prompt){
     if agent_task == nil { return }
     if agent_task.id != task.id || task.terminal || task.stopping { return }
@@ -48,13 +134,58 @@ fn agent_task_model(task, prompt){
         if record_string(current) && current != "" { reason = current }
         agent_task_finish(task, "failed", reason, "stale_context", nil) return
     }
+    if task.kind == "tracking_update" && task.repair_count == 0 && !task.preflight_checked {
+        task.preflight_checked = true
+        // Keep a continuation even if the local availability check exhausts
+        // one native slice. The next slice proceeds once, never stalls here.
+        start_timeout(0.01, || agent_task_model(task, prompt))
+        let local = agent_preflight_handler(task.snapshot)
+        if local != nil {
+            agent_task_stage(task, "validation")
+            let checked = tracking_validate(local, task.snapshot)
+            if checked.valid { checked = tracking_judgment_validate(local, task.snapshot) }
+            if checked.valid { agent_task_finish(task, "succeeded", "", "", checked.result) return }
+        }
+        return
+    }
     task.model_started = time_now()
-    agent_task_stage(task, if task.repair_count == 0 {"model"} else {"repairing"})
+    task.model_pending = true
+    agent_task_stage(task, if task.repair_count == 0 {"model"} else {if agent_compact_retry(task) {"compact_retry"} else {"repairing"}})
+    agent_task_phase_deadline(task, tracking_config.model_timeout_seconds,
+        if task.repair_count == 0 {"助手本轮分析未在时限内返回，已结束检查；可重新检查"} else {if agent_compact_retry(task) {"助手轻量重试未在时限内返回，已结束检查；保留上次判断"} else {"助手格式修正未在时限内返回，已结束检查；可重新检查"}})
+    let received = false
     analysis_host_request("octos.turn.start", {text: prompt}, fn(reply){
         if agent_task == nil { return }
         if agent_task.id != task.id || task.terminal || task.stopping { return }
+        if received { return }
+        received = true
+        agent_task_clear_phase(task)
         task.model_seconds = task.model_seconds + time_now() - task.model_started
-        if !reply.is_ok { agent_task_finish(task, "failed", "Octos 请求失败：" + reply.error, "request_failed", nil) return }
+        task.model_pending = false
+        if !reply.is_ok {
+            if agent_host_turn_timeout(reply["error"]) {
+                task.timeout_phase = task.stage
+                if task.kind == "tracking_update" && task.repair_count == 0 && task.current() == true {
+                    task.repair_count = 1 task.timeout_retry_count = 1
+                    if agent_output_retry_handler(task) { task.timeout_phase = "" return }
+                }
+                agent_task_finish(task, "failed", "助手在宿主轮次时限内未完成，已结束检查；保留上次判断。可检查助手连接或稍后重试。", "timeout", nil) return
+            }
+            if agent_output_truncated(reply["error"]) {
+                if task.kind == "tracking_update" && task.repair_count == 0 && task.current() == true {
+                    task.repair_count = 1 task.output_retry_count = 1
+                    if agent_output_retry_handler(task) { return }
+                }
+                let message = "助手回复因输出额度被截断，未取得完整判断；保留上次结果。"
+                if task.output_retry_count > 0 { message = "助手简短重试仍未完整返回，已结束检查；保留上次结果。请缩小关注范围或核对宿主输出额度。" }
+                agent_task_finish(task, "failed", message, "output_truncated", nil) return
+            }
+            let category = "request_failed"
+            if record_string(reply["error"]) && regex("timeout|timed out|超时", "i").test(reply.error) {
+                category = "timeout" task.timeout_phase = task.stage
+            }
+            agent_task_finish(task, "failed", "Octos 请求失败：" + reply.error, category, nil) return
+        }
         let current = task.current()
         if current != true {
             let reason = "关注、日程、证据或决定已变化，请重新检查"
@@ -68,8 +199,10 @@ fn agent_task_model(task, prompt){
         let checked = tracking_parse(model_text, task.kind, task.snapshot)
         task.validation_seconds = task.validation_seconds + time_now() - validation_started
         if !checked.valid {
-            if task.kind == "tracking_update" && task.repair_count == 0 && record_contains(["invalid_schema" "invalid_reference" "invalid_json"], checked.error) {
-                let correction = task.prompt + tracking_repair_prompt + checked.message
+            if (task.kind == "tracking_update" || task.kind == "parse_intent") && task.repair_count == 0 && record_contains(["invalid_schema" "invalid_reference" "invalid_json"], checked.error) {
+                let repair_prompt = tracking_repair_prompt
+                if task.kind == "parse_intent" { repair_prompt = intent_repair_prompt }
+                let correction = task.prompt + repair_prompt + checked.message
                 if correction.to_bytes().len() <= tracking_config.max_prompt_bytes {
                     task.repair_count = 1 task.input_bytes = task.input_bytes + correction.to_bytes().len()
                     agent_task_stage(task, "repairing")
@@ -82,41 +215,76 @@ fn agent_task_model(task, prompt){
         agent_task_finish(task, "succeeded", "", "", checked.result)
     })
 }
-fn agent_task_start(kind, snapshot, prompt, current, complete){
-    if analysis_busy || octos_testing || analysis_needs_reopen { return "助手忙碌或中断未确认，请稍后重试" }
+fn agent_task_start(kind, snapshot, prompt, current, complete, async_publication = false){
+    if analysis_busy || tracking_save_active || octos_testing || analysis_needs_reopen { return "助手忙碌或中断未确认，请稍后重试" }
     agent_task_counter = agent_task_counter + 1
     let task = {id: "tracking-" + time_now() + "-" + agent_task_counter kind: kind snapshot: snapshot
-        current: current complete: complete terminal: false stopping: false timer: nil interrupt_timer: nil
+        current: current complete: complete terminal: false stopping: false timer: nil phase_timer: nil progress_timer: nil interrupt_timer: nil wait_generation: 0 model_pending: false
+        async_publication: async_publication publication_pending: false publication_timer: nil publication_result: nil
         stop_state: "cancelled" stop_error: "已取消请求" stop_category: "cancelled"
-        started: time_now() stage: "session" session_started: time_now() model_started: 0
+        started: time_now() stage: "session" phase_started: time_now() session_started: time_now() model_started: 0 timeout_phase: ""
         recall_seconds: 0 enrichment_seconds: 0 session_seconds: 0 model_seconds: 0 validation_seconds: 0
-        input_bytes: prompt.to_bytes().len() output_bytes: 0 repair_count: 0 prompt: prompt}
+        input_bytes: prompt.to_bytes().len() output_bytes: 0 repair_count: 0 output_retry_count: 0 timeout_retry_count: 0 preflight_checked: false prompt: prompt}
     if kind == "tracking_update" { task.recall_seconds = tracking_recall_seconds task.enrichment_seconds = tracking_enrichment_seconds task.started = tracking_started_at }
     agent_task = task analysis_request_id = task.id
     analysis_busy = true analysis_terminal = false analysis_state = "running"
     analysis_error = "" analysis_error_category = ""
-    agent_task_stage(task, "session")
     if prompt.to_bytes().len() > tracking_config.max_prompt_bytes { agent_task_finish(task, "failed", "上下文超过宿主32 KiB限制，未发送", "invalid_schema", nil) return "" }
     if !analysis_host_has("octos.session.open") || !analysis_host_has("octos.turn.start") || !analysis_host_has("octos.turn.interrupt") {
         agent_task_finish(task, "failed", "当前宿主未提供 Octos 服务；新闻浏览仍可使用", "service_unavailable", nil) return ""
     }
-    task.timer = start_timeout(tracking_config.request_timeout_seconds, || agent_task_stop("failed", "请求超时", "timeout"))
-    analysis_host_request("octos.session.open", {}, fn(opened){
+    let timeout = tracking_config.request_timeout_seconds
+    if kind == "tracking_update" { timeout = tracking_config.total_timeout_seconds }
+    task.timer = start_timeout(timeout, || {
         if agent_task == nil { return }
         if agent_task.id != task.id || task.terminal || task.stopping { return }
-        if !opened.is_ok { agent_task_finish(task, "failed", "Octos 上下文失败：" + opened.error, "service_unavailable", nil) return }
-        task.session_seconds = time_now() - task.session_started
-        agent_task_model(task, prompt)
+        task.timeout_phase = "total"
+        agent_task_stop("failed", "分析总等待时间已达上限，已结束检查；可重新检查", "timeout")
+    })
+    if kind == "tracking_update" {
+        agent_task_phase_deadline(task, tracking_config.session_timeout_seconds, "连接助手超时，已结束检查；请检查助手服务后重试")
+        task.progress_timer = start_interval(5, || {
+            if agent_task == nil { return }
+            if agent_task.id != task.id || task.terminal || task.stopping { return }
+            agent_progress_handler(task.stage)
+        })
+    }
+    let opened_received = false
+    // Establish the owner's deadlines and connection continuation before any
+    // progress rendering can exhaust this native entry. Host requests still
+    // carry the same task correlation and service parameters.
+    start_timeout(0.01, || {
+        if agent_task == nil { return }
+        if agent_task.id != task.id || task.terminal || task.stopping { return }
+        analysis_host_request("octos.session.open", {}, fn(opened){
+            if agent_task == nil { return }
+            if agent_task.id != task.id || task.terminal || task.stopping { return }
+            if opened_received { return } opened_received = true
+            agent_task_clear_phase(task)
+            if !opened.is_ok { agent_task_finish(task, "failed", "Octos 上下文失败：" + opened.error, "service_unavailable", nil) return }
+            task.session_seconds = time_now() - task.session_started
+            agent_task_model(task, prompt)
+        })
+    })
+    start_timeout(0.01, || {
+        if agent_task == nil { return }
+        if agent_task.id != task.id || task.terminal || task.stopping || task.stage != "session" { return }
+        agent_task_stage(task, "session")
     })
     ""
 }
 fn agent_task_stop(state, error, category){
     if agent_task == nil { return }
     let task = agent_task
+    if task["publication_pending"] == true { agent_task_publication_abort(task, "保存已停止，结果保留，可重试保存", "cancelled") return }
     if task.terminal || task.stopping { return }
     task.stopping = true task.stop_state = state task.stop_error = error task.stop_category = category
+    if task["model_pending"] == true {
+        task.model_seconds = task.model_seconds + time_now() - task.model_started task.model_pending = false
+    }
     analysis_terminal = true
     if task.timer != nil { stop_timer(task.timer) task.timer = nil }
+    agent_task_clear_wait(task)
     task.interrupt_timer = start_timeout(tracking_config.interrupt_timeout_seconds, || agent_task_stop_ack(task, false))
     analysis_host_request("octos.turn.interrupt", {}, fn(reply){ agent_task_stop_ack(task, reply.is_ok) })
     tracking_ui_update()
@@ -131,7 +299,9 @@ fn agent_task_stop_ack(task, acknowledged){
 fn analysis_cancel(){
     tracking_check_pending = false
     if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) tracking_auto_timer = nil }
+    if tracking_save_active && !analysis_busy { tracking_cancel_save() return }
     if tracking_status == "recalling" || tracking_status == "enriching" {
+        tracking_preparation_clear()
         if tracking_recall_targets != nil { check_states_record(tracking_recall_targets, "failed", "cancelled", false) }
         evidence_generation = evidence_generation + 1
         tracking_recall_generation = tracking_recall_generation + 1 tracking_status = "cancelled" tracking_message = "已停止候选召回"

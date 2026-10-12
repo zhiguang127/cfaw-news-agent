@@ -23,10 +23,13 @@ ORDER = [
     'src/data/storage/schedule_time.splash',
     'src/data/storage/weather.splash',
     'src/data/storage/topics.splash',
+    'src/data/storage/topics_restore.splash',
+    'src/data/storage/tracking_save.splash',
     'src/data/storage/agent_metrics.splash',
     'src/data/storage/agent_preferences.splash',
     'src/data/storage/schedule_actions.splash',
     'src/data/storage/check_states.splash',
+    'src/data/retrieval/categories.splash',
     'src/data/retrieval/interests.splash',
     'src/data/retrieval/tracking.splash',
     'src/data/retrieval/bm25.splash',
@@ -52,13 +55,18 @@ ORDER = [
     'src/app/controller.splash',
     'src/app/presets.splash',
     'src/app/tracking.splash',
+    'src/app/tracking_preparation.splash',
     'src/app/insights.splash',
+    'src/app/results.splash',
+    'src/app/follow_topics.splash',
+    'src/app/follow_navigation.splash',
     'src/app/continuous_tracking.splash',
     'src/app/trip_review.splash',
     'src/app/reschedule.splash',
     'src/app/intent_motion.splash',
     'src/app/orb_drag.splash',
     'src/app/intents.splash',
+    'src/app/intent_preview.splash',
     'src/app/life_scenarios.splash',
     'src/app/feed_presentation.splash',
     'src/app/weather.splash',
@@ -69,6 +77,8 @@ ORDER = [
     'src/frontend/components/intent_panel.splash',
     'src/frontend/pages/feed.splash',
     'src/frontend/pages/tracking.splash',
+    'src/frontend/pages/follow_topics.splash',
+    'src/frontend/pages/follow_evidence.splash',
     'src/frontend/pages/bookmarks.splash',
     'src/frontend/pages/account.splash',
     'src/frontend/pages/schedule.splash',
@@ -91,7 +101,7 @@ def source_catalog(root=ROOT):
         url = urlsplit(source['url'])
         if url.scheme != 'https' or not url.hostname or url.username or url.password:
             raise ValueError(f"Invalid source URL: {source['id']}")
-        if source['kind'] not in {'rss', 'google', 'digest', 'hn'}:
+        if source['kind'] not in {'rss', 'atom', 'google', 'digest', 'hn'}:
             raise ValueError(f"Unsupported source kind: {source['id']}")
     return catalog
 

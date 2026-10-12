@@ -1,0 +1,107 @@
+// Presentation categories are derived from validated judgments and saved decisions.
+let results_tab = "todo"
+let results_expanded = {}
+let results_feedback = ""
+fn results_group(value){
+    if value.state == "withdrawn" { return "todo" }
+    if value.state == "handled" || value.state == "dismissed" { return "record" }
+    if value.run.result["judgment_origin"] == "no_related_evidence" { return "watch" }
+    if value.state == "watch" { return "watch" }
+    if value.insight.decision_effect == "unknown" || value.insight.decision_effect == "review" { return "todo" }
+    "watch"
+}
+fn results_key(value){
+    value.run["task_id"] + ":" + value.insight.target_type + ":" + value.insight.target_id + ":" + value.insight.target_version + ":" + value.insight.issue_key
+}
+fn results_pending_count(){
+    let count = 0
+    for item in suggestion_history { if item.state == "pending" || item.state == "needs_review" { count = count + 1 } }
+    count
+}
+fn results_board(){
+    let values = current_insights()
+    let counts = {todo: results_pending_count() watch: 0 record: 0}
+    for value in values {
+        let group = results_group(value)
+        if group == "todo" { counts.todo = counts.todo + 1 }
+        else if group == "watch" { counts.watch = counts.watch + 1 }
+        else { counts.record = counts.record + 1 }
+    }
+    for a in schedule_actions.items { if a.state == "prepared" { counts.todo = counts.todo + 1 } }
+    let reminders = tracking_active_reminders()
+    counts.todo = counts.todo + reminders.len()
+    {values: values counts: counts reminders: reminders}
+}
+fn results_count(board){
+    if results_tab == "todo" { return board.counts.todo }
+    if results_tab == "watch" { return board.counts.watch }
+    board.counts.record
+}
+fn results_open(){
+    results_expanded = {} results_feedback = ""
+    let board = results_board()
+    results_tab = "todo"
+    if board.counts.todo == 0 && board.counts.watch > 0 { results_tab = "watch" }
+}
+fn results_select(tab){ results_tab = tab results_pending_offset = 0 ui.results_content.render() }
+fn results_toggle(value){
+    let key = results_key(value)
+    results_expanded[key] = results_expanded[key] != true
+    ui.results_content.render()
+}
+fn results_decide(value, state){
+    // Never move a card or claim a saved decision before the storage owner succeeds.
+    results_feedback = ""
+    if !insight_decide(value, state) {
+        results_feedback = "决定未保存，请查看错误提示后重试。"
+        ui.results_content.render()
+        return false
+    }
+    if state == "watch" { results_feedback = "已移到观察；有实质新证据时重新提示。" results_tab = "watch" }
+    else if state == "handled" { results_feedback = "已记录为已处理；这只是你的决定，不代表工具已经替你执行。" results_tab = "record" }
+    else { results_feedback = "已记录为不采纳；同样的证据不会重复提醒。" results_tab = "record" }
+    ui.results_content.render()
+    true
+}
+fn results_heading(value){
+    if value.state == "withdrawn" { return "此前建议已撤回" }
+    if value.state == "handled" { return "你已标记处理" }
+    if value.state == "dismissed" { return "你已决定不采纳" }
+    if value.state == "watch" { return "你选择继续观察" }
+    if value.insight.change_kind == "unchanged" { return "本轮未确认实质变化" }
+    if value.insight.decision_effect == "unknown" { return "先核实，再决定" }
+    if value.insight.decision_effect == "review" { return "当前条件需要核实" }
+    "本轮暂不新增行动"
+}
+// Candidate counts are not relevant-news counts. Keep historical facts separate.
+fn results_news(value){
+    let rows = []
+    if !record_array(value.run.result["items"]) { return rows }
+    for item in value.run.result.items {
+        if !insight_item_matches(item, value.insight) { continue }
+        let e = tracking_find(value.run.snapshot.evidence, "news_id", item.news_id)
+        if e != nil { rows.push({evidence: e relevance: item.relevance}) }
+    }
+    rows
+}
+fn results_cited_news(value){
+    let rows = []
+    for row in results_news(value) { if record_contains(value.insight.evidence_ids, row.evidence.news_id) { rows.push(row.evidence) } }
+    rows
+}
+fn results_situation(value){
+    // Older saved output can contain an unrelated forced citation. Do not
+    // present that model prose as this goal's current supported situation.
+    if value.insight.evidence_ids.len() > results_cited_news(value).len() {
+        return "本轮没有可支持这条判断的相关来源。下方上次情况仅供回顾，不能当作本期新进展；请重新检查。"
+    }
+    insight_prose(value.run, value.insight.summary)
+}
+fn results_next_step(value){
+    if value.state == "withdrawn" { return "请查看撤回原因，重新核对此前决定；不要继续沿用已撤回的建议。" }
+    if results_group(value) == "record" { return "决定已保存。目标继续保留，有实质新证据时再检查。" }
+    if value.insight.evidence_ids.len() > results_cited_news(value).len() { return "重新检查此目标的相关新闻，取得相关依据后再判断。" }
+    if record_string(value.insight["next_step"]) && value.insight.next_step.trim() != "" { return insight_prose(value.run, value.insight.next_step) }
+    if results_group(value) == "watch" { return "目前无需新增安排；继续关注后续有依据的变化。" }
+    "先查看来源，核实适用范围、使用条件与限制，再决定是否行动。"
+}

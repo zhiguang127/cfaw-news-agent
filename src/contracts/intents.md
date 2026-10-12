@@ -14,6 +14,10 @@ start/end 为带正确本地偏移、秒为 00 的 RFC3339；支持 Asia/Shangha
 
 topics_v2.json 继续使用 schema_version 2。草稿新增可选 intent_kind（goal/news/schedule）、schedule_timezone、schedule_understanding、schedule_prompt_revision。没有 intent_kind 的旧草稿/关注按 news 读取；确认后的关注也保留 intent_kind（goal/news），修改时恢复原模式。原有 understanding 与关注字段保持原契约。关注的可选 demo_preset 为布尔标记；编辑确认将其转为用户关注。schedule 的 ready 草稿需要完整 schedule_understanding；切换模式、时区或修改输入使旧理解失效。关闭保留草稿，丢弃只清理当前草稿。
 
+新闻/目标关注的 ready 草稿允许可选 `understanding_edit` 编辑缓冲：title、purpose、scope_text、preferences、keywords 均为原始文本（每框最多1000字符），extra_rules 为0至6条原 source/category 规则；它们可移除，关键词规则由 keywords 每行重建。scope_text 应用后写入 understanding 的 JSON 字段 scope；避免使用 Splash 的保留字 scope 作为对象字面量字段。缓冲可以暂时为空，原 understanding 仍须完整有效。编辑期间不提供最终确认或重新整理，存储 owner 也拒绝绕过应用修改直接确认；未应用的内容仅作为草稿持久化，重开恢复。旧草稿没有此字段仍兼容，无需清理已有数据。
+
+“应用修改”去除两端空白和空行，对列表去重，校验名称≤120、目的≤400、范围1至6项×160、偏好0至6项×160、检索规则1至6项×120及已知分类，再整份替换 understanding，清除编辑缓冲。此操作不调用模型、不创建正式关注；保存失败保留原理解与编辑内容。“放弃本次修改”仅清除缓冲，回到进入编辑时的理解。实际变化递增草稿版本，旧请求不能覆盖编辑；模式、时区或原输入变化使理解及编辑缓冲一起失效。最终确认继续沿用原关注版本/状态检查和事务保存，用户修改后的字段供后续分析与检索使用。
+
 确认日程后调用日程存储 owner，刷新磁盘记录、验证时间和冲突再写入；不开启改期、不修改已有日程。schedules_v1.json 的 schema 1 新增可选 origin_intent_id，旧记录缺字段仍有效。该字段由应用草稿 ID 生成，不取自模型，用于确认重试的幂等检查；同 ID 的内容不一致则拒绝重试。
 
 日程写入后再清理草稿。清理失败会明确说明日程已保存，再次确认返回同一日程，不重复创建。写入失败或冲突保留草稿供调整；解析和模型完成回调均不授权保存。

@@ -1,126 +1,203 @@
 fn results_pending_page(offset){ results_pending_offset = offset ui.results_content.render() }
 let AnalysisResultsPage = View{visible: false width: Fill height: Fill flow: Down
-    results_content := ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 12 on_render: || {
-        Section{text: "本轮目标变化"}
-        Small{text: "从你的目标出发，核对来源，再决定下一步。"}
-        if results_show_all_insights { QuietButton{text: "只看需要关注的判断" on_click: || {results_show_all_insights = false ui.results_content.render()}} }
-        else { QuietButton{text: "查看本轮全部判断与决定" on_click: || {results_show_all_insights = true ui.results_content.render()}} }
-        let insights = []
-        for value in current_insights() {
-            if results_show_all_insights || value.state == "pending" || value.state == "watch" || value.state == "withdrawn" { insights.push(value) }
+    View{width: Fill height: 38 flow: Right padding: Inset{left: 12 right: 18} align: Align{y: 0.5}
+        QuietButton{text: "‹ 我的关注" on_click: || select_page("tracking")}
+        Small{text: "建议记录与待确认事项" align: Align{x: 1.0}}
+    }
+    results_content := View{width: Fill height: Fill flow: Down spacing: 0 on_render: || {
+        let board = results_board()
+        View{width: Fill height: Fit flow: Down padding: Inset{left: 20 right: 20 top: 16 bottom: 12} spacing: 8
+            Heading{text: if board.counts.todo > 0 {"有 " + board.counts.todo + " 项需要你决定"} else if board.values.len() > 0 {"本轮暂不新增行动"} else {"让新闻变成下一步"}}
+            if results_feedback != "" { Small{text: results_feedback draw_text.color: accent} }
+            else { Small{text: "先了解相关新闻与当前情况，再决定下一步。"} }
+            if tracking_in_progress() {
+                Small{text: tracking_message draw_text.color: accent max_lines: 3}
+                QuietButton{text: "停止检查" on_click: || analysis_cancel()}
+            } else if tracking_pending_run != nil {
+                Small{text: "本轮结果尚未保存，请先重试。" draw_text.color: accent}
+                SecondaryButton{text: "重试保存结果" on_click: || tracking_retry_save()}
+            } else if !analysis_has_focus() {
+                SecondaryButton{text: "添加我的目标" on_click: || intent_begin(nil)}
+            } else {
+                View{width: Fill height: 30 flow: Right spacing: 8
+                    QuietButton{text: "重新检查关注与日程" on_click: || {results_feedback = "" tracking_start(nil)}}
+                    LinkButton{text: "表达新目标" on_click: || intent_begin(nil)}
+                }
+            }
+            View{width: Fill height: 36 flow: Right spacing: 6
+                if results_tab == "todo" { FilterActive{text: "待办 " + board.counts.todo on_click: || results_select("todo")} }
+                else { Filter{text: "待办 " + board.counts.todo on_click: || results_select("todo")} }
+                if results_tab == "watch" { FilterActive{text: "观察 " + board.counts.watch on_click: || results_select("watch")} }
+                else { Filter{text: "观察 " + board.counts.watch on_click: || results_select("watch")} }
+                if results_tab == "record" { FilterActive{text: "记录 " + board.counts.record on_click: || results_select("record")} }
+                else { Filter{text: "记录 " + board.counts.record on_click: || results_select("record")} }
+            }
         }
-        if insights.len() == 0 { Small{text: "尚无当前有效的目标变化；可先保存关注并检查。"} }
-        for value in insights {
-            Section{text: value.title}
-            Small{text: insight_label(value)}
-            let goal = insight_goal(value)
-            if goal != nil {
+        Divider{}
+        results_cards := ScrollYView{width: Fill height: Fill flow: Down padding: 20 spacing: 14
+            if tracking_status == "failed" || tracking_status == "stale" || tracking_status == "no_candidates" || tracking_status == "cancelled" {
+                Small{text: tracking_message draw_text.color: accent}
+                Small{text: "检查未得到新判断；下方保留最近一次仍有效的结果。"}
+            }
+            if analysis_state == "failed" || analysis_needs_reopen {
+                Small{text: analysis_error_hint() draw_text.color: accent}
+                QuietButton{text: "查看具体原因" on_click: || {results_show_error_detail = !results_show_error_detail ui.results_content.render()}}
+                if results_show_error_detail { Small{text: analysis_error} }
+            }
+            if history_dirty {
+                Small{text: "新闻分析结果尚未完整保存。" draw_text.color: accent}
+                SecondaryButton{text: "重试保存" on_click: || retry_analysis_save()}
+            }
+            if analysis_history_warning != "" { Small{text: analysis_history_warning draw_text.color: accent} }
+            if results_count(board) == 0 {
+                if results_tab == "todo" {
+                    Section{text: "暂时没有需要处理的建议"}
+                    Small{text: if board.values.len() > 0 {"可在观察中查看本轮判断，在记录中查看你的决定。"} else {"先保存一个关注或日程，再检查相关新闻。没有证据时不会生成行动建议。"}}
+                } else if results_tab == "watch" { Small{text: "暂无观察项。待办中的建议可以选择继续观察。"} }
+                else { Small{text: "还没有本轮有效判断的决定记录。处理待办后，决定会显示在这里。"} }
+            }
+            if reschedule_preview != nil {
+                let s = tracking_find(reschedule_preview.run.snapshot.schedules, "schedule_id", reschedule_preview.insight.target_id)
+                let p = reschedule_preview.insight.reschedule
                 Box{
-                    Small{text: "我的目标" draw_text.color: accent}
-                    if goal.purpose != "" { Text{text: goal.purpose} }
-                    for preference in goal.preferences { Small{text: "约束与偏好：" + preference} }
+                    Section{text: "确认应用内改期"}
+                    Text{text: "原安排：" + schedule_display_time(s.start, s.timezone) + " → " + schedule_display_time(s.end, s.timezone)}
+                    Text{text: "新安排：" + schedule_display_time(p.start, s.timezone) + " → " + schedule_display_time(p.end, s.timezone)}
+                    Small{text: p.reason}
+                    for uncertainty in reschedule_preview.insight.uncertainties { Small{text: "未知项：" + uncertainty} }
+                    for ref in p.evidence_refs { Text{text: ref.paragraph_id + "：" + ref.quote} }
+                    Primary{width: Fill text: "确认并保存改期" on_click: || reschedule_confirm()}
+                    SecondaryButton{width: Fill text: "继续原计划并记录决定" on_click: || reschedule_keep_original()}
+                    QuietButton{text: "取消提案" on_click: || {reschedule_preview = nil ui.results_content.render()}}
                 }
             }
-            Small{text: insight_decision_effect(value) draw_text.color: accent}
-            let comparison = insight_comparison(value)
-            if comparison != nil {
+            for value in board.values {
+                if results_group(value) != results_tab { continue }
+                let expanded = results_expanded[results_key(value)] == true
+                let news = results_news(value)
                 Box{
-                    Small{text: "上次判断 · " + age_label(comparison.checked_at)}
-                    Text{text: comparison.insight.summary}
-                    if comparison.insight.next_step != nil { Small{text: "当时的下一步：" + comparison.insight.next_step} }
-                }
-                Section{text: "这次判断"}
-            } else if value.insight.change_kind == "updated" || value.insight.change_kind == "withdrawn" {
-                Small{text: "本轮引用了此前检查；旧判断已不在保留记录中，无法展示完整对照。"}
-            }
-            Text{text: value.insight.summary}
-            if record_string(value.insight["material_change"]) && value.insight.material_change != "" {
-                Small{text: "改变判断的新事实：" + value.insight.material_change draw_text.color: accent}
-            }
-            if value.insight.change_kind == "unchanged" { Small{text: "本轮没有报告实质变化，保留已有决定。"} }
-            if value.state == "withdrawn" { Small{text: "此前判断已撤回；请按本轮证据重新核对。" draw_text.color: accent} }
-            if value.insight.next_step != nil { Small{text: "下一步核实：" + value.insight.next_step} }
-            for uncertainty in value.insight.uncertainties { Small{text: "待核实：" + uncertainty} }
-            for id in value.insight.evidence_ids {
-                let e = tracking_find(value.run.snapshot.evidence, "news_id", id)
-                Small{text: "来源：" + e.title}
-                if e.paragraphs.len() == 0 { Small{text: "标题/摘要证据 · " + e.body_error} }
-                else if e.body_truncated { Small{text: "有界正文证据 · 部分段落已截断"} }
-                if record_array(value.insight["evidence_refs"]) {
-                    for ref in value.insight.evidence_refs {
-                        if ref.news_id == id { Small{text: "原文依据 · " + ref.paragraph_id} Text{text: ref.quote} }
+                    Section{text: value.title}
+                    Small{text: results_heading(value) + " · " + age_label(value.run.checked_at) draw_text.color: accent}
+                    Section{text: "相关新闻"}
+                    Small{text: "本轮检查 " + value.run.snapshot.evidence.len() + " 篇候选，筛选出 " + news.len() + " 篇相关或待核实报道；仅覆盖当前来源。" max_lines: 4}
+                    if news.len() == 0 { Text{text: "本期未找到与此目标有关的报道，不代表没有产品进展。"} }
+                    for i row in news {
+                        if i >= 3 && !expanded { continue }
+                        Text{text: row.evidence.title}
+                        Small{text: if row.relevance == "uncertain" {"关联待核实 · " + evidence_summary_label(row.evidence)} else {evidence_summary_label(row.evidence)} max_lines: 4}
+                    }
+                    if news.len() > 3 && !expanded { Small{text: "展开判断依据可查看其余 " + (news.len() - 3) + " 篇报道。"} }
+                    Section{text: "当前情况"}
+                    Text{text: results_situation(value)}
+                    if value.insight.change_kind == "unchanged" { Text{text: "本轮没有确认新增实质依据，保留已有判断。"} }
+                    if news.len() == 0 {
+                        let previous = insight_comparison(value)
+                        if previous != nil {
+                            Small{text: "上次已知情况 · " + age_label(previous.checked_at) + " · 本轮未重新证实" max_lines: 3}
+                            Text{text: insight_prose(previous.run, previous.insight.summary)}
+                        }
+                    }
+                    for uncertainty in value.insight.uncertainties { Text{text: "尚不清楚：" + insight_prose(value.run, uncertainty)} }
+                    Divider{}
+                    Section{text: if results_tab == "todo" {"建议下一步"} else if results_tab == "watch" {"现在怎么做"} else {"你的决定"}}
+                    Text{text: results_next_step(value)}
+                    if results_tab == "todo" {
+                        if value.state == "withdrawn" {
+                            Small{text: insight_prose(value.run, value.insight.summary)}
+                            Primary{width: Fill text: if expanded {"收起撤回依据"} else {"查看撤回依据"} on_click: || results_toggle(value)}
+                        } else if insight_can_verify(value) {
+                            Small{text: "相关来源尚缺正文；补充后再判断是否适合你。"}
+                            Primary{width: Fill text: "补充正文并重新判断" on_click: || insight_verify(value)}
+                        } else if value.insight["reschedule"] != nil {
+                            Primary{width: Fill text: "预览改期提案" on_click: || reschedule_begin(value)}
+                        } else {
+                            Primary{width: Fill text: if expanded {"收起判断依据"} else {"查看判断依据"} on_click: || results_toggle(value)}
+                        }
+                    }
+                    if value.state != "withdrawn" && (results_tab != "todo" || insight_can_verify(value) || value.insight["reschedule"] != nil) {
+                        QuietButton{text: if expanded {"收起判断依据"} else {"查看判断依据"} on_click: || results_toggle(value)}
+                    }
+                    if expanded {
+                        Divider{}
+                        Section{text: "判断依据与上次对照"}
+                        if record_string(value.insight["material_change"]) && value.insight.material_change != "" {
+                            Small{text: "改变判断的新事实：" + insight_prose(value.run, value.insight.material_change)}
+                        }
+                        let goal = insight_goal(value)
+                        if goal != nil {
+                            Small{text: "对应我的目标：" + goal.purpose}
+                            for preference in goal.preferences { Small{text: "约束与偏好：" + preference} }
+                        }
+                        let comparison = insight_comparison(value)
+                        if comparison != nil && news.len() > 0 {
+                            Small{text: "上次判断 · " + age_label(comparison.checked_at)}
+                            Text{text: insight_prose(comparison.run, comparison.insight.summary)}
+                        } else if comparison == nil && (value.insight.change_kind == "updated" || value.insight.change_kind == "withdrawn") {
+                            Small{text: "此前判断不在保留记录中，无法展示完整对照。"}
+                        }
+                        if value.insight.change_kind == "unchanged" { Small{text: "本轮没有新增实质依据；保留你已有的决定。"} }
+                        if value.insight.evidence_ids.len() == 0 { Small{text: "本轮没有可展开的来源引用。"} }
+                        for e in results_cited_news(value) {
+                            let id = e.news_id
+                            Section{text: "来源：" + e.title}
+                            Small{text: insight_basis_label(value.insight, e)}
+                            if e.paragraphs.len() == 0 { Small{text: e.body_error} }
+                            else if e.body_truncated { Small{text: "正文证据已截取部分段落"} }
+                            if record_array(value.insight["evidence_refs"]) {
+                                for ref in value.insight.evidence_refs { if ref.news_id == id { Text{text: ref.quote} } }
+                            }
+                            SecondaryButton{width: Fill text: "查看来源与引用段落" on_click: || insight_open_evidence(value, id)}
+                        }
+                        if results_tab == "todo" && value.state != "withdrawn" && value.insight["next_step"] != nil {
+                            SecondaryButton{width: Fill text: "把核实安排到日程" on_click: || insight_plan_check(value)}
+                        }
+                        if value.state != "withdrawn" && value.insight["reschedule"] != nil && insight_can_verify(value) {
+                            SecondaryButton{width: Fill text: "预览改期提案" on_click: || reschedule_begin(value)}
+                        }
+                    }
+                    if results_tab != "record" && value.state != "withdrawn" {
+                        Divider{}
+                        Small{text: "这条建议对你有用吗？"}
+                        View{width: Fill height: 32 flow: Right spacing: 4
+                            if value.state != "watch" { QuietButton{text: "继续观察" on_click: || results_decide(value, "watch")} }
+                            QuietButton{text: "已处理" on_click: || results_decide(value, "handled")}
+                            QuietButton{text: "不采纳" on_click: || results_decide(value, "dismissed")}
+                        }
                     }
                 }
-                SecondaryButton{text: "查看来源与引用段落" on_click: || insight_open_evidence(value, id)}
             }
-            if value.insight.next_step != nil && value.state != "withdrawn" {
-                SecondaryButton{text: "把核实安排到日程" on_click: || insight_plan_check(value)}
-            }
-            if value.state != "withdrawn" {
-                View{width: Fill height: Fit flow: Right spacing: 6
-                    QuietButton{text: "观察" on_click: || insight_decide(value, "watch")}
-                    QuietButton{text: "已处理" on_click: || insight_decide(value, "handled")}
-                    QuietButton{text: "忽略" on_click: || insight_decide(value, "dismissed")}
+            if results_tab == "todo" {
+                for a in schedule_actions.items {
+                    if a.state != "prepared" { continue }
+                    Section{text: "待完成的改期"}
+                    Small{text: a.original.title + " · " + schedule_action_state_label(a.state)}
+                    Small{text: "原：" + schedule_display_time(a.original.start, a.original.timezone) + " → " + schedule_display_time(a.original.end, a.original.timezone)}
+                    Small{text: "新：" + schedule_display_time(a.start, a.original.timezone) + " → " + schedule_display_time(a.end, a.original.timezone)}
+                    SecondaryButton{text: "恢复已确认的改期记录" on_click: || {notice(reschedule_resume(a.action_id)) tracking_ui_update()}}
                 }
-            }
-            if value.insight["reschedule"] != nil { SecondaryButton{text: "预览改期提案" on_click: || reschedule_begin(value)} }
-            Divider{}
-        }
-        if reschedule_preview != nil {
-            let s = tracking_find(reschedule_preview.run.snapshot.schedules, "schedule_id", reschedule_preview.insight.target_id)
-            let p = reschedule_preview.insight.reschedule
-            Section{text: "确认应用内改期"}
-            Text{text: "原安排：" + schedule_display_time(s.start, s.timezone) + " → " + schedule_display_time(s.end, s.timezone)}
-            Text{text: "新安排：" + schedule_display_time(p.start, s.timezone) + " → " + schedule_display_time(p.end, s.timezone)}
-            Small{text: p.reason}
-            for uncertainty in reschedule_preview.insight.uncertainties { Small{text: "未知项：" + uncertainty} }
-            for ref in p.evidence_refs { Text{text: ref.paragraph_id + "：" + ref.quote} }
-            Primary{text: "确认并保存改期" on_click: || reschedule_confirm()}
-            SecondaryButton{text: "继续原计划并记录决定" on_click: || reschedule_keep_original()}
-            QuietButton{text: "取消提案" on_click: || {reschedule_preview = nil ui.results_content.render()}}
-        }
-        for a in schedule_actions.items {
-            if a.state != "prepared" { continue }
-            Section{text: "待完成的改期"}
-            Small{text: a.original.title + " · " + schedule_action_state_label(a.state)}
-            Small{text: "原：" + schedule_display_time(a.original.start, a.original.timezone) + " → " + schedule_display_time(a.original.end, a.original.timezone)}
-            Small{text: "新：" + schedule_display_time(a.start, a.original.timezone) + " → " + schedule_display_time(a.end, a.original.timezone)}
-            if a.state == "prepared" { SecondaryButton{text: "恢复已确认的改期记录" on_click: || {notice(reschedule_resume(a.action_id)) tracking_ui_update()}} }
-        }
-        Section{text: "待关注日程影响"}
-        Small{text: tracking_message max_lines: 5}
-        if tracking_pending_run != nil { SecondaryButton{text: "重试保存结果" on_click: || tracking_retry_save()} }
-        let reminders = tracking_active_reminders()
-        if reminders.len() == 0 { Small{text: "暂无当前有效的日程影响提醒"} }
-        for reminder in reminders {
-            let schedule = schedule_find(reminder.schedule_id)
-            Text{text: "可能影响日程「" + schedule.title + "」：" + reminder.impact_summary}
-            SecondaryButton{text: "查看提醒依据" on_click: || open_story(tracking_current_row(reminder.news_id))}
-        }
-        SecondaryButton{text: "检查关注与日程" on_click: || tracking_start(nil)}
-        Divider{}
-        Section{text: "待确认建议"}
-        if analysis_state == "failed" || analysis_needs_reopen {
-            Small{text: analysis_error_hint() draw_text.color: accent}
-            QuietButton{text: "查看具体原因" on_click: || {results_show_error_detail = !results_show_error_detail ui.results_content.render()}}
-            if results_show_error_detail { Small{text: analysis_error} }
-        }
-        if tracking_in_progress() { Small{text: "分析正在进行，可继续浏览其他页面。"} SecondaryButton{text: "取消分析" on_click: || analysis_cancel()} }
-        if history_dirty { Small{text: "结果尚未完整保存，重开应用可能丢失本次结果。" draw_text.color: accent} SecondaryButton{text: "重试保存" on_click: || retry_analysis_save()} }
-        if analysis_history_warning != "" { Small{text: analysis_history_warning draw_text.color: accent} }
-        let pending = 0
-        for item in suggestion_history {
-            if item.state == "pending" || item.state == "needs_review" {
-                pending = pending + 1
-                if pending > results_pending_offset && pending <= results_pending_offset + 20 {
-                Small{text: history_state_label(item.state)}
-                Text{text: item.change_summary}
-                SecondaryButton{text: "查看证据与建议" on_click: || open_suggestion_record(item.suggestion_id)}
+                let reminders = board.reminders
+                if reminders.len() > 0 { Section{text: "日程影响提醒"} }
+                for reminder in reminders {
+                    let schedule = schedule_find(reminder.schedule_id)
+                    Text{text: "可能影响日程「" + schedule.title + "」：" + reminder.impact_summary}
+                    SecondaryButton{text: "查看提醒依据" on_click: || open_story(tracking_current_row(reminder.news_id))}
+                }
+                if results_pending_count() > 0 {
+                    Section{text: "单篇新闻的待确认建议"}
+                    let pending = 0
+                    for item in suggestion_history {
+                        if item.state != "pending" && item.state != "needs_review" { continue }
+                        pending = pending + 1
+                        if pending > results_pending_offset && pending <= results_pending_offset + 20 {
+                            Small{text: history_state_label(item.state)}
+                            Text{text: item.change_summary}
+                            SecondaryButton{text: "查看证据与建议" on_click: || open_suggestion_record(item.suggestion_id)}
+                        }
+                    }
+                    if results_pending_offset > 0 { SecondaryButton{text: "上一页建议" on_click: || results_pending_page(max(0, results_pending_offset - 20))} }
+                    if pending > results_pending_offset + 20 { SecondaryButton{text: "下一页建议" on_click: || results_pending_page(results_pending_offset + 20)} }
                 }
             }
         }
-        if results_pending_offset > 0 { SecondaryButton{text: "上一页建议" on_click: || results_pending_page(max(0, results_pending_offset - 20))} }
-        if pending > results_pending_offset + 20 { SecondaryButton{text: "下一页建议" on_click: || results_pending_page(results_pending_offset + 20)} }
-        if pending == 0 { Small{text: "暂无待确认建议。可在跟踪页检查关注更新，或分析一条新闻。"} }
     }}
 }

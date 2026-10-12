@@ -1,4 +1,5 @@
 // Short model-facing labels are scoped to one immutable candidate snapshot.
+fn tracking_uses_quote_choices(revision){ record_contains(["tracking-v2.7" "tracking-v2.8" "tracking-v2.9" "tracking-v2.10" "tracking-v2.11"], revision) }
 // Unknown labels stay unknown and are rejected by the existing validators.
 fn tracking_evidence_label(id, snapshot){
     for i evidence in snapshot.evidence { if evidence.news_id == id { return "E" + (i + 1) } }
@@ -12,12 +13,50 @@ fn tracking_expand_ids(ids, snapshot){
     if !record_array(ids) { return ids }
     let out = [] for id in ids { out.push(tracking_evidence_id(id, snapshot)) } out
 }
+// Model choices and resolution share the same Unicode boundaries. The
+// immutable source paragraph, never model-written prose, supplies each quote.
+fn tracking_quote_choices(paragraph){
+    let out = [] let chars = "".to_chars()
+    for cp in paragraph.text.to_chars() {
+        chars.push(cp)
+        if chars.len() == 400 {
+            let text = chars.to_string()
+            if text.trim() != "" { out.push({quote_id: "q" + (out.len() + 1) text: text}) }
+            chars = "".to_chars()
+        }
+    }
+    let text = chars.to_string()
+    if text.trim() != "" { out.push({quote_id: "q" + (out.len() + 1) text: text}) }
+    out
+}
+fn tracking_resolve_quote(ref, snapshot){
+    if ref["quote_id"] == nil { return "" }
+    if !tracking_text(ref.quote_id, 20) || ref.quote_id.trim() == "" { return "quote_id 须为本次正文提供的引用片段编号" }
+    let evidence = tracking_find(snapshot.evidence, "news_id", ref["news_id"])
+    if evidence == nil { return "引用的 news_id 不属于本次候选新闻" }
+    if !record_array(evidence["paragraphs"]) { return "引用新闻没有提供正文段落" }
+    let paragraph = tracking_find(evidence.paragraphs, "paragraph_id", ref["paragraph_id"])
+    if paragraph == nil { return "paragraph_id 不属于该新闻提供的段落，请使用原段落标识" }
+    let choice = tracking_find(tracking_quote_choices(paragraph), "quote_id", ref.quote_id)
+    if choice == nil { return tracking_evidence_label(evidence.news_id, snapshot) + " / " + paragraph.paragraph_id + " 的 quote_id 无效；请从该段 quote_choices 选择片段编号" }
+    // A supplied model quote is commentary, not source data. The selected
+    // three-part reference exclusively determines the stored original quote.
+    ref.quote = choice.text
+    ""
+}
 fn tracking_expand_refs(refs, snapshot){
-    if !record_array(refs) { return }
-    for ref in refs { if record_object(ref) { ref.news_id = tracking_evidence_id(ref["news_id"], snapshot) } }
+    if !record_array(refs) { return "" }
+    for ref in refs { if record_object(ref) {
+        ref.news_id = tracking_evidence_id(ref["news_id"], snapshot)
+        if tracking_uses_quote_choices(snapshot["prompt_revision"]) {
+            let error = tracking_resolve_quote(ref, snapshot)
+            if error != "" { return error }
+        }
+    } }
+    ""
 }
 fn tracking_expand_evidence(value, snapshot){
-    if !tracking_snapshot_valid(snapshot) { return }
+    if !tracking_snapshot_valid(snapshot) { return "候选快照无效" }
     if record_array(value["items"]) {
         for item in value.items {
             if !record_object(item) { continue }
@@ -26,7 +65,8 @@ fn tracking_expand_evidence(value, snapshot){
             if record_array(item["schedule_impacts"]) {
                 for impact in item.schedule_impacts { if record_object(impact) {
                     impact.evidence_ids = tracking_expand_ids(impact["evidence_ids"], snapshot)
-                    tracking_expand_refs(impact["evidence_refs"], snapshot)
+                    let error = tracking_expand_refs(impact["evidence_refs"], snapshot)
+                    if error != "" { return error }
                 } }
             }
         }
@@ -34,8 +74,13 @@ fn tracking_expand_evidence(value, snapshot){
     if record_array(value["insights"]) {
         for insight in value.insights { if record_object(insight) {
             insight.evidence_ids = tracking_expand_ids(insight["evidence_ids"], snapshot)
-            tracking_expand_refs(insight["evidence_refs"], snapshot)
-            if record_object(insight["reschedule"]) { tracking_expand_refs(insight.reschedule["evidence_refs"], snapshot) }
+            let error = tracking_expand_refs(insight["evidence_refs"], snapshot)
+            if error != "" { return error }
+            if record_object(insight["reschedule"]) {
+                let error = tracking_expand_refs(insight.reschedule["evidence_refs"], snapshot)
+                if error != "" { return error }
+            }
         } }
     }
+    ""
 }

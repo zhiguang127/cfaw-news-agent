@@ -56,24 +56,28 @@ let ForecastSky = RoundedView{width: Fill height: Fit flow: Down show_bg: true
         }
     }
 }
-let WeatherHeaderWidget = View{width: 100 height: 46
+let WeatherHeaderWidget = View{width: 132 height: 50
     weather_header_content := View{width: Fill height: Fill on_render: || {
         let city = weather_primary_city()
         let today = weather_today()
         weather_header_hit := GestureView{width: Fill height: Fill on_tap: |x, y| show_weather()
-            RoundedView{width: Fill height: Fill padding: 8 show_bg: true draw_bg.color: #xf0f5fd draw_bg.border_radius: 23.0
+            RoundedView{width: Fill height: Fill padding: Inset{left: 8 right: 8 top: 6 bottom: 6} show_bg: true draw_bg.color: #xf0f5fd draw_bg.border_radius: 25.0
                 View{width: Fill height: Fill flow: Right spacing: 6 align: Align{y: 0.5}
-                    ForecastGlyph{width: 24 height: 24 draw_bg.condition: weather_glyph_condition(today)}
+                    ForecastGlyph{width: 22 height: 22 draw_bg.condition: weather_glyph_condition(today)}
                     View{width: Fill height: Fit flow: Down spacing: 3
                         if city != nil {
-                            Small{text: city.name draw_text.color: editorial_muted max_lines: 1 draw_text.text_style.font_size: 9}
+                            Small{height: Fit padding: 0 text: city.name draw_text.color: editorial_muted max_lines: 1 text_overflow: TextOverflow.Ellipsis
+                                draw_text.text_style.font_size: 9 draw_text.text_style.line_spacing: 1.0}
                             if today != nil {
-                                Text{text: weather_temperature(today.temp_min_c) + " / " + weather_temperature(today.temp_max_c)
-                                    max_lines: 1 draw_text.color: editorial_ink draw_text.text_style: theme.font_bold{font_size: 11}}
-                            } else { Small{text: "查看预报 ›" draw_text.color: editorial_ink max_lines: 1 draw_text.text_style.font_size: 9} }
+                                Text{height: Fit padding: 0 text: weather_temperature(today.temp_min_c) + " / " + weather_temperature(today.temp_max_c)
+                                    max_lines: 1 draw_text.color: editorial_ink draw_text.text_style: theme.font_bold{font_size: 11 line_spacing: 1.0}}
+                            } else { Small{height: Fit padding: 0 text: "查看预报 ›" draw_text.color: editorial_ink max_lines: 1
+                                draw_text.text_style.font_size: 9 draw_text.text_style.line_spacing: 1.0} }
                         } else {
-                            Small{text: "城市天气" draw_text.color: editorial_muted max_lines: 1 draw_text.text_style.font_size: 9}
-                            Small{text: "选择城市 ›" draw_text.color: editorial_ink max_lines: 1 draw_text.text_style.font_size: 9}
+                            Small{height: Fit padding: 0 text: "城市天气" draw_text.color: editorial_muted max_lines: 1
+                                draw_text.text_style.font_size: 9 draw_text.text_style.line_spacing: 1.0}
+                            Small{height: Fit padding: 0 text: "选择城市 ›" draw_text.color: editorial_ink max_lines: 1
+                                draw_text.text_style.font_size: 9 draw_text.text_style.line_spacing: 1.0}
                         }
                     }
                 }

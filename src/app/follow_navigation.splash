@@ -1,0 +1,169 @@
+// Navigation and a user-requested topic queue share the existing Agent owner.
+let follow_view = "overview"
+let follow_topic_id = ""
+let follow_evidence_return = "overview"
+let follow_paused_open = false
+let follow_cards_view = {active: [] paused: []}
+let follow_evidence_rows = []
+let follow_render_pending = false
+let follow_check_running = false
+let follow_check_queue = []
+let follow_check_timer = nil
+let follow_check_total = 0
+let follow_check_completed = 0
+let follow_check_failed = 0
+let follow_check_waiting = nil
+let follow_check_context = ""
+let follow_check_feedback = ""
+fn follow_selected_card(){
+    for card in follow_cards_view.active { if card.topic.topic_id == follow_topic_id { return card } }
+    for card in follow_cards_view.paused { if card.topic.topic_id == follow_topic_id { return card } }
+    nil
+}
+fn follow_render_now(){
+    follow_cards_view = follow_topic_cards()
+    follow_evidence_rows = []
+    if follow_view == "evidence" {
+        let card = follow_selected_card()
+        if card != nil {
+            for row in follow_card_evidence(card) { follow_evidence_rows.push(follow_evidence_presentation(row)) }
+        }
+    }
+    ui.follow_overview.set_visible(follow_view == "overview")
+    ui.follow_topic_page.set_visible(follow_view == "topic")
+    ui.follow_evidence_page.set_visible(follow_view == "evidence")
+    ui.follow_toolbar.render()
+    if follow_view == "overview" { ui.follow_overview_content.render() }
+    if follow_view == "topic" { ui.follow_topic_content.render() }
+    if follow_view == "evidence" { ui.follow_evidence_content.render() }
+}
+fn follow_render(){
+    if follow_render_pending { return }
+    follow_render_pending = true
+    start_timeout(0.01, || {
+        follow_render_pending = false
+        if page != "tracking" || tracking_section != "topics" || detail_kind != "" { return }
+        mod.gc.run()
+        follow_render_now()
+    })
+}
+fn follow_open_topic(id){ follow_topic_id = id follow_view = "topic" notice("") follow_render() }
+fn follow_open_evidence(id){ follow_evidence_return = follow_view follow_topic_id = id follow_view = "evidence" notice("") follow_render() }
+fn follow_back(){
+    if follow_view == "evidence" { follow_view = follow_evidence_return }
+    else { follow_view = "overview" }
+    follow_render()
+}
+fn follow_read_evidence(e){
+    let card = follow_selected_card()
+    if card == nil { return }
+    for value in card.values {
+        if record_contains(value.insight.evidence_ids, e.news_id) {
+            insight_open_evidence(value, e)
+            return
+        }
+    }
+    notice("此报道不属于该话题保存的判断依据")
+}
+fn follow_decide(value, state){
+    if insight_decide(value, state) {
+        let labels = {watch: "已记录继续观察" handled: "已记录为已处理" dismissed: "已记录为不采纳"}
+        notice(labels[state] + "；关注继续保留。")
+    }
+    follow_render()
+}
+fn follow_topic_status(card, status){
+    topic_toggle_pause(card.topic.topic_id, card.topic.version, status)
+    if status == "cancelled" { follow_view = "overview" follow_topic_id = "" }
+    follow_render()
+}
+fn follow_show_previous(card){
+    card.checked_at > 0 && (card.historical || card.status == "checking" || card.status == "failed" || card.status_label == "未找到候选")
+}
+fn follow_next_label(card){
+    if !card.current { return "建议下一步" }
+    if card.status == "checking" || card.status == "failed" || card.status_label == "未找到候选" { return "上次建议 · 本次未取得新判断" }
+    "建议下一步"
+}
+fn follow_value_next(value){
+    if value.state == "withdrawn" { return "此前建议已撤回，请查看新依据后重新核对决定。" }
+    if record_string(value.insight["next_step"]) && value.insight.next_step.trim() != "" { return insight_prose(value.run, value.insight.next_step) }
+    if value.insight.decision_effect == "unknown" { return "现有证据不足，先查看尚缺的条件，再决定下一步。" }
+    "目前无需新增安排；继续关注后续有依据的变化。"
+}
+fn follow_check_progress(){
+    if follow_check_running {
+        let name = ""
+        if follow_check_waiting != nil { name = " · " + follow_check_waiting.title }
+        return "正在检查 " + min(follow_check_completed + 1, follow_check_total) + "/" + follow_check_total + name
+    }
+    if tracking_in_progress() { return "" }
+    follow_check_feedback
+}
+fn follow_stop_checks(){
+    follow_check_running = false follow_check_queue = [] follow_check_waiting = nil
+    if follow_check_timer != nil { stop_timer(follow_check_timer) follow_check_timer = nil }
+    follow_check_feedback = "已停止本次排队检查；已完成的情况仍保留。"
+    tracking_check_pending = false
+    if tracking_status == "recalling" || tracking_status == "enriching" || (agent_task != nil && agent_task.kind == "tracking_update" && tracking_in_progress()) { analysis_cancel() }
+    follow_render()
+}
+fn follow_check_arm(){
+    if follow_check_timer != nil { stop_timer(follow_check_timer) }
+    follow_check_timer = start_timeout(0.3, || { follow_check_timer = nil follow_check_step() })
+}
+fn follow_check_step(){
+    if !follow_check_running { return }
+    if tracking_context_key() != follow_check_context {
+        follow_stop_checks() follow_check_feedback = "关注、日程或配置已变化，已结束排队检查；请按新设置重新检查。" follow_render() return
+    }
+    if tracking_in_progress() { follow_check_arm() return }
+    if follow_check_waiting != nil {
+        let item = follow_check_waiting
+        let state = check_state_find("topic", item.topic_id, item.version)
+        if state == nil || state.attempt_at < item.started || state.status == "failed" || state.status == "pending" { follow_check_failed = follow_check_failed + 1 }
+        follow_check_completed = follow_check_completed + 1 follow_check_waiting = nil
+    }
+    if tracking_pending_run != nil || analysis_needs_reopen {
+        follow_check_running = false follow_check_queue = []
+        follow_check_feedback = if tracking_pending_run != nil {"本轮结果尚未保存，已暂停后续检查；请先重试保存。"} else {"中断尚未确认，已结束后续检查；请重新打开应用。"}
+        follow_render() return
+    }
+    if follow_check_queue.len() == 0 {
+        follow_check_running = false
+        follow_check_feedback = "本次处理了 " + follow_check_completed + " 个话题"
+        if follow_check_failed > 0 { follow_check_feedback = follow_check_feedback + "，" + (follow_check_completed - follow_check_failed) + " 项完成、" + follow_check_failed + " 项未完成；原因见对应话题。" }
+        else { follow_check_feedback = follow_check_feedback + "；仅覆盖每个话题本轮选中的候选。" }
+        follow_render() return
+    }
+    if busy || octos_testing || reader_summary.state == "running" || intent_open || intent_motion_active { follow_check_arm() return }
+    let selected = follow_check_queue.remove(0)
+    let topic = topic_find(selected.topic_id)
+    if topic == nil || topic.status != "active" || topic.version != selected.version { follow_stop_checks() return }
+    follow_check_waiting = {topic_id: topic.topic_id version: topic.version title: topic.title started: time_now()}
+    // A separate bounded recall for each topic avoids mixing unrelated subjects
+    // and guarantees every queued topic gets a turn even after another fails.
+    tracking_start(nil, nil, {topics: [topic] schedules: [] legacy_interests: [] omitted_targets: max(0, follow_check_total - 1)})
+    follow_check_arm() follow_render()
+}
+fn follow_check_begin(topics){
+    if follow_check_running || tracking_in_progress() || octos_testing || analysis_needs_reopen || reader_summary.state == "running" { notice("助手正在处理请求，请完成或停止后再检查") return }
+    if busy { notice("新闻正在刷新，请完成后再检查话题") return }
+    if tracking_pending_run != nil { notice("已有结果待保存，请先重试保存") return }
+    if topics.len() == 0 { notice("先添加或恢复一个关注话题") return }
+    if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) tracking_auto_timer = nil }
+    tracking_check_pending = false
+    follow_check_queue = topics follow_check_total = topics.len() follow_check_completed = 0 follow_check_failed = 0 follow_check_waiting = nil
+    follow_check_context = tracking_context_key() follow_check_feedback = "" follow_check_running = true
+    notice("") follow_check_step()
+}
+fn follow_check_all(){
+    let topics = []
+    for topic in topic_records.topics { if topic_is_user_record(topic) && topic.status == "active" { topics.push({topic_id: topic.topic_id version: topic.version}) } }
+    follow_check_begin(topics)
+}
+fn follow_check_topic(id){
+    let topic = topic_find(id)
+    if topic == nil || topic.status != "active" { notice("请先恢复这个关注话题") return }
+    follow_check_begin([{topic_id: id version: topic.version}])
+}

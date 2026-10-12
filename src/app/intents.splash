@@ -15,6 +15,10 @@ fn intent_copy_as_new(draft){
     let next = topic_new_draft(nil)
     next.original_input = draft.original_input next.supplement = draft.supplement
     next.intent_kind = draft.intent_kind next.schedule_timezone = draft.schedule_timezone
+    if draft.state == "ready" && draft["understanding"] != nil {
+        next.state = "ready" next.understanding = draft.understanding.to_json().parse_json()
+        if draft["understanding_edit"] != nil { next.understanding_edit = draft.understanding_edit.to_json().parse_json() }
+    }
     next
 }
 fn intent_begin(topic_id){
@@ -43,6 +47,7 @@ fn intent_as_new(){
 }
 fn intent_reload_target(){
     if analysis_busy || intent_draft == nil { return }
+    if intent_draft["understanding_edit"] != nil { intent_error = "请先应用修改或放弃本次修改，再加载原关注版本。" intent_render() return }
     let target = topic_find(intent_draft.target_topic_id)
     if target == nil || target.status == "cancelled" { intent_as_new() return }
     intent_draft.target_version = target.version
@@ -75,11 +80,21 @@ fn intent_changed(value, supplement){
 fn intent_invalidate(){
     intent_draft.version = intent_draft.version + 1 intent_draft.state = "editing" intent_draft.understanding = nil
     intent_draft.schedule_understanding = nil
+    intent_draft.understanding_edit = nil
+    intent_schedule_draft_save()
+}
+fn intent_schedule_draft_save(){
     if intent_save_timer != nil { stop_timer(intent_save_timer) }
     let version = intent_draft.version
     intent_save_timer = start_timeout(0.4, || {
         intent_save_timer = nil
-        if intent_draft != nil { if version == intent_draft.version { intent_error = topic_save_draft(intent_draft) if intent_error != "" { intent_render() } } }
+        if intent_draft != nil {
+            if version == intent_draft.version {
+                let error = topic_save_draft(intent_draft)
+                if error != "" { intent_error = error intent_render() }
+                else if intent_draft["understanding_edit"] == nil { intent_error = "" }
+            }
+        }
     })
 }
 fn intent_request_context_error(draft){
@@ -110,6 +125,7 @@ fn intent_save_local(){
 }
 fn intent_submit(){
     if intent_draft == nil { return }
+    if intent_draft["understanding_edit"] != nil { intent_error = "请先应用修改或放弃本次修改，再重新整理。" intent_render() return }
     intent_error = ""
     if intent_draft.original_input.trim() == "" { intent_error = "写下一个想法，让我们从这里开始" intent_render() return }
     let context_error = intent_request_context_error(intent_draft)
@@ -131,7 +147,7 @@ fn intent_submit(){
         current_topic.created_at = nil current_topic.updated_at = nil current_topic.recall_rules = nil
     }
     let snapshot = {intent_kind: intent_mode() original_input: draft.original_input supplement: draft.supplement current_topic: current_topic
-        previous_question: draft.question prompt_revision: tracking_prompt_revision}
+        previous_question: draft.question prompt_revision: intent_prompt_revision}
     let kind = "parse_intent" let prompt = intent_prompt
     if intent_mode() == "schedule" {
         kind = "parse_schedule_intent" prompt = schedule_intent_prompt

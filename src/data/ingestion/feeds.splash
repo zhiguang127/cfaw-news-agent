@@ -11,10 +11,12 @@ fn feed_cache_valid(value, source){
     for row in value.items {
         if !news_record_valid(row) || row.source_id != source.id { return false }
         if source["reading_feed"] == true && !record_string(row["body_html"]) { return false }
+        if source["pubdate_short_zone"] == true && row["timestamp_parser_revision"] != 1 { return false }
     }
     value.items.len() <= news_config.items_per_source
 }
 fn feed_initialize(){
+    feed_data_revision = feed_data_revision + 1
     for source in news_sources {
         feed_rows_by_source[source.id] = []
         feed_status_by_source[source.id] = {state: "not_loaded" retrieved_at: 0 error: "" count: 0}
@@ -24,6 +26,7 @@ fn feed_read_cache(source){
     let path = "news_cache_v1_" + source.id + ".json"
     try {
         if fs.exists(path) {
+            mod.gc.run()
             let cached = fs.read(path).parse_json()
             if feed_cache_valid(cached, source) {
                 let real_items = []
@@ -49,8 +52,9 @@ fn feed_restore_cache(enabled_ids, index, generation, complete){
     if generation != feed_generation { return }
     while index < news_sources.len() && !record_contains(enabled_ids, news_sources[index].id) { index = index + 1 }
     if index >= news_sources.len() { complete() return }
-    feed_read_cache(news_sources[index])
+    // Queue the next file before native parsing, which can abort without catch.
     start_timeout(0.01, || feed_restore_cache(enabled_ids, index + 1, generation, complete))
+    feed_read_cache(news_sources[index])
 }
 fn feed_refresh_needed_ids(enabled_ids, checked_at){
     let ids = []
@@ -66,11 +70,11 @@ fn feed_all_rows(enabled_ids){
     for id in enabled_ids { if feed_rows_by_source[id] != nil { groups.push(feed_rows_by_source[id]) } }
     news_merge(groups)
 }
-fn feed_accept(source, result, retrieved_at){
+fn feed_accept(source, result, retrieved_at, parsed_rows = nil){
     let status = feed_status_by_source[source.id]
     if !result.success { status.state = "error" status.error = result.error return false }
-    let rows = nil
-    try { rows = news_parse(result.body, source, retrieved_at) } { rows = nil }
+    let rows = parsed_rows
+    if rows == nil { try { rows = news_parse(result.body, source, retrieved_at) } { rows = nil } }
     if rows == nil { status.state = "error" status.error = "响应不是可解析的 RSS/Atom 或新闻 JSON" return false }
     feed_rows_by_source[source.id] = rows
     feed_data_revision = feed_data_revision + 1
@@ -145,21 +149,38 @@ fn feed_pump(task){
         task.active = task.active + 1
         feed_status_by_source[source.id].state = "loading"
         let completed = false
-        task.request(source.url, 0, fn(result){
+        let timer = nil
+        let finish = fn(result, retrieved_at, parsed_rows = nil){
             if completed || task.generation != feed_generation { return }
+            if feed_accept(source, result, retrieved_at, parsed_rows) { task.successes = task.successes + 1 }
             completed = true
-            if feed_accept(source, result, time_now()) { task.successes = task.successes + 1 }
+            stop_timer(timer)
             task.active = task.active - 1
             task.completed = task.completed + 1
-            // feed_accept does the heavy parse_feed/normalize/write under this
-            // callback's 64ms budget; yield before rebuilding rows so the merge
-            // never shares the same slice and trips the hard wall budget.
+            // Full publisher feeds have already parsed in separate slices.
+            // Yield after cache serialization before rebuilding the list.
             start_timeout(0.01, || {
                 if task.generation != feed_generation { return }
                 task.announced = task.announced + 1
+                // A failed UI update must not prevent remaining sources running.
+                start_timeout(0.01, || feed_pump(task))
                 task.on_update()
-                feed_pump(task)
             })
+        }
+        // HTTP's timeout ends when a response arrives; parsing and cache writes
+        // still need a deadline if a native callback loses its continuation.
+        timer = start_timeout(news_config.source_timeout_seconds, || {
+            if completed || task.generation != feed_generation { return }
+            mod.gc.run()
+            finish({success: false error: "来源处理超时，已保留旧缓存；可重新刷新" category: "timeout"}, time_now())
+        })
+        task.request(source.url, 0, fn(result){
+            if completed || task.generation != feed_generation { return }
+            let retrieved_at = time_now()
+            if result.success && source["reading_feed"] == true {
+                reading_feed_parse_async(result.body, source, retrieved_at, task.generation, |rows| finish({success: true}, retrieved_at, rows))
+                result.body = ""
+            } else { finish(result, retrieved_at) }
         })
     }
     if task.active == 0 && task.next >= task.sources.len() && task.announced == task.completed && !task.done {
