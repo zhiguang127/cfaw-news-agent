@@ -26,7 +26,7 @@
     "support": "https://github.com/zhiguang127/cfaw-news-agent/issues",
     "privacy_policy_url": "https://github.com/zhiguang127/cfaw-news-agent/blob/main/PRIVACY.md"
   },
-  "release_notes": "最终展示包：自然语言关注与二次编辑、真实新闻阅读与收藏、变化判断与证据回溯、用户决定和日程确认，以及匹配日程城市日期的天气联合分析。",
+  "release_notes": "决赛版本 1.1.0：自然语言关注及理解编辑、变化判断与证据回溯、用户决定、批准后一键导入试用日程，以及按日程城市和日期匹配的天气联合分析。提供最终版实拍图集和 1 分 54 秒演示视频。完整原文阅读依赖适配的 Windows Rinx/WebView2 宿主。",
   "age_rating": "12+",
   "license": "Apache-2.0"
 }
