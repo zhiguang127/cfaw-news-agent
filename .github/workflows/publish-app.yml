@@ -213,6 +213,7 @@ jobs:
           PY
       - name: Check editable source and preserve review evidence
         run: |
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/prepared"
           cd app
           python3 scripts/assemble.py --check
@@ -266,6 +267,7 @@ jobs:
         env:
           ATTESTATION_PATH: ${{ steps.attest.outputs.bundle-path }}
         run: |
+          set -euo pipefail
           chmod 700 "$RUNNER_TEMP/prepared/hub"
           "$RUNNER_TEMP/prepared/hub" publisher-attach "$RUNNER_TEMP/prepared/bundle" \
             --attestation "$ATTESTATION_PATH"
@@ -317,6 +319,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/downloaded"
           gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --pattern app.bundle.pack.json --pattern release-receipt.json \

@@ -14,7 +14,7 @@
   },
   "id": "dev.cfaw.news",
   "integrity": {
-    "bundle_blake3": "0cb22d6e1eaf926e82febe02f8fd33389708de27f861758815ec0b93bc9897db"
+    "bundle_blake3": "be758303a983ec55a413c591ba80eba1b767ede9fd8f7dc9931548c9a955c66c"
   },
   "name": "CFAW News",
   "network": {
@@ -89,5 +89,5 @@
   "storage": {
     "max_bytes": 8388608
   },
-  "version": "1.1.0"
+  "version": "1.1.1"
 }
