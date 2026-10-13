@@ -207,7 +207,7 @@ class Probe:
 
     def find(self, text=None, ident=None, strict=True, contains=None):
         widgets = self.widgets()
-        nav = ('feed_tab', 'tracking_tab', 'schedule_tab', 'account_tab')
+        nav = ('feed_tab', 'tracking_tab', 'intent_add', 'schedule_tab', 'account_tab')
         limit = HEIGHT if ident in nav else min((w['r'][1] for w in widgets if w.get('i') in nav), default=HEIGHT)
         for w in widgets:
             if ((text is None or w.get('t') == text) and (ident is None or w.get('i') == ident)
@@ -264,6 +264,10 @@ class Probe:
         tabs = [self.find(ident=ident) for ident in ('feed_tab', 'tracking_tab', 'schedule_tab', 'account_tab')]
         check([w.get('t', '').split(' ·')[0] for w in tabs] == ['首页', '关注', '日程', '我的'], 'four bottom navigation tabs remain visible')
         check(len({round(w['r'][1]) for w in tabs}) == 1, 'bottom navigation shares one row')
+        add = self.find(ident='intent_add')
+        outer_center = (tabs[0]['r'][0] + tabs[-1]['r'][0] + tabs[-1]['r'][2]) / 2
+        check(abs(add['r'][0] + add['r'][2] / 2 - outer_center) <= 2, 'intent add stays centered between four page tabs')
+        check(not any(w.get('i') == 'ai_orb' for w in self.widgets()), 'floating AI orb is removed')
 
 
 def run_checks(probe):
@@ -376,7 +380,7 @@ def run_checks(probe):
     probe.screenshot('home-preserved')
     check(True, 'home still renders the news browsing layout')
     probe.seek('查看')
-    # Keep this news control clear of the fixed home AI orb during a real click.
+    # Move the target into the stable viewport before a real click.
     probe.scroll(200)
     probe.click(text='查看')
     probe.wait(lambda: probe.state()['detail'] == 'story' and probe.state()['reading'] == BODY_URL, 'ordinary home reader')

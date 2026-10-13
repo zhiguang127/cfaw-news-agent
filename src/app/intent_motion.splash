@@ -1,12 +1,10 @@
-// Bounded transition only: no timer or redraw loop while the orb is idle.
+// Bounded transition only: no timer or redraw loop while the entry is idle.
 let intent_motion_config = {duration_seconds: 0.42 frame_seconds: 0.016}
 let intent_motion_generation = 0
 let intent_reveal = 0
 let intent_return_kind = ""
 let intent_scene_ready = false
 let intent_motion_active = false
-let last_intent_orb_press_at = 0
-fn intent_orb_press(){ last_intent_orb_press_at = time_now() }
 fn intent_motion_frame(generation, opening, started){
     if generation != intent_motion_generation { return }
     let progress = 1.0
@@ -26,7 +24,6 @@ fn intent_motion_frame(generation, opening, started){
     } else {
         intent_motion_active = false
         ui.intent_overlay.set_visible(false)
-        ui.floating_ai.set_visible(intent_orb_visible())
         render_analysis_controls()
     }
 }
@@ -40,7 +37,6 @@ fn intent_show(){
     ui.intent_panel.render()
     intent_motion_generation = intent_motion_generation + 1
     ui.intent_scene.set_visible(false)
-    ui.floating_ai.set_visible(false)
     ui.intent_overlay.set_visible(true)
     intent_motion_frame(intent_motion_generation, true, time_now())
 }

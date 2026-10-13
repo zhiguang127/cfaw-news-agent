@@ -98,6 +98,9 @@ HostedView{width: Fill height: Fill
                     tracking_tab_active := RoundedView{visible: false width: Fill height: Fill align: Align{x: 0.5 y: 0.1} show_bg: true draw_bg.color: #xeeecfa draw_bg.border_radius: 22.0 EditorialIcon{draw_bg.kind: 1.0 draw_bg.tint: editorial_accent}}
                     tracking_tab := Nav{height: 54 text: "关注" align: Align{x: 0.5 y: 1.0} padding: Inset{bottom: 2} draw_text +: {color: editorial_muted color_focus: editorial_accent text_style +: {font_size: 11}} on_click: || select_page("tracking")}
                 }
+                View{width: Fill height: 60 align: Align{x: 0.5 y: 0.0}
+                    intent_add := IntentNavButton{on_click: || {if !intent_open { intent_begin(nil) }}}
+                }
                 View{width: Fill height: 54 flow: Overlay
                     View{width: Fill height: Fill align: Align{x: 0.5 y: 0.1} EditorialIcon{draw_bg.kind: 2.0}}
                     schedule_tab_active := RoundedView{visible: false width: Fill height: Fill align: Align{x: 0.5 y: 0.1} show_bg: true draw_bg.color: #xeeecfa draw_bg.border_radius: 22.0 EditorialIcon{draw_bg.kind: 2.0 draw_bg.tint: editorial_accent}}
@@ -111,23 +114,8 @@ HostedView{width: Fill height: Fill
             }
         }
     }
-    floating_ai := View{width: Fill height: Fill flow: Overlay
-        if orb_native_supported { GestureView{width: Fill height: Fill on_viewport: |w,h| orb_viewport(w,h)} }
-        orb_position := View{width: Fill height: Fill align: Align{x: 1.0 y: 0.86} padding: Inset{left: 18 right: 18 top: 36 bottom: 100} on_render: || { align: Align{x: orb_x y: orb_y} }
-            ai_orb := View{width: 72 height: 72
-            if orb_native_supported {
-                GestureView{width: 72 height: 72 long_press_seconds: 0.4 on_press: || orb_press() on_tap: |x,y| orb_tap(x,y) on_long_press: |x,y| orb_long_press(x,y)
-                on_pan_viewport: |dx,dy,phase,w,h| orb_pan(dx,dy,phase,w,h) on_release: || orb_release()
-                AIOrb{enabled: false}
-                }
-            } else {
-                AIOrb{on_press: || intent_orb_press() on_click: || {if !intent_open { intent_begin(nil) }}}
-            }
-            }
-        }
-    }
     intent_overlay := View{visible: false width: Fill height: Fill flow: Overlay
-        intent_wave := View{width: Fill height: Fill on_render: || { IntentReveal{draw_bg.progress: intent_reveal draw_bg.origin_x: orb_x draw_bg.origin_y: orb_y} }}
+        intent_wave := View{width: Fill height: Fill on_render: || { IntentReveal{draw_bg.progress: intent_reveal draw_bg.origin_x: 0.5 draw_bg.origin_y: 1.0} }}
         intent_scene := IntentBackdrop{visible: false flow: Down
             View{width: Fill height: 64 flow: Right padding: Inset{left: 22 right: 18 top: 14 bottom: 10} align: Align{y: 0.5}
                 Section{width: Fill text: "✦ 意图空间" draw_text.color: #x455789 draw_text.text_style.font_size: 14}

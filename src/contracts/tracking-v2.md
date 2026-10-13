@@ -57,7 +57,7 @@
 
 tracking_update 连接阶段70秒、每次模型轮次190秒、连接和两轮模型总阶段470秒。单次修正获得独立模型期限；非追踪任务仍使用90秒原期限。阶段计时器核对 task_id 与 wait_generation，结束/取消同时清理总、阶段、进度和中断计时器；迟到回调不得保存或重新占用队列。模型返回的 Service timed out 归类timeout并保留阶段，不能误报存储故障。指标增加 error_phase 与 repair_count，记录中断前实际模型等待秒数，不记录提示词或正文。每5秒更新可见等待进度。
 
-相关执行模块：`src/agent/results/insights.splash`（结构与引用）、`src/app/insights.splash`（展示与决定）、`src/app/results.splash`（结果分组与保存后反馈）、`src/data/ingestion/analysis_evidence.splash`（正文）、`src/app/reschedule.splash`（预览确认）、`src/app/continuous_tracking.splash`（前台队列）、`src/app/orb_drag.splash`（原生手势接线）。均已加入 assemble.ORDER。
+相关执行模块：`src/agent/results/insights.splash`（结构与引用）、`src/app/insights.splash`（展示与决定）、`src/app/results.splash`（结果分组与保存后反馈）、`src/data/ingestion/analysis_evidence.splash`（正文）、`src/app/reschedule.splash`（预览确认）、`src/app/continuous_tracking.splash`（前台队列）和 `src/app/intent_motion.splash`（意图空间过渡）。均已加入 assemble.ORDER。
 
 结果页分组不改变持久化格式：撤回优先进入待办；用户决定 handled/dismissed 进入记录，watch 进入观察；未决定的 unknown/review 进入待办，其他判断进入观察。unknown 即使 unchanged 也继续保留核实入口。分组由当前有效判断与持久化决定派生，只有 topics_commit 成功才反馈保存并切换入口。证据展开键包含检查任务、目标、版本及问题，不串用别的判断。记录页展示当前有效判断的决定，不是完整历史档案。
 

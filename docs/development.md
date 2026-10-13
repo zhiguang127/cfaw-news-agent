@@ -309,7 +309,7 @@ Linux 桌面 GPU 抓图不稳定时，可用已安装的 Xvfb/软件 OpenGL 运�
 
 ## 全屏意图交互
 
-悬浮小球和 reveal shader 位于 `frontend/components/intent_orb.splash`，全屏场景挂在 app view 的 overlay；`app/intent_motion.splash` 负责有界动画及前页恢复，动画时长 420 ms，空闲无重绘计时器。意图面板不复用普通详情页的标题栏。
+底部导航中央的加号和 reveal shader 位于 `frontend/components/intent_orb.splash`，全屏场景挂在 app view 的 overlay；`app/intent_motion.splash` 负责从底部中央展开的有界动画及前页恢复，动画时长 420 ms，空闲无重绘计时器。意图面板不复用普通详情页的标题栏。旧偏好格式中的悬浮球坐标仅为兼容已有记录而保留，不再控制界面位置。
 
 “我想做…”/“关注新闻”沿用 parse_intent，“安排日程”用同一 Agent 的 parse_schedule_intent，全部仍是 octos.turn.start 的 text，未添加宿主 API 参数。任务结构、草稿兼容和保存规则见[意图契约](../src/contracts/intents.md)。自然语言日程的真实联调执行 `python3 scripts/test_runtime.py --live-minimax --minimax-intent schedule`，只校验预览，不自动确认保存。
 

@@ -64,7 +64,6 @@ ORDER = [
     'src/app/trip_review.splash',
     'src/app/reschedule.splash',
     'src/app/intent_motion.splash',
-    'src/app/orb_drag.splash',
     'src/app/intents.splash',
     'src/app/intent_preview.splash',
     'src/app/life_scenarios.splash',

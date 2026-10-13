@@ -56,31 +56,84 @@ let ForecastSky = RoundedView{width: Fill height: Fit flow: Down show_bg: true
         }
     }
 }
-let WeatherHeaderWidget = View{width: 132 height: 50
+// The header gets a compact, high-contrast glance while the forecast page
+// keeps the larger condition illustration above.
+let WeatherHeaderGlyph = View{width: 28 height: 28 show_bg: true
+    draw_bg +: {
+        condition: uniform(7.0)
+        pixel: fn(){
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let w = self.rect_size.x
+            let h = self.rect_size.y
+            if self.condition < 1.5 {
+                sdf.circle(w * 0.34, h * 0.48, w * 0.22) sdf.fill(#xffffd36a)
+                sdf.circle(w * 0.70, h * 0.22, w * 0.045) sdf.fill(#xffffffc8)
+                sdf.circle(w * 0.79, h * 0.42, w * 0.032) sdf.fill(#xffffff8c)
+            }
+            if self.condition > 0.5 {
+                sdf.circle(w * 0.34, h * 0.56, w * 0.13) sdf.fill(#xc9dced)
+                sdf.circle(w * 0.52, h * 0.48, w * 0.18) sdf.fill(#xf2f7fc)
+                sdf.circle(w * 0.70, h * 0.57, w * 0.12) sdf.fill(#xdce9f5)
+                sdf.box(w * 0.22, h * 0.55, w * 0.60, h * 0.13, h * 0.055) sdf.fill(#xdce9f5)
+            }
+            if self.condition > 2.5 && self.condition < 4.5 {
+                sdf.box(w * 0.31, h * 0.75, w * 0.035, h * 0.14, w * 0.015) sdf.fill(#x8ed9ff)
+                sdf.box(w * 0.50, h * 0.77, w * 0.035, h * 0.14, w * 0.015) sdf.fill(#x8ed9ff)
+                sdf.box(w * 0.69, h * 0.75, w * 0.035, h * 0.14, w * 0.015) sdf.fill(#x8ed9ff)
+            }
+            if self.condition > 3.5 && self.condition < 4.5 {
+                sdf.box(w * 0.51, h * 0.54, w * 0.055, h * 0.19, 1.0) sdf.fill(#xffffd36a)
+            }
+            if self.condition > 4.5 && self.condition < 5.5 {
+                sdf.circle(w * 0.33, h * 0.82, w * 0.03) sdf.fill(#xffffff)
+                sdf.circle(w * 0.52, h * 0.86, w * 0.03) sdf.fill(#xffffff)
+                sdf.circle(w * 0.70, h * 0.82, w * 0.03) sdf.fill(#xffffff)
+            }
+            if self.condition > 5.5 {
+                sdf.box(w * 0.22, h * 0.76, w * 0.58, 1.5, 1.0) sdf.fill(#xd2dfed)
+                sdf.box(w * 0.30, h * 0.86, w * 0.43, 1.5, 1.0) sdf.fill(#xd2dfed)
+            }
+            return sdf.result
+        }
+    }
+}
+let WeatherHeaderSky = RoundedView{width: Fill height: Fill show_bg: true
+    draw_bg +: {
+        border_radius: 25.0
+        pixel: fn(){
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let glow = clamp(1.0 - length((self.pos - vec2(0.88, 0.12)) * vec2(1.15, 1.6)), 0.0, 1.0)
+            let sky = mix(#x29466f, #x466f9a, self.pos.x * 0.42 + glow * 0.28)
+            sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.border_radius)
+            sdf.fill(sky)
+            return sdf.result
+        }
+    }
+}
+let WeatherHeaderWidget = View{width: 160 height: 50
     weather_header_content := View{width: Fill height: Fill on_render: || {
         let city = weather_primary_city()
         let today = weather_today()
         weather_header_hit := GestureView{width: Fill height: Fill on_tap: |x, y| show_weather()
-            RoundedView{width: Fill height: Fill padding: Inset{left: 8 right: 8 top: 6 bottom: 6} show_bg: true draw_bg.color: #xf0f5fd draw_bg.border_radius: 25.0
-                View{width: Fill height: Fill flow: Right spacing: 6 align: Align{y: 0.5}
-                    ForecastGlyph{width: 22 height: 22 draw_bg.condition: weather_glyph_condition(today)}
-                    View{width: Fill height: Fit flow: Down spacing: 3
+            WeatherHeaderSky{flow: Right padding: Inset{left: 9 right: 10 top: 6 bottom: 6} spacing: 7 align: Align{y: 0.5}
+                    WeatherHeaderGlyph{width: 28 height: 28 draw_bg.condition: weather_glyph_condition(today)}
+                    View{width: Fill height: Fit flow: Down spacing: 2
                         if city != nil {
-                            Small{height: Fit padding: 0 text: city.name draw_text.color: editorial_muted max_lines: 1 text_overflow: TextOverflow.Ellipsis
-                                draw_text.text_style.font_size: 9 draw_text.text_style.line_spacing: 1.0}
+                            Small{height: Fit padding: 0 text: city.name + if today != nil {" · " + today.condition} else {""}
+                                draw_text.color: #xc8d8ea max_lines: 1 text_overflow: TextOverflow.Ellipsis
+                                draw_text.text_style.font_size: 9.5 draw_text.text_style.line_spacing: 1.0}
                             if today != nil {
                                 Text{height: Fit padding: 0 text: weather_temperature(today.temp_min_c) + " / " + weather_temperature(today.temp_max_c)
-                                    max_lines: 1 draw_text.color: editorial_ink draw_text.text_style: theme.font_bold{font_size: 11 line_spacing: 1.0}}
-                            } else { Small{height: Fit padding: 0 text: "查看预报 ›" draw_text.color: editorial_ink max_lines: 1
-                                draw_text.text_style.font_size: 9 draw_text.text_style.line_spacing: 1.0} }
+                                    max_lines: 1 draw_text.color: white draw_text.text_style: theme.font_bold{font_size: 15 line_spacing: 1.0}}
+                            } else { Small{height: Fit padding: 0 text: "查看预报 ›" draw_text.color: white max_lines: 1
+                                draw_text.text_style.font_size: 10 draw_text.text_style.line_spacing: 1.0} }
                         } else {
-                            Small{height: Fit padding: 0 text: "城市天气" draw_text.color: editorial_muted max_lines: 1
-                                draw_text.text_style.font_size: 9 draw_text.text_style.line_spacing: 1.0}
-                            Small{height: Fit padding: 0 text: "选择城市 ›" draw_text.color: editorial_ink max_lines: 1
-                                draw_text.text_style.font_size: 9 draw_text.text_style.line_spacing: 1.0}
+                            Small{height: Fit padding: 0 text: "城市天气" draw_text.color: #xc8d8ea max_lines: 1
+                                draw_text.text_style.font_size: 9.5 draw_text.text_style.line_spacing: 1.0}
+                            Small{height: Fit padding: 0 text: "选择城市 ›" draw_text.color: white max_lines: 1
+                                draw_text.text_style.font_size: 10 draw_text.text_style.line_spacing: 1.0}
                         }
                     }
-                }
             }
         }
     }}

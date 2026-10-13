@@ -40,7 +40,6 @@ fn boot_loaded(){
     feed_initialize()
     render_main()
     boot_finished = true
-    start_timeout(0.01, || orb_load())
     start_timeout(0.01, || weather_app_boot())
     if records_warning != "" || schedule_warning != "" || analysis_history_warning != "" || topic_warning != "" { notice(records_warning + " " + schedule_warning + " " + analysis_history_warning + " " + topic_warning) }
     // records_load/history_load/render_main already spent most of this 64ms

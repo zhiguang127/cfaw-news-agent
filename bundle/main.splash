@@ -1869,6 +1869,8 @@ fn agent_metrics_record(sample){
 // END src/data/storage/agent_metrics.splash
 
 // BEGIN src/data/storage/agent_preferences.splash
+// orb_x/orb_y remain required only so existing schema 1 files stay readable
+// after the floating entry was replaced by the fixed center navigation button.
 let agent_preferences = {schema_version: 1 revision: 0 paused: false important_only: false interval_seconds: 900 orb_x: 1.0 orb_y: 0.86}
 let agent_preferences_file = {path: "agent_preferences_v1.json" revision: 0 writable: true recovered: false}
 fn agent_preferences_valid(v){
@@ -6171,7 +6173,6 @@ fn render_main_now(){
     ui.schedule_page.set_visible(page == "schedule")
     ui.account_page.set_visible(page == "account")
     ui.results_panel.set_visible(page == "tracking" && tracking_section == "suggestions")
-    ui.floating_ai.set_visible(intent_orb_visible())
     if page == "schedule" {
         ui.schedule_list.render()
         ui.schedule_editor.render()
@@ -6181,9 +6182,6 @@ fn render_main_now(){
 }
 fn results_view_active(){
     detail_kind == "results" || (detail_kind == "" && page == "tracking" && tracking_section == "suggestions")
-}
-fn intent_orb_visible(){
-    page != "tracking" && !results_view_active() && !(detail_kind == "story" && story_from_results) && !intent_open && !intent_motion_active && !original_article_open
 }
 fn tracking_pick_section(section){
     select_page("tracking")
@@ -6528,7 +6526,6 @@ fn close_original_article(){
     ui.original_reader.close()
     original_article_open = false
     ui.original_pane.set_visible(false)
-    ui.floating_ai.set_visible(intent_orb_visible())
 }
 fn open_original_article(){
     if reading == nil || !article_original_allowed(reading.source_url) { return }
@@ -6540,7 +6537,6 @@ fn open_original_article(){
     if url.split("/")[0] == "http:" { url = "https:" + url.strip_prefix("http:") }
     ui.story_panel.set_visible(false)
     ui.original_pane.set_visible(true)
-    ui.floating_ai.set_visible(false)
     ui.detail_title.set_text("图文原文")
     ui.original_title.set_text(reading.title)
     ui.original_hint.set_text(if article_state.requires_verification {"如页面提示验证，请完成后继续阅读原文。"} else {""})
@@ -6567,7 +6563,6 @@ fn show_detail(kind, title){
     close_original_article()
     if kind != "story" { article_cancel() }
     detail_kind = kind
-    ui.floating_ai.set_visible(intent_orb_visible())
     ui.detail_title.set_text(title)
     ui.main.set_visible(false)
     ui.navigation.set_visible(false)
@@ -6576,9 +6571,7 @@ fn show_detail(kind, title){
     render_detail()
 }
 fn open_story(row){
-    if intent_open || intent_motion_active || time_now() - last_intent_orb_press_at < news_config.overlay_tap_guard_seconds { return }
-    // The pinned GestureView can also deliver a tap through a sibling overlay.
-    // Remove this guard when host capture excludes overlapping sibling controls.
+    if intent_open || intent_motion_active { return }
     if time_now() - last_return_top_at < news_config.overlay_tap_guard_seconds { return }
     insight_evidence_view = nil
     story_from_results = results_view_active() || (page == "tracking" && tracking_section == "topics")
@@ -6631,7 +6624,6 @@ fn close_detail(){
     reader_summary_cancel()
     article_cancel()
     detail_kind = ""
-    ui.floating_ai.set_visible(intent_orb_visible())
     reading = nil insight_evidence_view = nil story_from_results = false
     render_analysis_controls()
     ui.detail_pane.set_visible(false)
@@ -8426,15 +8418,13 @@ fn reschedule_resume(id){
 // END src/app/reschedule.splash
 
 // BEGIN src/app/intent_motion.splash
-// Bounded transition only: no timer or redraw loop while the orb is idle.
+// Bounded transition only: no timer or redraw loop while the entry is idle.
 let intent_motion_config = {duration_seconds: 0.42 frame_seconds: 0.016}
 let intent_motion_generation = 0
 let intent_reveal = 0
 let intent_return_kind = ""
 let intent_scene_ready = false
 let intent_motion_active = false
-let last_intent_orb_press_at = 0
-fn intent_orb_press(){ last_intent_orb_press_at = time_now() }
 fn intent_motion_frame(generation, opening, started){
     if generation != intent_motion_generation { return }
     let progress = 1.0
@@ -8454,7 +8444,6 @@ fn intent_motion_frame(generation, opening, started){
     } else {
         intent_motion_active = false
         ui.intent_overlay.set_visible(false)
-        ui.floating_ai.set_visible(intent_orb_visible())
         render_analysis_controls()
     }
 }
@@ -8468,7 +8457,6 @@ fn intent_show(){
     ui.intent_panel.render()
     intent_motion_generation = intent_motion_generation + 1
     ui.intent_scene.set_visible(false)
-    ui.floating_ai.set_visible(false)
     ui.intent_overlay.set_visible(true)
     intent_motion_frame(intent_motion_generation, true, time_now())
 }
@@ -8483,64 +8471,6 @@ fn intent_hide(){
     intent_motion_frame(intent_motion_generation, false, time_now())
 }
 // END src/app/intent_motion.splash
-
-// BEGIN src/app/orb_drag.splash
-let orb_drag_armed = false let orb_dragging = false
-let orb_drag_x = 1.0 let orb_drag_y = 0.86
-let orb_x = 1.0 let orb_y = 0.86
-let orb_viewport_width = 430 let orb_viewport_height = 860
-let orb_press_generation = 0 let orb_pointer_down = false
-let orb_pan_started = false let orb_pending_dx = 0 let orb_pending_dy = 0
-// Rust live fields are not enumerable on the script prototype. Testing that
-// prototype returned nil even on the patched host and disabled all dragging.
-// The project launcher verifies the pinned host's gesture artifact instead.
-let orb_native_supported = true
-fn orb_viewport(width, height){ orb_viewport_width = width orb_viewport_height = height }
-fn orb_load(){ orb_x = agent_preferences.orb_x orb_y = agent_preferences.orb_y ui.orb_position.render_style() if !orb_native_supported { notice("当前宿主尚无长按拖动支持；小球仍可点击，移动需加载修补后的 Rinx") } }
-fn orb_press(){
-    intent_orb_press()
-    orb_press_generation = orb_press_generation + 1
-    let generation = orb_press_generation
-    orb_pointer_down = true orb_pan_started = false
-    orb_drag_armed = false orb_dragging = false
-    orb_pending_dx = 0 orb_pending_dy = 0
-    orb_drag_x = orb_x orb_drag_y = orb_y
-    // Native mouse pan may begin before its hold timer fires. Keep this hold
-    // alive across pointer jitter, but cancel it on release or a newer press.
-    start_timeout(0.4, || {
-        if generation != orb_press_generation || !orb_pointer_down { return }
-        orb_long_press(0, 0)
-        if orb_pan_started { orb_pan(orb_pending_dx, orb_pending_dy, 1, orb_viewport_width, orb_viewport_height) }
-    })
-}
-fn orb_long_press(x, y){ if orb_pointer_down { orb_drag_armed = true intent_orb_press() } }
-fn orb_release(){ orb_press_generation = orb_press_generation + 1 orb_pointer_down = false orb_drag_armed = false orb_dragging = false orb_pan_started = false intent_orb_press() }
-fn orb_tap(x, y){
-    if orb_dragging || orb_drag_armed { return }
-    intent_orb_press()
-    if !intent_open { intent_begin(nil) }
-}
-fn orb_pan(dx, dy, phase, width, height){
-    // Native callback provides the actual window viewport; no assumed 430px.
-    intent_orb_press()
-    if !orb_pointer_down { return }
-    if phase == 0 { orb_pan_started = true }
-    orb_pending_dx = dx orb_pending_dy = dy
-    if !orb_drag_armed { return }
-    orb_dragging = true
-    orb_x = min(1.0, max(0.0, orb_drag_x + dx / max(1.0, orb_viewport_width - 108)))
-    orb_y = min(1.0, max(0.0, orb_drag_y + dy / max(1.0, orb_viewport_height - 208)))
-    if phase == 2 {
-        orb_x = if orb_x < 0.5 { 0.0 } else { 1.0 }
-        let next = agent_preferences.to_json().parse_json() next.orb_x = orb_x next.orb_y = orb_y
-        let error = agent_preferences_commit(next)
-        if error != "" { notice(error) }
-        orb_drag_armed = false orb_dragging = false
-    }
-    // Preserve the GestureView and its pointer capture throughout the drag.
-    ui.orb_position.render_style()
-}
-// END src/app/orb_drag.splash
 
 // BEGIN src/app/intents.splash
 // Draft edits never overwrite a confirmed topic. Parsing cannot save a topic.
@@ -9692,31 +9622,84 @@ let ForecastSky = RoundedView{width: Fill height: Fit flow: Down show_bg: true
         }
     }
 }
-let WeatherHeaderWidget = View{width: 132 height: 50
+// The header gets a compact, high-contrast glance while the forecast page
+// keeps the larger condition illustration above.
+let WeatherHeaderGlyph = View{width: 28 height: 28 show_bg: true
+    draw_bg +: {
+        condition: uniform(7.0)
+        pixel: fn(){
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let w = self.rect_size.x
+            let h = self.rect_size.y
+            if self.condition < 1.5 {
+                sdf.circle(w * 0.34, h * 0.48, w * 0.22) sdf.fill(#xffffd36a)
+                sdf.circle(w * 0.70, h * 0.22, w * 0.045) sdf.fill(#xffffffc8)
+                sdf.circle(w * 0.79, h * 0.42, w * 0.032) sdf.fill(#xffffff8c)
+            }
+            if self.condition > 0.5 {
+                sdf.circle(w * 0.34, h * 0.56, w * 0.13) sdf.fill(#xc9dced)
+                sdf.circle(w * 0.52, h * 0.48, w * 0.18) sdf.fill(#xf2f7fc)
+                sdf.circle(w * 0.70, h * 0.57, w * 0.12) sdf.fill(#xdce9f5)
+                sdf.box(w * 0.22, h * 0.55, w * 0.60, h * 0.13, h * 0.055) sdf.fill(#xdce9f5)
+            }
+            if self.condition > 2.5 && self.condition < 4.5 {
+                sdf.box(w * 0.31, h * 0.75, w * 0.035, h * 0.14, w * 0.015) sdf.fill(#x8ed9ff)
+                sdf.box(w * 0.50, h * 0.77, w * 0.035, h * 0.14, w * 0.015) sdf.fill(#x8ed9ff)
+                sdf.box(w * 0.69, h * 0.75, w * 0.035, h * 0.14, w * 0.015) sdf.fill(#x8ed9ff)
+            }
+            if self.condition > 3.5 && self.condition < 4.5 {
+                sdf.box(w * 0.51, h * 0.54, w * 0.055, h * 0.19, 1.0) sdf.fill(#xffffd36a)
+            }
+            if self.condition > 4.5 && self.condition < 5.5 {
+                sdf.circle(w * 0.33, h * 0.82, w * 0.03) sdf.fill(#xffffff)
+                sdf.circle(w * 0.52, h * 0.86, w * 0.03) sdf.fill(#xffffff)
+                sdf.circle(w * 0.70, h * 0.82, w * 0.03) sdf.fill(#xffffff)
+            }
+            if self.condition > 5.5 {
+                sdf.box(w * 0.22, h * 0.76, w * 0.58, 1.5, 1.0) sdf.fill(#xd2dfed)
+                sdf.box(w * 0.30, h * 0.86, w * 0.43, 1.5, 1.0) sdf.fill(#xd2dfed)
+            }
+            return sdf.result
+        }
+    }
+}
+let WeatherHeaderSky = RoundedView{width: Fill height: Fill show_bg: true
+    draw_bg +: {
+        border_radius: 25.0
+        pixel: fn(){
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let glow = clamp(1.0 - length((self.pos - vec2(0.88, 0.12)) * vec2(1.15, 1.6)), 0.0, 1.0)
+            let sky = mix(#x29466f, #x466f9a, self.pos.x * 0.42 + glow * 0.28)
+            sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.border_radius)
+            sdf.fill(sky)
+            return sdf.result
+        }
+    }
+}
+let WeatherHeaderWidget = View{width: 160 height: 50
     weather_header_content := View{width: Fill height: Fill on_render: || {
         let city = weather_primary_city()
         let today = weather_today()
         weather_header_hit := GestureView{width: Fill height: Fill on_tap: |x, y| show_weather()
-            RoundedView{width: Fill height: Fill padding: Inset{left: 8 right: 8 top: 6 bottom: 6} show_bg: true draw_bg.color: #xf0f5fd draw_bg.border_radius: 25.0
-                View{width: Fill height: Fill flow: Right spacing: 6 align: Align{y: 0.5}
-                    ForecastGlyph{width: 22 height: 22 draw_bg.condition: weather_glyph_condition(today)}
-                    View{width: Fill height: Fit flow: Down spacing: 3
+            WeatherHeaderSky{flow: Right padding: Inset{left: 9 right: 10 top: 6 bottom: 6} spacing: 7 align: Align{y: 0.5}
+                    WeatherHeaderGlyph{width: 28 height: 28 draw_bg.condition: weather_glyph_condition(today)}
+                    View{width: Fill height: Fit flow: Down spacing: 2
                         if city != nil {
-                            Small{height: Fit padding: 0 text: city.name draw_text.color: editorial_muted max_lines: 1 text_overflow: TextOverflow.Ellipsis
-                                draw_text.text_style.font_size: 9 draw_text.text_style.line_spacing: 1.0}
+                            Small{height: Fit padding: 0 text: city.name + if today != nil {" · " + today.condition} else {""}
+                                draw_text.color: #xc8d8ea max_lines: 1 text_overflow: TextOverflow.Ellipsis
+                                draw_text.text_style.font_size: 9.5 draw_text.text_style.line_spacing: 1.0}
                             if today != nil {
                                 Text{height: Fit padding: 0 text: weather_temperature(today.temp_min_c) + " / " + weather_temperature(today.temp_max_c)
-                                    max_lines: 1 draw_text.color: editorial_ink draw_text.text_style: theme.font_bold{font_size: 11 line_spacing: 1.0}}
-                            } else { Small{height: Fit padding: 0 text: "查看预报 ›" draw_text.color: editorial_ink max_lines: 1
-                                draw_text.text_style.font_size: 9 draw_text.text_style.line_spacing: 1.0} }
+                                    max_lines: 1 draw_text.color: white draw_text.text_style: theme.font_bold{font_size: 15 line_spacing: 1.0}}
+                            } else { Small{height: Fit padding: 0 text: "查看预报 ›" draw_text.color: white max_lines: 1
+                                draw_text.text_style.font_size: 10 draw_text.text_style.line_spacing: 1.0} }
                         } else {
-                            Small{height: Fit padding: 0 text: "城市天气" draw_text.color: editorial_muted max_lines: 1
-                                draw_text.text_style.font_size: 9 draw_text.text_style.line_spacing: 1.0}
-                            Small{height: Fit padding: 0 text: "选择城市 ›" draw_text.color: editorial_ink max_lines: 1
-                                draw_text.text_style.font_size: 9 draw_text.text_style.line_spacing: 1.0}
+                            Small{height: Fit padding: 0 text: "城市天气" draw_text.color: #xc8d8ea max_lines: 1
+                                draw_text.text_style.font_size: 9.5 draw_text.text_style.line_spacing: 1.0}
+                            Small{height: Fit padding: 0 text: "选择城市 ›" draw_text.color: white max_lines: 1
+                                draw_text.text_style.font_size: 10 draw_text.text_style.line_spacing: 1.0}
                         }
                     }
-                }
             }
         }
     }}
@@ -9724,7 +9707,8 @@ let WeatherHeaderWidget = View{width: 132 height: 50
 // END src/frontend/components/weather_widget.splash
 
 // BEGIN src/frontend/components/intent_orb.splash
-// The reveal origin matches the floating orb's 72px hit target and insets.
+// The assistant mark is decorative inside the intent space. The user-facing
+// entry is the centered plus button in the bottom navigation.
 let AIOrb = ButtonFlat{width: 72 height: 72 padding: 0 margin: 0 text: "AI"
     draw_text +: {color: white color_hover: white color_down: white text_style: theme.font_bold{font_size: 14}}
     draw_bg +: {
@@ -9742,6 +9726,23 @@ let AIOrb = ButtonFlat{width: 72 height: 72 padding: 0 margin: 0 text: "AI"
         }
     }
 }
+let IntentNavButton = ButtonFlat{width: 58 height: 58 padding: 0 margin: 0 text: ""
+    label_walk: Walk{width: 0 height: 0} icon_walk: Walk{width: 0 height: 0}
+    draw_bg +: {
+        color: #x6655d8 color_hover: #x7566e4 color_down: #x5545c8 color_focus: #x7566e4
+        pixel: fn(){
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let center = self.rect_size * 0.5
+            let fill = self.color.mix(self.color_focus, self.focus).mix(self.color_hover, self.hover).mix(self.color_down, self.down)
+            sdf.circle(center.x, center.y + 2.0, 27.0) sdf.fill(#x382e7a28)
+            sdf.circle(center.x, center.y, 25.5) sdf.fill(fill)
+            sdf.circle(center.x, center.y, 25.0) sdf.stroke(#xffffff52, 1.0)
+            sdf.move_to(center.x - 8.0, center.y) sdf.line_to(center.x + 8.0, center.y) sdf.stroke(#xffffffff, 3.0)
+            sdf.move_to(center.x, center.y - 8.0) sdf.line_to(center.x, center.y + 8.0) sdf.stroke(#xffffffff, 3.0)
+            return sdf.result
+        }
+    }
+}
 let IntentBackdrop = View{width: Fill height: Fill show_bg: true
     draw_bg +: {
         pixel: fn(){
@@ -9754,11 +9755,11 @@ let IntentBackdrop = View{width: Fill height: Fill show_bg: true
 let IntentReveal = View{width: Fill height: Fill show_bg: true
     draw_bg +: {
         progress: uniform(0.0)
-        origin_x: uniform(1.0)
-        origin_y: uniform(0.86)
+        origin_x: uniform(0.5)
+        origin_y: uniform(1.0)
         pixel: fn(){
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            let origin = vec2(54.0 + (self.rect_size.x - 108.0) * self.origin_x, 72.0 + (self.rect_size.y - 208.0) * self.origin_y)
+            let origin = vec2(36.0 + (self.rect_size.x - 72.0) * self.origin_x, 36.0 + (self.rect_size.y - 72.0) * self.origin_y)
             let radius = 28.0 + length(self.rect_size) * self.progress
             sdf.circle(origin.x, origin.y, radius + 14.0) sdf.fill(#x93a1ec22)
             sdf.circle(origin.x, origin.y, radius + 6.0) sdf.fill(#xa3b9ef45)
@@ -11034,6 +11035,9 @@ HostedView{width: Fill height: Fill
                     tracking_tab_active := RoundedView{visible: false width: Fill height: Fill align: Align{x: 0.5 y: 0.1} show_bg: true draw_bg.color: #xeeecfa draw_bg.border_radius: 22.0 EditorialIcon{draw_bg.kind: 1.0 draw_bg.tint: editorial_accent}}
                     tracking_tab := Nav{height: 54 text: "关注" align: Align{x: 0.5 y: 1.0} padding: Inset{bottom: 2} draw_text +: {color: editorial_muted color_focus: editorial_accent text_style +: {font_size: 11}} on_click: || select_page("tracking")}
                 }
+                View{width: Fill height: 60 align: Align{x: 0.5 y: 0.0}
+                    intent_add := IntentNavButton{on_click: || {if !intent_open { intent_begin(nil) }}}
+                }
                 View{width: Fill height: 54 flow: Overlay
                     View{width: Fill height: Fill align: Align{x: 0.5 y: 0.1} EditorialIcon{draw_bg.kind: 2.0}}
                     schedule_tab_active := RoundedView{visible: false width: Fill height: Fill align: Align{x: 0.5 y: 0.1} show_bg: true draw_bg.color: #xeeecfa draw_bg.border_radius: 22.0 EditorialIcon{draw_bg.kind: 2.0 draw_bg.tint: editorial_accent}}
@@ -11047,23 +11051,8 @@ HostedView{width: Fill height: Fill
             }
         }
     }
-    floating_ai := View{width: Fill height: Fill flow: Overlay
-        if orb_native_supported { GestureView{width: Fill height: Fill on_viewport: |w,h| orb_viewport(w,h)} }
-        orb_position := View{width: Fill height: Fill align: Align{x: 1.0 y: 0.86} padding: Inset{left: 18 right: 18 top: 36 bottom: 100} on_render: || { align: Align{x: orb_x y: orb_y} }
-            ai_orb := View{width: 72 height: 72
-            if orb_native_supported {
-                GestureView{width: 72 height: 72 long_press_seconds: 0.4 on_press: || orb_press() on_tap: |x,y| orb_tap(x,y) on_long_press: |x,y| orb_long_press(x,y)
-                on_pan_viewport: |dx,dy,phase,w,h| orb_pan(dx,dy,phase,w,h) on_release: || orb_release()
-                AIOrb{enabled: false}
-                }
-            } else {
-                AIOrb{on_press: || intent_orb_press() on_click: || {if !intent_open { intent_begin(nil) }}}
-            }
-            }
-        }
-    }
     intent_overlay := View{visible: false width: Fill height: Fill flow: Overlay
-        intent_wave := View{width: Fill height: Fill on_render: || { IntentReveal{draw_bg.progress: intent_reveal draw_bg.origin_x: orb_x draw_bg.origin_y: orb_y} }}
+        intent_wave := View{width: Fill height: Fill on_render: || { IntentReveal{draw_bg.progress: intent_reveal draw_bg.origin_x: 0.5 draw_bg.origin_y: 1.0} }}
         intent_scene := IntentBackdrop{visible: false flow: Down
             View{width: Fill height: 64 flow: Right padding: Inset{left: 22 right: 18 top: 14 bottom: 10} align: Align{y: 0.5}
                 Section{width: Fill text: "✦ 意图空间" draw_text.color: #x455789 draw_text.text_style.font_size: 14}
@@ -11126,7 +11115,6 @@ fn boot_loaded(){
     feed_initialize()
     render_main()
     boot_finished = true
-    start_timeout(0.01, || orb_load())
     start_timeout(0.01, || weather_app_boot())
     if records_warning != "" || schedule_warning != "" || analysis_history_warning != "" || topic_warning != "" { notice(records_warning + " " + schedule_warning + " " + analysis_history_warning + " " + topic_warning) }
     // records_load/history_load/render_main already spent most of this 64ms

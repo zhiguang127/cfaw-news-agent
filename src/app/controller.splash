@@ -243,7 +243,6 @@ fn render_main_now(){
     ui.schedule_page.set_visible(page == "schedule")
     ui.account_page.set_visible(page == "account")
     ui.results_panel.set_visible(page == "tracking" && tracking_section == "suggestions")
-    ui.floating_ai.set_visible(intent_orb_visible())
     if page == "schedule" {
         ui.schedule_list.render()
         ui.schedule_editor.render()
@@ -253,9 +252,6 @@ fn render_main_now(){
 }
 fn results_view_active(){
     detail_kind == "results" || (detail_kind == "" && page == "tracking" && tracking_section == "suggestions")
-}
-fn intent_orb_visible(){
-    page != "tracking" && !results_view_active() && !(detail_kind == "story" && story_from_results) && !intent_open && !intent_motion_active && !original_article_open
 }
 fn tracking_pick_section(section){
     select_page("tracking")
@@ -600,7 +596,6 @@ fn close_original_article(){
     ui.original_reader.close()
     original_article_open = false
     ui.original_pane.set_visible(false)
-    ui.floating_ai.set_visible(intent_orb_visible())
 }
 fn open_original_article(){
     if reading == nil || !article_original_allowed(reading.source_url) { return }
@@ -612,7 +607,6 @@ fn open_original_article(){
     if url.split("/")[0] == "http:" { url = "https:" + url.strip_prefix("http:") }
     ui.story_panel.set_visible(false)
     ui.original_pane.set_visible(true)
-    ui.floating_ai.set_visible(false)
     ui.detail_title.set_text("图文原文")
     ui.original_title.set_text(reading.title)
     ui.original_hint.set_text(if article_state.requires_verification {"如页面提示验证，请完成后继续阅读原文。"} else {""})
@@ -639,7 +633,6 @@ fn show_detail(kind, title){
     close_original_article()
     if kind != "story" { article_cancel() }
     detail_kind = kind
-    ui.floating_ai.set_visible(intent_orb_visible())
     ui.detail_title.set_text(title)
     ui.main.set_visible(false)
     ui.navigation.set_visible(false)
@@ -648,9 +641,7 @@ fn show_detail(kind, title){
     render_detail()
 }
 fn open_story(row){
-    if intent_open || intent_motion_active || time_now() - last_intent_orb_press_at < news_config.overlay_tap_guard_seconds { return }
-    // The pinned GestureView can also deliver a tap through a sibling overlay.
-    // Remove this guard when host capture excludes overlapping sibling controls.
+    if intent_open || intent_motion_active { return }
     if time_now() - last_return_top_at < news_config.overlay_tap_guard_seconds { return }
     insight_evidence_view = nil
     story_from_results = results_view_active() || (page == "tracking" && tracking_section == "topics")
@@ -703,7 +694,6 @@ fn close_detail(){
     reader_summary_cancel()
     article_cancel()
     detail_kind = ""
-    ui.floating_ai.set_visible(intent_orb_visible())
     reading = nil insight_evidence_view = nil story_from_results = false
     render_analysis_controls()
     ui.detail_pane.set_visible(false)

@@ -160,7 +160,7 @@ fn insights_render_fixture(){
         records_load() feed_initialize() weather_initialize() weather_app_ready = true
         render_main()
         start_timeout(0.02, || {
-            orb_load() show_analysis_results()
+            show_analysis_results()
             start_timeout(0.05, || {
                 fs.write("insights-report.json", {passed: insights_test_passed failed: insights_test_failed failures: insights_test_failures stage: "complete"}.to_json())
             })

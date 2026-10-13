@@ -1,3 +1,5 @@
+// orb_x/orb_y remain required only so existing schema 1 files stay readable
+// after the floating entry was replaced by the fixed center navigation button.
 let agent_preferences = {schema_version: 1 revision: 0 paused: false important_only: false interval_seconds: 900 orb_x: 1.0 orb_y: 0.86}
 let agent_preferences_file = {path: "agent_preferences_v1.json" revision: 0 writable: true recovered: false}
 fn agent_preferences_valid(v){
