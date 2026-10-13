@@ -10,5 +10,6 @@ fn trip_review_coverage(item){
     for id in enabled_source_ids { let source = news_source(id) if source != nil { if source.category == "travel" { count = count + 1 } } }
     let text = "当前启用出行来源 " + count + " 个；优先已有的一手出行通告，不能覆盖所有交通或目的地消息。"
     if schedule_instant(item.start) - time_now() > 7 * 86400 { return text + " 行程尚在7天以外，天气预报不足以判断出行。" }
-    text + " 近期天气可在天气页核对；新闻未发现影响不等于保证安全。"
+    if schedule_weather_rows([item]).len() > 0 { return text + " 已结合本日程城市和日期的日预报；天气准备建议见上方。" }
+    text + " 本日程对应城市或日期的有效预报尚未取得；新闻未发现影响不等于保证安全。"
 }

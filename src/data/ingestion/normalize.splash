@@ -111,6 +111,9 @@ fn news_merge_copy(row){
     if row["publisher_license"] != nil { copy.publisher_license = row.publisher_license }
     if row["bookmarked_at"] != nil { copy.bookmarked_at = row.bookmarked_at }
     if row["timestamp_parser_revision"] != nil { copy.timestamp_parser_revision = row.timestamp_parser_revision }
+    if row["fixed_article"] == true {
+        for field in ["fixed_article" "original_title" "source_role" "same_event_as" "archive_captured_at" "source_published_date" "source_updated_date" "source_verified_date" "coverage_note"] { copy[field] = row[field] }
+    }
     return copy
 }
 fn news_append_unique(out, indexed, row){

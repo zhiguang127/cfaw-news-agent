@@ -68,7 +68,7 @@ fn feed_refresh_needed_ids(enabled_ids, checked_at){
 fn feed_all_rows(enabled_ids){
     let groups = []
     for id in enabled_ids { if feed_rows_by_source[id] != nil { groups.push(feed_rows_by_source[id]) } }
-    news_merge(groups)
+    demo_mix_rows(news_merge(groups))
 }
 fn feed_accept(source, result, retrieved_at, parsed_rows = nil){
     let status = feed_status_by_source[source.id]
@@ -118,7 +118,7 @@ fn feed_sort_step(work){
     if work.width >= work.rows.len() {
         let limited = []
         for row in work.rows { if limited.len() < news_config.max_feed_items { limited.push(row) } }
-        start_timeout(0.01, || { if feed_work_current(work) { work.complete(limited) } })
+        start_timeout(0.01, || { if feed_work_current(work) { work.complete(demo_mix_rows(limited)) } })
         return
     }
     let processed = 0

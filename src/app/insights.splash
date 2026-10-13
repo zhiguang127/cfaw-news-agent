@@ -157,7 +157,7 @@ fn target_check_label(kind, id, version){
     if state != nil {
         if state.status == "pending" {
             if state.watermark == 0 { return "正在检查 · 尚未完成首次检查" }
-            return "正在检查 · 上次成功检查：" + age_label(state.watermark)
+            return "正在检查 · 上次成功检查：" + age_label(floor(state.watermark))
         }
         if state.status == "failed" {
             let reasons = {invalid_reference: "分析引用未通过校验，请重新检查" invalid_schema: "分析格式未通过校验，请重新检查" invalid_json: "分析回复格式无效，请重新检查" timeout: "助手响应超时，请重试" service_unavailable: "助手服务不可用，请检查配置" cancelled: "检查已取消" stale_context: "关注或依据已变化，请重新检查"}
@@ -165,14 +165,15 @@ fn target_check_label(kind, id, version){
             if reason == nil { reason = "检查未完成，请查看分析页的具体原因" }
             if record_string(state["reason"]) && state.reason != "" { reason = state.reason }
             let previous = " · 尚未完成首次成功检查"
-            if state.watermark > 0 { previous = " · 上次成功检查：" + age_label(state.watermark) }
+            if state.watermark > 0 { previous = " · 上次成功检查：" + age_label(floor(state.watermark)) }
             return "上次检查未完成：" + reason + previous
         }
         if state.status == "no_candidates" { return "上次检查没有新候选 · 来源与规则覆盖有限，未调用助手" }
     }
     let checked = tracking_target_checked(kind, id, version)
     if checked == 0 { return "尚未完成检查 · 当前来源覆盖有限" }
-    "上次完成检查：" + age_label(checked) + " · 仅覆盖当时选中的来源与候选"
+    if kind == "schedule" { return "上次完成检查：" + age_label(floor(checked)) + " · 仅覆盖当时选中的新闻或天气依据" }
+    "上次完成检查：" + age_label(floor(checked)) + " · 仅覆盖当时选中的来源与候选"
 }
 fn agent_progress(stage){
     if intent_open && agent_task != nil && agent_task.kind == "parse_intent" {

@@ -163,13 +163,17 @@ fn prepare_feed_presentation_step(work){
             if work.index >= work.rows.len() {
                 let ordered = []
                 for group in [3 2 1 0] { for row in work.groups[group] { ordered.push(row) } }
+                // Relevance remains visible as a hint, but the homepage follows
+                // source publication time. Unknown dates sort last, stably.
+                if work.page == "feed" { ordered = news_sort(ordered) }
                 work.rows = ordered
                 prepare_feed_presentation_complete(work) return
             }
             let row = work.rows[work.index]
             if work.seen[row.news_id] != true {
                 work.seen[row.news_id] = true
-                let group = feed_priority_group(row, work.matches, work.hints, work.schedule_matches)
+                let group = 0
+                if work.page != "feed" { group = feed_priority_group(row, work.matches, work.hints, work.schedule_matches) }
                 if work.page != "tracking" || work.follow_matches[row.news_id] == true { work.groups[group].push(row) }
             }
         } else {
@@ -245,6 +249,7 @@ fn prioritize_feed_rows(rows){
         if seen[row.news_id] == true { continue } seen[row.news_id] = true
         let group = feed_priority_group(row, feed_match_hints, feed_agent_hints, feed_schedule_matches)
         if page == "tracking" && !feed_follow_match(row, tracking_values[row.news_id]) { continue }
+        if page == "feed" { other.push(row) continue }
         if group == 3 { impacts.push(row) }
         else if group == 2 { schedule_candidates.push(row) }
         else if group == 1 { related.push(row) }
@@ -253,6 +258,7 @@ fn prioritize_feed_rows(rows){
     for row in schedule_candidates { impacts.push(row) }
     for row in related { impacts.push(row) }
     for row in other { impacts.push(row) }
+    if page == "feed" { return news_sort(impacts) }
     impacts
 }
 fn row_agent_hint(row){

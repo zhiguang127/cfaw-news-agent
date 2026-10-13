@@ -209,7 +209,13 @@ fn intent_finish(message){
 fn intent_confirm_schedule(){
     if intent_draft.state != "ready" || !schedule_intent_understanding_valid(intent_draft["schedule_understanding"]) { intent_error = "请先取得完整的日程理解" intent_render() return }
     let plan = intent_draft.schedule_understanding
-    let result = schedule_create_record(plan.title, plan.content, plan.location, plan.start, plan.end, plan.timezone, nil, true, intent_draft.draft_id)
+    let suggestion_id = nil
+    if intent_draft["origin_goal_plan"] != nil {
+        let reference = goal_schedule_draft_reference(intent_draft)
+        if reference == nil || !goal_schedule_reference_current(reference) { intent_error = "原试用建议已变化，请重新检查关注后再确认。" intent_render() return }
+        suggestion_id = goal_schedule_id(reference)
+    }
+    let result = schedule_create_record(plan.title, plan.content, plan.location, plan.start, plan.end, plan.timezone, suggestion_id, true, intent_draft.draft_id)
     if !result.success {
         intent_error = result.error
         if result["conflicts"] != nil { intent_error = "与已有日程重叠，请调整时间后重新整理" }

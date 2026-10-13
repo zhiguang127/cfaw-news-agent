@@ -24,7 +24,7 @@ fn news_record_valid(r){
     if r["body_html"] != nil {
         if !record_string(r["body_html"]) || !record_string(r["source_summary"]) || r.body_html.len() > 160000 { return false }
         if r["body_truncated"] != true && r["body_truncated"] != false { return false }
-        if r["body_origin"] != "publisher_rss" && r["body_origin"] != "publisher_atom" { return false }
+        if r["body_origin"] != "publisher_rss" && r["body_origin"] != "publisher_atom" && r["body_origin"] != "curated_excerpt" { return false }
     }
     for field in ["publisher_byline" "publisher_license"] {
         if r[field] != nil { if !record_string(r[field]) || r[field].len() > 2000 { return false } }

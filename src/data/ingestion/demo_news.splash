@@ -1,0 +1,44 @@
+// Stable real-news input for the unchanged application UI and normal retrieval.
+// Publication time remains the source time. Provenance stays in analysis data.
+let demo_rows = []
+fn demo_news_initialize(){
+    demo_rows = []
+    for item in demo_catalog.articles {
+        let published = nil
+        if item["published_unix"] != nil { published = item.published_unix }
+        else if item["published_date"] != nil { published = schedule_instant(item.published_date + "T00:00:00Z") }
+        let body = ""
+        for quote in item.quotes { body = body + "<p>" + quote + "</p>" }
+        let row = {news_id: news_identity(item.url) evidence_id: news_identity(item.url)
+            content_version: "real-news-demo-v3:" + item.key title: item.title source: item.source
+            source_id: "fixed_real_archive" source_url: item.url feed_url: item.url category: "AI"
+            language: "zh" summary: item.summary image_url: nil published_at: published
+            retrieved_at: time_now() evidence_kind: "curated_real_excerpt" timestamp_kind: "published"
+            references: [{source_id: "fixed_real_archive" source: item.source source_url: item.url feed_url: item.url}]
+            source_summary: item.summary body_html: body body_origin: "curated_excerpt" body_truncated: true
+            fixed_article: true original_title: item.original_title
+            source_role: item.source_role same_event_as: item["same_event_as"] archive_captured_at: demo_catalog.captured_at
+            source_published_date: item.published_date source_updated_date: item["source_updated_date"]
+            source_verified_date: item["source_verified_date"] coverage_note: item.coverage_note}
+        if news_record_valid(row) { demo_rows.push(row) }
+        else { records_warn("新闻归档无效：" + item.key) }
+    }
+}
+fn demo_current_row(id){
+    for row in demo_rows { if row.news_id == id { return row } }
+    nil
+}
+fn demo_mix_rows(live){
+    // Reserve archived articles within the normal feed cap. All goals use this
+    // mixed corpus; there is no preset topic ID or scenario-only retrieval.
+    let rows = [] let seen = {} let index = 0
+    for pin in demo_rows { seen[pin.news_id] = true }
+    for row in live {
+        if seen[row.news_id] == true { continue }
+        if rows.len() >= news_config.max_feed_items - max(0, demo_rows.len() - index) { break }
+        if index < demo_rows.len() && rows.len() % 3 == 0 { rows.push(demo_rows[index]) index = index + 1 }
+        rows.push(row)
+    }
+    while index < demo_rows.len() { rows.push(demo_rows[index]) index = index + 1 }
+    rows
+}

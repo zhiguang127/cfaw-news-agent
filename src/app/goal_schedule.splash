@@ -1,0 +1,108 @@
+// One explicit user-requested trial, concrete preview, one approval to save.
+let goal_schedule_preview = nil
+fn goal_schedule_evidence_current(reference, values){
+    let available = []
+    for value in values {
+        if value.run.task_id != reference.run.task_id || record_contains(["handled" "dismissed" "watch" "withdrawn"], value.state) { continue }
+        for id in value.insight.evidence_ids { if !record_contains(available, id) { available.push(id) } }
+    }
+    for id in reference.plan.evidence_ids { if !record_contains(available, id) { return false } }
+    reference.plan.evidence_ids.len() > 0
+}
+fn goal_schedule_reference(card){
+    if card.topic.status != "active" || !goal_requests_trial(card.topic) { return nil }
+    for value in card.values {
+        let plan = goal_plan_find(value.run.result, card.topic.topic_id)
+        if plan == nil || plan.topic_version != card.topic.version { continue }
+        let reference = {plan: plan run: value.run}
+        if goal_schedule_saved(reference) != nil { return reference }
+        if !card.current { continue }
+        if !goal_schedule_evidence_current(reference, card.values) { continue }
+        return reference
+    }
+    nil
+}
+fn goal_schedule_id(reference){ "trial:" + reference.plan.topic_id + ":" + reference.plan.topic_version }
+fn goal_schedule_saved(reference){
+    for item in user_schedules { if item["origin_suggestion_id"] == goal_schedule_id(reference) { return item } }
+    nil
+}
+fn goal_schedule_render(){
+    if page == "tracking" && follow_view == "topic" && detail_kind == "" { ui.follow_topic_content.render() }
+}
+fn goal_schedule_proposal(reference){
+    let key = {plan: reference.plan run_id: reference.run.task_id schedules: user_schedules}.to_json()
+    if goal_schedule_preview != nil && goal_schedule_preview.key == key {
+        if goal_schedule_preview.state != "ready" || schedule_instant(goal_schedule_preview.plan.start) > time_now() { return goal_schedule_preview }
+    }
+    let work = {key: key reference: reference state: "preparing" day: 1 hour: 20 plan: nil error: ""}
+    goal_schedule_preview = work
+    start_timeout(0.01, || goal_schedule_step(work))
+    work
+}
+fn goal_schedule_step(work){
+    if goal_schedule_preview != work { return }
+    if work.day > 7 { work.state = "failed" work.error = "近期建议时段与已有日程重叠，请修改时间后再确认。" goal_schedule_render() return }
+    let date = schedule_date_at(floor(time_now()) + 8 * 3600 + work.day * 86400)
+    let start = schedule_entry_timestamp(date, "" + work.hour, "0", "Asia/Shanghai").timestamp
+    let finish = schedule_entry_parts(analysis_epoch_rfc3339(schedule_instant(start) + work.reference.plan.duration_minutes * 60), "Asia/Shanghai")
+    let end = schedule_entry_timestamp(finish.date, finish.hour, finish.minute, "Asia/Shanghai").timestamp
+    let plan = {title: work.reference.plan.title content: work.reference.plan.content location: "" start: start end: end timezone: "Asia/Shanghai"}
+    work.plan = plan
+    if schedule_conflicts(plan, nil).len() == 0 {
+        work.state = "ready" goal_schedule_render() return
+    }
+    work.hour = work.hour + 1
+    if work.hour >= 22 { work.hour = 20 work.day = work.day + 1 }
+    start_timeout(0.01, || goal_schedule_step(work))
+}
+fn goal_schedule_reference_current(reference){
+    if !tracking_run_current(reference.run) { return false }
+    let topic = topic_find(reference.plan.topic_id)
+    if topic == nil || topic.status != "active" || topic.version != reference.plan.topic_version { return false }
+    let latest = follow_topic_run(topic)
+    if latest == nil || latest.task_id != reference.run.task_id { return false }
+    let values = []
+    for insight in latest.result.insights {
+        if insight.target_type == "topic" && insight.target_id == topic.topic_id && insight.target_version == topic.version { values.push({insight: insight run: latest state: insight_state(insight, latest)}) }
+    }
+    goal_schedule_evidence_current(reference, values)
+}
+fn goal_schedule_import(work){
+    if work == nil || work.state != "ready" { notice("请等待试用日程准备完成，或修改时间。") return false }
+    if goal_schedule_saved(work.reference) != nil { notice("这次试用已经导入日程，未重复创建。") goal_schedule_render() return true }
+    if !goal_schedule_reference_current(work.reference) { notice("目标、来源或你的决定已变化，请重新检查后再安排试用。") return false }
+    if schedule_instant(work.plan.start) <= time_now() { goal_schedule_preview = nil notice("建议时间已过，请重新选择时间。") goal_schedule_render() return false }
+    let result = schedule_create_details(work.plan.title, work.plan.content, work.plan.location, work.plan.start, work.plan.end, work.plan.timezone, goal_schedule_id(work.reference))
+    if !result.success {
+        if result.error == "Schedule conflict" { goal_schedule_preview = nil notice("该时段已有安排，请修改时间后确认。") }
+        else { notice(result.error) }
+        goal_schedule_render() return false
+    }
+    notice("试用日程已导入“我的日程”")
+    goal_schedule_render() tracking_ui_update()
+    tracking_schedule_check(nil, result.item.schedule_id)
+    true
+}
+fn goal_schedule_edit(work){
+    if work == nil || (work.state != "ready" && work.state != "failed") || work.plan == nil || !goal_schedule_reference_current(work.reference) { notice("请先取得当前有效的试用计划。") return }
+    intent_begin(nil)
+    if !intent_empty_draft_available() { intent_error = "已有草稿已保留；请先完成或丢弃，再修改试用时间。" intent_render() return }
+    intent_draft.intent_kind = "schedule"
+    intent_draft.schedule_timezone = work.plan.timezone
+    intent_draft.original_input = work.plan.title + "。" + work.plan.content + "。建议时间：" + schedule_display_time(work.plan.start, work.plan.timezone) + "至" + schedule_display_time(work.plan.end, work.plan.timezone)
+    intent_draft.state = "ready" intent_draft.schedule_understanding = work.plan.to_json().parse_json()
+    intent_draft.schedule_prompt_revision = schedule_intent_prompt_revision
+    intent_draft.origin_goal_plan = {run_id: work.reference.run.task_id topic_id: work.reference.plan.topic_id topic_version: work.reference.plan.topic_version}
+    intent_guidance = "这是待确认的建议时段，可修改输入重新整理；确认后才写入日程。"
+    intent_error = intent_save_local() intent_render()
+}
+fn goal_schedule_draft_reference(draft){
+    let origin = draft["origin_goal_plan"] if origin == nil { return nil }
+    for run in tracking_cache.runs {
+        if run.task_id != origin.run_id { continue }
+        let plan = goal_plan_find(run.result, origin.topic_id)
+        if plan != nil && plan.topic_version == origin.topic_version { return {plan: plan run: run} }
+    }
+    nil
+}

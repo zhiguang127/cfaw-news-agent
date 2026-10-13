@@ -1,18 +1,32 @@
 {
   "schema": 1,
-  "subtitle": "让 AI 新消息，与你的下一步有关",
-  "description": "CFAW News 是运行于 Rinx 的新闻 Agent 应用。用一句话表达对 AI、科技及其他领域的关注，阅读真实来源的新闻，查看新消息与你的工作、学习、生活目标和应用内日程的关系。\n\n首页支持分类、搜索、主动刷新及图片热点；阅读页提供可提取的正文、部分配图和系统浏览器原文入口。收藏以列表集中展示。通过意图空间整理关注或日程，查看理解预览并确认保存；关注支持修改、暂停、恢复与取消。\n\nAgent 结合关注、日程与候选新闻提出变化分析、证据和建议。日程调整须由用户确认。助手由宿主配置的 Octos 模型服务提供，团队使用 MiniMax；模型不可用时仍可浏览新闻。\n\n新闻获取和正文提取受来源可用性、付费及人机验证限制。跟踪在应用运行期间触发，不提供后台推送、系统日历写入或云同步。初始化的关注与日程预设在界面明确标识，不作为实时新闻。当前声明平台为 Windows。",
+  "subtitle": "让新消息，与你的下一步有关",
+  "description": "CFAW News 是运行于 Rinx 的新闻 Agent 应用。用户表达工作、学习和生活目标，核对并编辑 Agent 的理解后确认保存；应用从真实新闻中寻找相关变化，展示目前情况、下一步建议与可核对的来源证据。支持记录观察、已处理和不采纳，并结合历史判断继续检查。\n\n首页提供分类、搜索、图片热点、刷新与收藏。阅读页展示可读取的正文、配图与来源摘要，用户可以主动提取 Agent 摘要，或通过应用内 WebReader 查看图文原文。\n\n应用内日程支持录入、编辑、完成和取消。天气预报按日程的明确城市地点与日期匹配，作为独立证据交给同一个 Agent，生成通勤和物品准备建议。天气建议校验日程版本、预报标识和时效；日预报不会自动取消或调整已确认的日程。\n\n助手通过宿主管理的 Octos 与模型运行，团队演示使用 MiniMax。新闻和正文受来源与网络条件限制，跟踪在应用运行期间进行。当前交付为 Windows 本地导入包，需要兼容宿主和 WebView2 Runtime，不提供后台推送、系统日历写入或云同步。",
   "category": "news",
-  "keywords": ["AI", "新闻", "Agent", "关注", "日程", "Rinx", "OctoScript"],
-  "screenshots": ["screenshots/e51a26ad2a041003f57da45db3727781.png", "screenshots/1d5ae8429656654ee1ad8e9a14883a0f.png"],
+  "keywords": [
+    "AI",
+    "新闻",
+    "Agent",
+    "关注",
+    "日程",
+    "Rinx",
+    "OctoScript"
+  ],
+  "screenshots": [
+    "screenshots/home.png",
+    "screenshots/tracking.png",
+    "screenshots/schedule-weather.png"
+  ],
   "icon": "assets/icon.svg",
-  "platforms": ["windows"],
+  "platforms": [
+    "windows"
+  ],
   "publisher": {
     "name": "zhiguang127",
     "support": "https://github.com/zhiguang127/cfaw-news-agent/issues",
     "privacy_policy_url": "https://github.com/zhiguang127/cfaw-news-agent/blob/main/PRIVACY.md"
   },
-  "release_notes": "首次提交：真实新闻浏览与刷新、图文阅读、自然语言关注、变化分析与证据、用户确认的应用内日程调整和新闻收藏。",
+  "release_notes": "最终展示包：自然语言关注与二次编辑、真实新闻阅读与收藏、变化判断与证据回溯、用户决定和日程确认，以及匹配日程城市日期的天气联合分析。",
   "age_rating": "12+",
   "license": "Apache-2.0"
 }

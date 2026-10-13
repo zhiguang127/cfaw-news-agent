@@ -133,7 +133,7 @@ fn follow_check_step(){
         follow_check_running = false
         follow_check_feedback = "本次处理了 " + follow_check_completed + " 个话题"
         if follow_check_failed > 0 { follow_check_feedback = follow_check_feedback + "，" + (follow_check_completed - follow_check_failed) + " 项完成、" + follow_check_failed + " 项未完成；原因见对应话题。" }
-        else { follow_check_feedback = follow_check_feedback + "；仅覆盖每个话题本轮选中的候选。" }
+        else { follow_check_feedback = follow_check_feedback + "；可查看各话题的判断依据。" }
         follow_render() return
     }
     if busy || octos_testing || reader_summary.state == "running" || intent_open || intent_motion_active { follow_check_arm() return }

@@ -14,7 +14,10 @@ fn analysis_article_key(row){ tracking_article_key(row) }
 fn analysis_article_find(row){
     if row == nil { return nil }
     for entry in analysis_articles {
-        if entry.news_id == row.news_id && entry.content_key == analysis_article_key(row) && time_now() - entry.retrieved_at < news_config.cache_stale_seconds { return entry }
+        if entry.news_id == row.news_id && time_now() - entry.retrieved_at < news_config.cache_stale_seconds {
+            let facts = tracking_content_fields(entry.content_key)
+            if facts != nil && tracking_article_matches(row, facts) { return entry }
+        }
     }
     nil
 }

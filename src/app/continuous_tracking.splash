@@ -14,6 +14,7 @@ fn tracking_preferences_change(paused, important, seconds){
     if error != "" { notice(error) return }
     if paused {
         tracking_check_pending = false
+        tracking_auto_requested_topics = [] tracking_auto_requested_schedules = []
         if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) tracking_auto_timer = nil }
         if tracking_status == "recalling" || tracking_status == "enriching" { analysis_cancel() }
         else if analysis_busy && agent_task != nil { if agent_task.kind == "tracking_update" { analysis_cancel() } }

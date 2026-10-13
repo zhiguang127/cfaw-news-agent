@@ -19,13 +19,21 @@ let SchedulePage = View{visible: false width: Fill height: Fill flow: Down
                     } else { Small{text: schedule_display_time(item.start, item.timezone) + " → " + schedule_display_time(item.end, item.timezone)} }
                     Small{text: schedule_zone_label(item.timezone) + " · 24 小时制"}
                     Small{text: schedule_status_label(item)}
+                    for reminder in schedule_weather_reminders(item) {
+                        if reminder.origin == "Agent 建议" { Small{text: "Agent 建议：" + reminder.advice} }
+                    }
                     Small{text: target_check_label("schedule", item.schedule_id, item.version)}
                     QuietButton{text: "核对行程与消息覆盖" on_click: || trip_review_begin(item.schedule_id)}
                     if trip_review_id == item.schedule_id {
                         Small{text: trip_review_question(item)}
                         Small{text: trip_review_coverage(item)}
+                        for reminder in schedule_weather_reminders(item) {
+                            Small{text: reminder.facts}
+                            Small{text: "天气来源：Open-Meteo · 获取于 " + reminder.retrieved_label}
+                            Small{text: reminder.limitation}
+                        }
                         QuietButton{text: "编辑并确认补充" on_click: || schedule_begin_edit(item.schedule_id)}
-                        QuietButton{text: "检查相关消息" on_click: || tracking_start(nil)}
+                        QuietButton{text: "检查相关消息" on_click: || schedule_check_messages(item.schedule_id)}
                     }
                     QuietButton{text: "编辑" on_click: || schedule_begin_edit(item.schedule_id)}
                     if item["status"] != "cancelled" {

@@ -47,13 +47,6 @@ let IntentPanel = View{width: Fill height: Fill flow: Down on_render: || {
                 if mode == "goal" { placeholder = "想做什么、为什么做？我会帮你关注相关的新消息。" }
                 if mode == "schedule" { placeholder = "说说你的安排：日期、几点开始和结束、在哪里做什么。" }
                 intent_input := IntentInput{text: intent_draft.original_input empty_text: placeholder on_change: |value| intent_changed(value, false)}
-                if mode != "schedule" && intent_starter_available() {
-                    Section{text: "从生活场景开始"}
-                    Small{text: "点击只填入示例，不会自动保存或调用 AI。"}
-                    for example in life_scenarios {
-                        LinkButton{width: Fill text: example.title on_click: || intent_use_scenario(example.id)}
-                    }
-                }
                 if mode == "schedule" {
                     View{width: Fill height: 30 flow: Right spacing: 6 align: Align{y: 0.5}
                         Small{width: Fit text: "默认时区"}

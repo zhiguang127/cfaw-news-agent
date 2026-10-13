@@ -61,6 +61,10 @@ fn topic_draft_valid(value){
     if value["intent_kind"] != nil && value.intent_kind != "goal" && value.intent_kind != "news" && value.intent_kind != "schedule" { return false }
     if value["schedule_timezone"] != nil && value.schedule_timezone != "Asia/Shanghai" && value.schedule_timezone != "America/New_York" { return false }
     if value["schedule_understanding"] != nil && !schedule_intent_understanding_valid(value.schedule_understanding) { return false }
+    if value["origin_goal_plan"] != nil {
+        let origin = value.origin_goal_plan
+        if !record_object(origin) || !tracking_text(origin["run_id"], 200) || !tracking_text(origin["topic_id"], 200) || !record_number(origin["topic_version"]) { return false }
+    }
     if value["intent_kind"] == "schedule" && value.state == "ready" && value["schedule_understanding"] == nil { return false }
     true
 }

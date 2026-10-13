@@ -12,7 +12,7 @@ fn tracking_snapshot_valid(snapshot){
         if item["summary_truncated"] != true && item["summary_truncated"] != false { return false }
     }
     if !record_string(snapshot["context_key"]) || !record_string(snapshot["prompt_revision"]) || !record_array(snapshot["decisions"]) { return false }
-    record_number(snapshot["omitted_targets"]) && record_number(snapshot["omitted_candidates"]) && record_number(snapshot["omitted_decisions"])
+    record_number(snapshot["omitted_targets"]) && record_number(snapshot["omitted_candidates"]) && record_number(snapshot["omitted_decisions"]) && schedule_weather_snapshot_valid(snapshot)
 }
 fn tracking_invalid(category, message){ {valid: false error: category message: message result: nil} }
 fn tracking_find(values, field, id){ for value in values { if value[field] == id { return value } } nil }
@@ -115,7 +115,7 @@ fn tracking_parse(text, kind, snapshot){
     if !regex("^[{]").test(clean) || !regex("[}]$").test(clean) { return tracking_invalid("invalid_json", "模型回复应为单个 JSON 对象") }
     let value = nil
     try { value = clean.parse_json() } { value = nil }
-    if kind == "tracking_update" && record_contains(["tracking-v2.0" "tracking-v2.1" "tracking-v2.2" "tracking-v2.3" "tracking-v2.4" "tracking-v2.5" "tracking-v2.6" "tracking-v2.7" "tracking-v2.8" "tracking-v2.9" "tracking-v2.10" "tracking-v2.11"], snapshot["prompt_revision"]) {
+    if kind == "tracking_update" && record_contains(["tracking-v2.0" "tracking-v2.1" "tracking-v2.2" "tracking-v2.3" "tracking-v2.4" "tracking-v2.5" "tracking-v2.6" "tracking-v2.7" "tracking-v2.8" "tracking-v2.9" "tracking-v2.10" "tracking-v2.11" "tracking-v2.12" "tracking-v2.13-final"], snapshot["prompt_revision"]) {
         if value == nil || value["schema_version"] != 2 { return tracking_invalid("invalid_schema", "新版追踪须返回目标变化与段落引用契约；旧结果仅作历史兼容") }
     }
     if !record_object(value) { return tracking_invalid("invalid_json", "模型回复无法解析为 JSON 对象") }
@@ -143,9 +143,11 @@ fn tracking_parse(text, kind, snapshot){
         }
         return checked
     }
-    if kind == "tracking_update" && record_contains(["tracking-v2.2" "tracking-v2.3" "tracking-v2.4" "tracking-v2.5" "tracking-v2.6" "tracking-v2.7" "tracking-v2.8" "tracking-v2.9" "tracking-v2.10" "tracking-v2.11"], snapshot["prompt_revision"]) {
+    if kind == "tracking_update" && record_contains(["tracking-v2.2" "tracking-v2.3" "tracking-v2.4" "tracking-v2.5" "tracking-v2.6" "tracking-v2.7" "tracking-v2.8" "tracking-v2.9" "tracking-v2.10" "tracking-v2.11" "tracking-v2.12" "tracking-v2.13-final"], snapshot["prompt_revision"]) {
         let error = tracking_expand_evidence(value, snapshot)
         if error != "" { return tracking_invalid("invalid_reference", error) }
+        let plan_error = goal_plans_expand(value, snapshot)
+        if plan_error != "" { return tracking_invalid("invalid_reference", plan_error) }
     }
     let checked = tracking_validate(value, snapshot)
     if !checked.valid && checked["reason_code"] == "no_related_policy" {
@@ -155,7 +157,7 @@ fn tracking_parse(text, kind, snapshot){
             if checked_notice.valid { return tracking_judgment_validate(notice, snapshot) }
         }
     }
-    if checked.valid && kind == "tracking_update" && record_contains(["tracking-v2.4" "tracking-v2.5" "tracking-v2.6" "tracking-v2.7" "tracking-v2.8" "tracking-v2.9" "tracking-v2.10" "tracking-v2.11"], snapshot["prompt_revision"]) {
+    if checked.valid && kind == "tracking_update" && record_contains(["tracking-v2.4" "tracking-v2.5" "tracking-v2.6" "tracking-v2.7" "tracking-v2.8" "tracking-v2.9" "tracking-v2.10" "tracking-v2.11" "tracking-v2.12" "tracking-v2.13-final"], snapshot["prompt_revision"]) {
         let no_related = tracking_no_related_notice(value, snapshot)
         if no_related != nil {
             let checked_notice = tracking_validate(no_related, snapshot)

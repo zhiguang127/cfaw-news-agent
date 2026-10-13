@@ -1,0 +1,49 @@
+// Forecasts remain their own evidence type, never fabricated news articles.
+fn schedule_weather_city(item){
+    if !record_string(item["location"]) || item.location.trim() == "" { return nil }
+    if regex("线上|在线|远程|视频会议|电话会议|Zoom|Teams", "i").test(item.location) { return nil }
+    let found = nil
+    for city in weather_cities {
+        if !regex(literal_pattern(city.name)).test(item.location) { continue }
+        if found != nil { return nil }
+        found = city
+    }
+    found
+}
+fn schedule_weather_wet(row){
+    row.precipitation_mm > 0 || record_contains([51 53 55 56 57 61 63 65 66 67 80 81 82 95 96 99], row.code)
+}
+fn schedule_weather_rows_at(items, checked_at){
+    let out = [] let today = weather_day_stamp(checked_at)
+    for item in items {
+        if !schedule_active(item) || schedule_instant(item.end) <= checked_at { continue }
+        let city = schedule_weather_city(item)
+        if city == nil { continue }
+        let first = weather_time_stamp(weather_day_stamp(schedule_instant(item.start)))
+        let last = weather_time_stamp(weather_day_stamp(schedule_instant(item.end) - 0.001))
+        let rows = weather_rows_by_city[city.cid]
+        if rows == nil { continue }
+        for row in rows {
+            if !forecast_valid(row) || row.city_id != city.cid || row.city_name != city.name { continue }
+            if !weather_fetched_fresh_at(row.fetched_at, checked_at) { continue }
+            let day = weather_time_stamp(row.day)
+            if day < first || day > last || day < weather_time_stamp(today) { continue }
+            if out.len() >= tracking_config.max_schedules * weather_days { return out }
+            out.push({schedule_id: item.schedule_id schedule_version: item.version
+                forecast: row.to_json().parse_json() source_url: weather_url(city)
+                source_name: "Open-Meteo" temporal_scope: "daily" timezone: "Asia/Shanghai"})
+        }
+    }
+    out
+}
+fn schedule_weather_rows(items){ schedule_weather_rows_at(items, time_now()) }
+fn schedule_weather_find(values, schedule_id, forecast_id){
+    for value in values { if value.schedule_id == schedule_id && value.forecast.forecast_id == forecast_id { return value } }
+    nil
+}
+fn schedule_weather_snapshot_current(snapshot){
+    if snapshot["schedule_weather"] == nil { return true }
+    let current = schedule_weather_rows(snapshot.schedules)
+    if current.len() != snapshot.schedule_weather.len() { return false }
+    current.to_json() == snapshot.schedule_weather.to_json()
+}

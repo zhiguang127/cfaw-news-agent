@@ -1,0 +1,116 @@
+// Synthetic news and model plans; actual preview, conflicts and schedule storage.
+let gs_checks = [] let gs_failures = [] let gs_topic = nil let gs_row = nil let gs_result = nil let gs_snapshot = nil let gs_reference = nil let gs_work = nil
+fn gs_assert(value, label){ if value { gs_checks.push(label) } else { gs_failures.push(label) } }
+fn gs_report(){ fs.write("goal-schedule.json", {complete: true checks: gs_checks failures: gs_failures synthetic_model: true synthetic_news: true}.to_json()) }
+fn gs_step0(){
+    records_load() schedules_load() topics_load() agent_preferences_load() feed_initialize() weather_initialize()
+    agent_preferences.paused = true
+    let draft = topic_new_draft(nil) draft.intent_kind = "goal" draft.original_input = "我用 Mac 开会和做 PPT，想试一个能省时间的 AI 工具。每周只有两小时，帮我安排一次简单试用。"
+    draft.state = "ready" draft.understanding = "{\"title\":\"Mac办公AI简单试用\",\"purpose\":\"每周两小时内试用会议或PPT工具\",\"scope\":[\"会议记录\",\"PPT\"],\"preferences\":[\"每周只有两小时\"],\"recall_rules\":[{\"kind\":\"keyword\",\"value\":\"会议\"}]}".parse_json()
+    let confirm_error = topic_confirm(draft)
+    fs.write("goal-setup.json", {error: confirm_error}.to_json())
+    gs_assert(confirm_error == "", "ordinary short input creates its own goal without a prearranged calendar")
+    if confirm_error != "" { gs_report() return }
+    gs_topic = topic_records.topics[0]
+    gs_row = news_normalize({title: "合成材料：Mac会议工具已开放" summary: "Mac会议转写工具已开放，需核对设备条件。" link: "https://example.org/goal-trial"}, news_sources[0], time_now())
+    app_feed_rows = [gs_row]
+    gs_snapshot = tracking_snapshot([gs_row], {topics: [gs_topic] schedules: [] legacy_interests: [] omitted_targets: 0})
+    gs_snapshot.evidence[0].paragraphs = [{paragraph_id: "p1" text: gs_row.summary}]
+    gs_snapshot.previous_by_target = [{target_type: "topic" target_id: gs_topic.topic_id target_version: 1 run_id: "previous-own-target" checked_at: 1 insights: []}]
+    gs_result = {schema_version: 2 outcome: "no_change" explanation: "工具仍已开放，按用户明确请求给出一次小样例试用。"
+        items: [{news_id: gs_row.news_id relevance: "related" topic_ids: [gs_topic.topic_id] legacy_interest_ids: [] why_related: "涉及Mac会议转写" evidence_ids: [gs_row.news_id] uncertainties: [] schedule_impacts: []}]
+        insights: [{target_type: "topic" target_id: gs_topic.topic_id target_version: 1 issue_key: "meeting-tool" change_kind: "unchanged" summary: "工具已开放，设备条件尚待核对。"
+            decision_effect: "watch" next_step: "先核对设备条件，再用短录音试一次并记录结果。" material_change: "" uncertainties: ["设备兼容条件待核对"] evidence_ids: [gs_row.news_id]
+            evidence_refs: [{news_id: gs_row.news_id paragraph_id: "p1" quote: gs_row.summary}] compared_run_id: "previous-own-target" reschedule: nil}]
+        goal_plans: [{topic_id: gs_topic.topic_id topic_version: 1 title: "Mac会议工具简单试用" content: "先核对设备条件，满足后用短示例录音试用转写并记录结果；不满足则记录阻碍结束。" duration_minutes: 30 evidence_ids: [gs_row.news_id]}]}
+    gs_assert(tracking_parse(gs_result.to_json(), "tracking_update", gs_snapshot).valid, "unchanged/watch does not block an explicitly requested supported trial plan")
+    start_timeout(0.01, || gs_step1())
+}
+fn gs_step1(){
+    let missing = gs_result.to_json().parse_json() missing.goal_plans = []
+    let error = tracking_parse(missing.to_json(), "tracking_update", gs_snapshot)
+    gs_assert(!error.valid && regex("missing_requested_trial_plan").test(error.repair_hint), "missing requested trial receives precise one-correction feedback")
+    let labeled = gs_result.to_json().parse_json() labeled.goal_plans[0].evidence_ids = ["E1"]
+    let expanded = tracking_parse(labeled.to_json(), "tracking_update", gs_snapshot)
+    gs_assert(expanded.valid && expanded.result.goal_plans[0].evidence_ids[0] == gs_row.news_id, "trial source aliases expand against the same immutable snapshot")
+    labeled.goal_plans[0].evidence_ids = ["E99"]
+    gs_assert(!tracking_parse(labeled.to_json(), "tracking_update", gs_snapshot).valid, "unknown trial source is rejected")
+    labeled.goal_plans[0].evidence_ids = ["E1" "E1"]
+    gs_assert(!tracking_parse(labeled.to_json(), "tracking_update", gs_snapshot).valid, "duplicated trial citations are rejected")
+    labeled = gs_result.to_json().parse_json() labeled.goal_plans[0].topic_version = 2
+    gs_assert(!tracking_parse(labeled.to_json(), "tracking_update", gs_snapshot).valid, "wrong goal version cannot create a trial")
+    labeled = gs_result.to_json().parse_json() labeled.goal_plans[0].duration_minutes = 120
+    gs_assert(!tracking_parse(labeled.to_json(), "tracking_update", gs_snapshot).valid, "simple trial remains bounded rather than consuming the entire weekly budget")
+    labeled = gs_result.to_json().parse_json() labeled.goal_plans[0].start = "2026-10-19T20:00:00+08:00"
+    gs_assert(!tracking_parse(labeled.to_json(), "tracking_update", gs_snapshot).valid, "model does not fabricate an approved date from news")
+    let refused = gs_topic.to_json().parse_json() refused.original_input = "关注AI工具，但不要安排试用。"
+    gs_assert(!goal_requests_trial(refused), "explicit refusal does not produce trial scheduling")
+    let title_only = gs_snapshot.to_json().parse_json() title_only.evidence[0].summary = "" title_only.evidence[0].paragraphs = []
+    gs_assert(goal_plans_error(missing, title_only) == nil, "bare headlines do not force a plan")
+    start_timeout(0.01, || gs_step2())
+}
+fn gs_step2(){
+    let run = {task_id: "current-supported-trial" checked_at: time_now() snapshot: gs_snapshot input_key: tracking_input_key(gs_snapshot) result: gs_result}
+    tracking_cache.runs = [run]
+    let value = {insight: gs_result.insights[0] run: run state: "unchanged"}
+    let card = {topic: gs_topic current: true values: [value]}
+    gs_reference = goal_schedule_reference(card)
+    gs_assert(gs_reference != nil, "trial entry appears for unchanged/watch model advice")
+    value.state = "dismissed"
+    gs_assert(goal_schedule_reference(card) == nil, "user dismissal is respected without silently reopening a plan")
+    let other = {insight: {evidence_ids: ["other-source"]} run: run state: "pending"}
+    card.values.push(other)
+    gs_assert(goal_schedule_reference(card) == nil, "another active insight cannot reopen a plan based on declined evidence")
+    card.values = [value]
+    value.state = "unchanged"
+    gs_work = goal_schedule_proposal(gs_reference)
+    gs_assert(user_schedules.len() == 0, "preview preparation writes no schedule before approval")
+    start_timeout(0.05, || gs_step_edit())
+}
+fn gs_step_edit(){
+    if gs_work.state == "preparing" { start_timeout(0.05, || gs_step_edit()) return }
+    goal_schedule_edit(gs_work)
+    gs_assert(intent_draft.state == "ready" && intent_draft.schedule_timezone == "Asia/Shanghai" && schedule_intent_understanding_valid(intent_draft.schedule_understanding), "modify-time entry opens an already-ready Beijing-time preview without another model parse")
+    gs_assert(topic_draft_valid(intent_draft) && user_schedules.len() == 0, "editable preview persists its original plan reference without calendar writes")
+    intent_discard()
+    start_timeout(0.05, || gs_step3())
+}
+fn gs_step3(){
+    if gs_work.state == "preparing" { start_timeout(0.05, || gs_step3()) return }
+    gs_assert(gs_work.state == "ready" && gs_work.plan.timezone == "Asia/Shanghai" && schedule_instant(gs_work.plan.end) - schedule_instant(gs_work.plan.start) == 1800, "preview offers a concrete thirty-minute Beijing-time slot")
+    gs_assert(user_schedules.len() == 0, "ready preview still requires explicit approval")
+    let original = gs_row.summary gs_row.summary = "来源已更新，旧条件不再可用。"
+    gs_assert(!goal_schedule_import(gs_work) && user_schedules.len() == 0, "changed source prevents saving a stale trial")
+    gs_row.summary = original
+    let conflict = schedule_create_details("已有安排", "", "", gs_work.plan.start, gs_work.plan.end, gs_work.plan.timezone, nil)
+    gs_assert(conflict.success, "test calendar contains a confirmed overlapping event")
+    gs_assert(!goal_schedule_import(gs_work) && user_schedules.len() == 1, "new calendar conflict is rejected at approval, not overwritten")
+    gs_snapshot.context_key = tracking_context_key()
+    gs_work = goal_schedule_proposal(gs_reference)
+    start_timeout(0.05, || gs_step4())
+}
+fn gs_step4(){
+    if gs_work.state == "preparing" { start_timeout(0.05, || gs_step4()) return }
+    gs_assert(gs_work.state == "ready" && schedule_entry_parts(gs_work.plan.start, "Asia/Shanghai").hour == "21", "proposal checks existing calendar and offers the next slot")
+    gs_assert(goal_schedule_import(gs_work) && user_schedules.len() == 2, "one explicit import approval saves exactly one trial")
+    let saved = goal_schedule_saved(gs_reference)
+    gs_assert(saved != nil && saved.title == gs_reference.plan.title && saved.content == gs_reference.plan.content, "approved calendar entry preserves the Agent's actual trial steps")
+    gs_assert(goal_schedule_import(gs_work) && user_schedules.len() == 2, "repeated import is idempotent")
+    schedules_load()
+    gs_assert(user_schedules.len() == 2 && goal_schedule_saved(gs_reference) != nil, "saved trial restores from the actual calendar file")
+    gs_report()
+}
+fn gs_archive_checks(){
+    demo_news_initialize()
+    gs_assert(demo_rows.len() == demo_catalog.articles.len() && demo_rows.len() == 26, "all26 verified public-source archive records pass the final news contract")
+    let valid = true
+    for row in demo_rows { if !record_url(row.source_url) || news_is_demo(row) || row["body_origin"] != "curated_excerpt" { valid = false } }
+    gs_assert(valid, "archive retains public original URLs and explicitly marks curated excerpts rather than fictional demo news")
+    let live = news_normalize({title: "合成普通实时新闻" summary: "独立回归材料" link: "https://example.org/live-regression"}, news_sources[0], time_now())
+    let mixed = demo_mix_rows([live])
+    let preserved = false
+    for row in mixed { if row.news_id == live.news_id { preserved = true } }
+    gs_assert(mixed.len() == 27 && preserved, "live news remains alongside the fixed real-source archive")
+    start_timeout(0.05, || gs_step0())
+}
+start_timeout(0.1, || gs_archive_checks())
