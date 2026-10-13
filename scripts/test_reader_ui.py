@@ -94,16 +94,12 @@ start_timeout(0.1, || {
     native = work / 'native'
     native.mkdir(exist_ok=True)
     executable = native / 'reader-probe.exe'
-    libraries = sorted((release / 'deps').glob('librinx-*.rlib'), key=lambda p: p.stat().st_mtime, reverse=True)
-    assert libraries, 'Build the host first'
-    command = ['rustc', '+1.98.0', '--edition=2024', '-C', 'opt-level=2', '--crate-name', 'cfaw_reader_probe', '--extern', 'rinx=' + str(libraries[0]), '-L', 'dependency=' + str(release / 'deps'), str(ROOT / 'tests/scenarios/rinx_render_probe.rs'), '-o', str(executable)]
-    for output in (release / 'build').glob('*/output'):
-        for line in output.read_text(encoding='utf-8', errors='replace').splitlines():
-            if line.startswith('cargo:rustc-link-search='):
-                command += ['-L', line.split('=', 1)[1]]
-    probe_source = ROOT / 'tests/scenarios/rinx_render_probe.rs'
-    if not executable.exists() or executable.stat().st_mtime < max(probe_source.stat().st_mtime, libraries[0].stat().st_mtime):
-        subprocess.run(command, check=True)
+    # Delegate linking to the maintained helper: vendored build outputs may
+    # record paths from another drive, which need remapping before linking.
+    from build_windows_sdf_host import link_rinx_entry
+    lock = json.loads((ROOT / 'dev-dependencies.lock.json').read_text())
+    link_rinx_entry(args.host_root.resolve().parent, ROOT / 'tests/scenarios/rinx_render_probe.rs', executable,
+                    lock['toolchain']['rinx_rust_channel'], 'cfaw_reader_probe')
     for resource in ('makepad_widgets/resources', 'rinx/resources'):
         shutil.copytree(release / resource, native / resource, dirs_exist_ok=True)
     data = work / ('data-' + str(time.time_ns()))
@@ -171,7 +167,17 @@ start_timeout(0.1, || {
                 checks.append('WebReader open/close navigation preserves article and returns to detail; no external browser dispatch; native page rendering unverified')
             scroll_amount = 350
             if not args.article_url:
-                initial_paragraph = next(w['r'] for w in initial if w.get('t') == first_text)
+                # The first paragraph can start below the fold: /snap reports
+                # painted widgets only, so scroll until it appears.
+                paragraph = None
+                for _ in range(60):
+                    paragraph = next((w for w in widgets() if w.get('t') == first_text), None)
+                    if paragraph:
+                        break
+                    get('/m', k='scroll', x=column[0]+column[2]/2, y=580, dy=220, wait=1)
+                    time.sleep(.2)
+                assert paragraph, 'First reader paragraph did not paint'
+                initial_paragraph = paragraph['r']
                 scroll_amount = max(0, initial_paragraph[1] - find(ident='story_content')['r'][1] - 14)
             get('/m', k='scroll', x=column[0]+column[2]/2, y=580, dy=scroll_amount, wait=1)
             if args.retry_image:
@@ -225,7 +231,7 @@ start_timeout(0.1, || {
                 click(find(text='‹ 返回'))
                 click(find(text='Synthetic illustrated article'))
                 click(find(text='‹ 返回'))
-                # The floating intent orb can overlap the second row's button.
+                # Return to the list before opening the second row.
                 click(find(text='Synthetic unsupported article'))
                 time.sleep(1.2)
                 find(ident='original_article')

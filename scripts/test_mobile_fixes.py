@@ -58,7 +58,6 @@ start_timeout(0.1, || {
         news_http_request = fn(url, redirects, callback){}
         enabled_source_ids = ["bbc"]
         render_main()
-        start_timeout(0.05, || orb_load())
     })
 })
 '''
@@ -113,7 +112,7 @@ start_timeout(0.1, || {
     def click(w):
         # Controls in the editor may need scrolling in a narrow viewport.
         for _ in range(12):
-            if w.get('i') in ('menu_button', 'feed_tab', 'schedule_tab', 'intent_close', 'ai_orb') or w.get('t') == '‹ 返回':
+            if w.get('i') in ('feed_tab', 'tracking_tab', 'schedule_tab', 'account_tab', 'intent_close', 'intent_add') or w.get('t') == '‹ 返回':
                 break
             shell = find(ident='app_shell')['r']
             x, y, width, height = w['r']
@@ -155,8 +154,8 @@ start_timeout(0.1, || {
                 checks.append('merged image-card branch renders; search above feed, navigation below; no Chinese category tab')
                 time.sleep(1)
                 (work / 'merged-feed.png').write_bytes(get('/g', raw=1))
-                click(find(ident='menu_button'))
-                click(find(text='我的收藏'))
+                click(find(ident='account_tab'))
+                click(find(text='查看收藏'))
                 assert not any(w.get('t') == '今日热点' for w in widgets())
                 assert len([w for w in widgets() if w.get('t') == '查看']) == 2
                 (work / 'saved-list.png').write_bytes(get('/g', raw=1))
@@ -173,8 +172,8 @@ start_timeout(0.1, || {
             assert schedules['items'][0]['status'] == 'cancelled' and schedules['items'][0]['version'] == 3
             checks.append('schedule page hides news refresh; completed project discussion can be cancelled and versioned')
             click(find(ident='feed_tab'))
-            click(find(ident='menu_button'))
-            click(find(text='管理关注'))
+            click(find(ident='tracking_tab'))
+            click(find(text='检查设置'))
             find(text='Synthetic follow')
             (work / 'before-pause.json').write_bytes(get('/snap'))
             click(find(text='暂停'))
@@ -187,44 +186,36 @@ start_timeout(0.1, || {
             assert topics['topics'][0]['status'] == 'cancelled' and topics['topics'][0]['version'] == 3
             checks.append('paused topic can be cancelled; hidden immediately and versioned on disk')
             click(find(text='‹ 返回'))
+            # 管理关注 now opens over the tracking tab; return to the feed before
+            # checking feed-only controls.
+            click(find(ident='feed_tab'))
             top = find(ident='back_to_top')['r']
             assert top[0] > frame[0] + frame[2]/2
             checks.append('return-to-top button is at the bottom right')
-            orb = find(ident='ai_orb')['r']
-            x, y = orb[0]+36, orb[1]+36
-            get('/m', k='down', x=x, y=y, wait=1)
-            time.sleep(.1)
-            # Real mouse users can drift beyond the native pan threshold while
-            # holding. Regression: native hold used to be suppressed forever.
-            get('/m', k='move', x=x-12, y=y-2, wait=1)
-            time.sleep(.5)
-            drag_x = frame[0] + 40
-            get('/m', k='move', x=drag_x+10, y=y-130, wait=1)
-            time.sleep(.2)
-            get('/m', k='move', x=drag_x, y=y-160, wait=1)
-            time.sleep(.2)
-            get('/m', k='up', x=drag_x, y=y-160, wait=1)
-            time.sleep(.4)
-            moved = find(ident='ai_orb')['r']
-            assert moved[0] < orb[0] and moved[1] < orb[1], (orb, moved)
-            assert not any(w.get('i') == 'intent_input' for w in widgets())
-            pref = json.loads((data / 'dev.cfaw.runtime-tests/agent_preferences_v1.json').read_text())
-            assert pref['orb_x'] == 0 and 0 <= pref['orb_y'] <= 1, pref
-            checks.append('mouse jitter before long press, continuous drag, edge snap, no accidental open, persisted position')
-            click(find(ident='ai_orb'))
+            nav = find(ident='navigation')['r']
+            tabs = [find(ident=ident)['r'] for ident in ('feed_tab', 'tracking_tab', 'schedule_tab', 'account_tab')]
+            add = find(ident='intent_add')['r']
+            add_center = add[0] + add[2] / 2
+            assert abs(add_center - (frame[0] + frame[2] / 2)) <= 2, (frame, add)
+            assert max(tabs[0][0], tabs[1][0]) < add[0] < min(tabs[2][0], tabs[3][0])
+            assert nav[1] <= add[1] and add[1] + add[3] <= nav[1] + nav[3] + 1, (nav, add)
+            assert not any(w.get('i') == 'ai_orb' for w in widgets())
+            checks.append('center add occupies the middle bottom-navigation slot with no floating AI orb')
+            click(find(ident='intent_add'))
             time.sleep(.6)
+            find(ident='intent_input')
             find(ident='intent_close')
             click(find(ident='intent_close'))
             time.sleep(.6)
-            assert find(ident='ai_orb')['r'] == moved
-            checks.append('short click opens and close returns to moved position')
-            click(find(ident='menu_button'))
-            click(find(text='我的收藏'))
+            assert find(ident='intent_add')['r'] == add
+            checks.append('center add opens intent space and close restores the same navigation context')
+            click(find(ident='account_tab'))
+            click(find(text='查看收藏'))
             click(find(text='科技'))
             time.sleep(.3)
             assert any(w.get('t') == 'Synthetic tech bookmark' for w in widgets())
             assert not any(w.get('t') == 'Synthetic world bookmark' for w in widgets())
-            click(find(text='国际'))
+            click(find(text='生活'))
             time.sleep(.3)
             assert any(w.get('t') == 'Synthetic world bookmark' for w in widgets())
             assert not any(w.get('t') == 'Synthetic tech bookmark' for w in widgets())
@@ -262,20 +253,19 @@ start_timeout(0.1, || {
         try:
             for _ in range(100):
                 try:
-                    restored = find(ident='ai_orb')['r']
-                    if all(abs(a-b) < 1 for a, b in zip(restored, moved)):
-                        break
+                    restored = find(ident='intent_add')['r']
+                    if abs(restored[0] + restored[2] / 2 - (find(ident='app_shell')['r'][0] + find(ident='app_shell')['r'][2] / 2)) <= 2: break
                 except (OSError, StopIteration):
                     pass
                 time.sleep(.2)
             else:
-                raise RuntimeError('Fresh host process did not restore the moved orb')
-            checks.append('fresh native process restores saved orb position')
+                raise RuntimeError('Fresh host process did not restore the center intent entry')
+            checks.append('fresh native process restores the center intent entry')
             click(find(ident='schedule_tab'))
             assert not any(w.get('t') in ('项目讨论', '已取消') for w in widgets())
             click(find(ident='feed_tab'))
-            click(find(ident='menu_button'))
-            click(find(text='管理关注'))
+            click(find(ident='tracking_tab'))
+            click(find(text='检查设置'))
             assert not any(w.get('t') == 'Synthetic follow' for w in widgets())
             checks.append('cancelled schedules and topics stay hidden after native restart')
         finally:

@@ -1,4 +1,5 @@
-// The reveal origin matches the floating orb's 72px hit target and insets.
+// The assistant mark is decorative inside the intent space. The user-facing
+// entry is the centered plus button in the bottom navigation.
 let AIOrb = ButtonFlat{width: 72 height: 72 padding: 0 margin: 0 text: "AI"
     draw_text +: {color: white color_hover: white color_down: white text_style: theme.font_bold{font_size: 14}}
     draw_bg +: {
@@ -16,6 +17,23 @@ let AIOrb = ButtonFlat{width: 72 height: 72 padding: 0 margin: 0 text: "AI"
         }
     }
 }
+let IntentNavButton = ButtonFlat{width: 58 height: 58 padding: 0 margin: 0 text: ""
+    label_walk: Walk{width: 0 height: 0} icon_walk: Walk{width: 0 height: 0}
+    draw_bg +: {
+        color: #x6655d8 color_hover: #x7566e4 color_down: #x5545c8 color_focus: #x7566e4
+        pixel: fn(){
+            let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+            let center = self.rect_size * 0.5
+            let fill = self.color.mix(self.color_focus, self.focus).mix(self.color_hover, self.hover).mix(self.color_down, self.down)
+            sdf.circle(center.x, center.y + 2.0, 27.0) sdf.fill(#x382e7a28)
+            sdf.circle(center.x, center.y, 25.5) sdf.fill(fill)
+            sdf.circle(center.x, center.y, 25.0) sdf.stroke(#xffffff52, 1.0)
+            sdf.move_to(center.x - 8.0, center.y) sdf.line_to(center.x + 8.0, center.y) sdf.stroke(#xffffffff, 3.0)
+            sdf.move_to(center.x, center.y - 8.0) sdf.line_to(center.x, center.y + 8.0) sdf.stroke(#xffffffff, 3.0)
+            return sdf.result
+        }
+    }
+}
 let IntentBackdrop = View{width: Fill height: Fill show_bg: true
     draw_bg +: {
         pixel: fn(){
@@ -28,11 +46,11 @@ let IntentBackdrop = View{width: Fill height: Fill show_bg: true
 let IntentReveal = View{width: Fill height: Fill show_bg: true
     draw_bg +: {
         progress: uniform(0.0)
-        origin_x: uniform(1.0)
-        origin_y: uniform(0.86)
+        origin_x: uniform(0.5)
+        origin_y: uniform(1.0)
         pixel: fn(){
             let sdf = Sdf2d.viewport(self.pos * self.rect_size)
-            let origin = vec2(54.0 + (self.rect_size.x - 108.0) * self.origin_x, 72.0 + (self.rect_size.y - 208.0) * self.origin_y)
+            let origin = vec2(36.0 + (self.rect_size.x - 72.0) * self.origin_x, 36.0 + (self.rect_size.y - 72.0) * self.origin_y)
             let radius = 28.0 + length(self.rect_size) * self.progress
             sdf.circle(origin.x, origin.y, radius + 14.0) sdf.fill(#x93a1ec22)
             sdf.circle(origin.x, origin.y, radius + 6.0) sdf.fill(#xa3b9ef45)

@@ -188,7 +188,7 @@ def wait_file(path, seconds):
 def widgets(): return json.loads(get('/snap'))['s']
 def labels(): return [w.get('t','') for w in widgets() if w.get('ty') != 'Splash']
 def find(label=None, ident=None):
-    items=widgets(); nav_ids=('feed_tab','tracking_tab','schedule_tab','account_tab')
+    items=widgets(); nav_ids=('feed_tab','tracking_tab','intent_add','schedule_tab','account_tab')
     limit=860 if ident in nav_ids else min((w['r'][1] for w in items if w.get('i') in nav_ids),default=840)
     return next(w for w in items if w.get('ty') != 'Splash'
                 and (label is None or w.get('t') == label) and (ident is None or w.get('i') == ident)
@@ -202,13 +202,19 @@ def seek(label):
         except StopIteration: get('/m',k='scroll',x=200,y=650,dy=100,wait=1)
     raise AssertionError('Missing visible result: ' + label)
 def nav_state(): return json.loads((app / 'flow-navigation.json').read_text(encoding='utf-8'))
-def no_orb():
-    assert 'AI' not in labels(), 'floating orb covers the suggestions or source detail'
+def no_floating_orb():
+    assert not any(w.get('i') == 'ai_orb' for w in widgets()), 'removed floating orb returned'
 def bottom_navigation():
     tabs=[find(ident=ident) for ident in ('feed_tab','tracking_tab','schedule_tab','account_tab')]
     assert [w.get('t','').split(' ·')[0] for w in tabs] == ['首页','关注','日程','我的'],tabs
     assert len({round(w['r'][1]) for w in tabs}) == 1,tabs
     return tabs
+def intent_entry_in_navigation():
+    tabs=bottom_navigation(); add=find(ident='intent_add')
+    outer_center=(tabs[0]['r'][0]+tabs[-1]['r'][0]+tabs[-1]['r'][2])/2
+    assert abs(add['r'][0]+add['r'][2]/2-outer_center)<=2,(add,tabs)
+    assert tabs[1]['r'][0] < add['r'][0] < tabs[2]['r'][0],(add,tabs)
+    no_floating_orb()
 startup = subprocess.STARTUPINFO(); startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW; startup.wShowWindow = 0
 with (work / 'host.log').open('w', encoding='utf-8') as log:
     process = subprocess.Popen([str(exe), '--bundle', str(work / 'bundle'), '--app-data', str(data), '--remote=' + str(port), '--size', '430x860'], cwd=exe.parent, env=dict(os.environ, RINX_DATA_DIR=str(data / 'host')), stdout=log, stderr=log, startupinfo=startup)
@@ -216,10 +222,9 @@ with (work / 'host.log').open('w', encoding='utf-8') as log:
         first = wait_file(app / 'phase-one.json', 25)
         assert not first['failures'], first
         time.sleep(.3)
-        bottom_navigation(); no_orb()
+        intent_entry_in_navigation()
         assert nav_state()=={'page':'tracking','section':'suggestions','detail':''},nav_state()
-        click(ident='feed_tab'); tabs=bottom_navigation(); orb=find('AI')
-        assert orb['r'][1]+orb['r'][3] <= min(w['r'][1] for w in tabs), (orb,tabs)
+        click(ident='feed_tab'); intent_entry_in_navigation()
         click(ident='tracking_tab')
         assert nav_state()['page']=='tracking' and nav_state()['section']=='topics',nav_state()
         assert not any(t in ('动态', '建议', '今日精选', '最新文章') for t in labels()), labels()
@@ -229,7 +234,7 @@ with (work / 'host.log').open('w', encoding='utf-8') as log:
         deadline = time.monotonic() + 5
         while nav_state()['section'] != 'suggestions' and time.monotonic() < deadline:
             time.sleep(.1)
-        no_orb(); bottom_navigation(); top()
+        intent_entry_in_navigation(); top()
         assert nav_state()=={'page':'tracking','section':'suggestions','detail':''},nav_state()
         seek('相关新闻'); seek('当前情况')
         seek('本期暂不新增试用建议，需先核实这篇会议工具报道的使用条件。')
@@ -243,9 +248,9 @@ with (work / 'host.log').open('w', encoding='utf-8') as log:
         assert not report['failures'], report
         time.sleep(.5)  # Let publication-triggered UI updates finish before clicks.
         report['checks'].append('430x860 native verification button rendered and accepted a real click')
-        report['checks'] += ['four bottom tabs remain visible; follow landing uses topics and the retained results route remains available',
+        report['checks'] += ['four page tabs plus the center intent entry remain visible; follow landing uses topics and the retained results route remains available',
                              'related news and current situation are traversed before the next-step verification action',
-                             'suggestions hide the floating orb and home restores it above bottom navigation']
+                             'the intent entry stays in bottom navigation with no floating orb']
         (work / 'after-verify.png').write_bytes(get('/g', raw=1))
         get('/m', k='scroll', x=200, y=650, dy=-10000, wait=1)
         def click_result(label):
@@ -259,12 +264,12 @@ with (work / 'host.log').open('w', encoding='utf-8') as log:
         report['checks'].append('verified result visibly distinguishes exact body quotation')
         (work / 'evidence-quote.png').write_bytes(get('/g', raw=1))
         click_result('查看来源与引用段落')
-        find('新闻详情'); find('固定测试：会议工具访问条件'); no_orb()
+        find('新闻详情'); find('固定测试：会议工具访问条件'); no_floating_orb()
         assert nav_state()=={'page':'tracking','section':'suggestions','detail':'story'},nav_state()
         (work / 'quoted-news-detail.png').write_bytes(get('/g',raw=1))
-        click('‹ 返回'); no_orb(); bottom_navigation()
+        click('‹ 返回'); intent_entry_in_navigation()
         assert nav_state()=={'page':'tracking','section':'suggestions','detail':''},nav_state()
-        report['checks'].append('opening cited news and returning retains the suggestions section and its hidden orb')
+        report['checks'].append('opening cited news and returning retains the suggestions section and bottom navigation')
         get('/m', k='scroll', x=200, y=650, dy=-10000, wait=1)
         click_result('收起判断依据')
         get('/m', k='scroll', x=200, y=650, dy=-10000, wait=1)

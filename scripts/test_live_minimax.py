@@ -278,7 +278,7 @@ def run_live(args):
             report['stage'] = 'interactive_session'
             report['business'] = 'manual interaction; no test input submitted'
             report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
-            print('Click the AI orb and enter your intent. This script will not fill, submit or discard a draft.', flush=True)
+            print('Click the center plus in the bottom navigation and enter your intent. This script will not fill, submit or discard a draft.', flush=True)
             print('Session report: ' + str(report_path), flush=True)
             if process:
                 print('Close Rinx to finish this command. Ctrl+C closes only the Rinx instance started by it.', flush=True)
@@ -306,7 +306,7 @@ def run_live(args):
         # Exercise the real intent adapter and deterministic result validator.
         report['stage'] = 'open_intent_space'
         widgets = ui.widgets()
-        entry = next((w for w in widgets if w.get('ty') == 'Button' and (w.get('i') == 'ai_orb' or w.get('t') in ('表达我的意图  ↗', '继续我的意图  ↗'))), None)
+        entry = next((w for w in widgets if w.get('ty') == 'Button' and (w.get('i') == 'intent_add' or w.get('t') in ('表达我的意图  ↗', '继续我的意图  ↗'))), None)
         if entry:
             ui.click(entry)
         else:

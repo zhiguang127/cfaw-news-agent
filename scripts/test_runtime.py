@@ -125,16 +125,33 @@ def inspect_rinx_navigation(work, port, rounds):
         click(name, 1)
         time.sleep(.15)
         snapshot('rinx-navigation-' + name, expected)
-    for label, expected in [('关注动态', '我的关注'), ('我的收藏', '条收藏')]:
+    # The header overflow menu was removed with the tab navigation; the same
+    # destinations now live behind the page tabs and the account page.
+    for tab, entry_label, expected in [('关注', None, '我的关注'), ('我的', '查看收藏', '条收藏')]:
         widgets = json.loads(get('/snap'))['s']
-        menu = next(w for w in widgets if w.get('i') == 'menu_button')
-        x, y, w, h = menu['r']
+        tab_widget = next(w for w in widgets if w.get('ty') == 'Button' and w.get('t') == tab)
+        x, y, w, h = tab_widget['r']
         get('/click', x=x + w / 2, y=y + h / 2, wait=1)
-        widgets = json.loads(get('/snap'))['s']
-        action = next(w for w in widgets if w.get('ty') == 'Button' and w.get('t') == label)
-        x, y, w, h = action['r']
-        get('/click', x=x + w / 2, y=y + h / 2, wait=1)
-        snapshot('rinx-navigation-' + label, expected)
+        time.sleep(.15)
+        if entry_label:
+            widgets = json.loads(get('/snap'))['s']
+            entry = next(w for w in widgets if w.get('ty') == 'Button' and w.get('t') == entry_label)
+            x, y, w, h = entry['r']
+            get('/click', x=x + w / 2, y=y + h / 2, wait=1)
+            time.sleep(.15)
+        data = get('/snap')
+        (work / ('rinx-navigation-' + tab + '.json')).write_bytes(data)
+        png = get('/g', raw=1)
+        (work / ('rinx-navigation-' + tab + '.png')).write_bytes(png)
+        widgets = json.loads(data)['s']
+        size = json.loads(get('/s'))['w'][0]['sz']
+        # The tracking page hides the editorial brand header by design; anchor
+        # the pixel check on the expected page heading there instead.
+        anchor = next((w for w in widgets if w.get('ty') == 'Label' and (w.get('t') == 'cfaw-news' or expected in w.get('t', ''))), None)
+        if anchor is None or not region_has_ink(png, anchor['r'], size):
+            raise SystemExit(f'Missing or blank painted page after {tab} navigation; inspect {work}')
+        if not any(w.get('ty') == 'Label' and expected in w.get('t', '') for w in widgets):
+            raise SystemExit(f'Missing page heading {expected} after {tab}; inspect {work}')
         click('首页', 1)
     time.sleep(1)
     snapshot('rinx-navigation-settled')
@@ -163,7 +180,7 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
         with urlopen(f'http://127.0.0.1:{port}{route}{query}', timeout=5) as response:
             return response.read()
 
-    def snapshot(label, expected=None):
+    def snapshot(label, expected=None, anchor='cfaw-news'):
         deadline = time.monotonic() + 3
         data = get('/snap')
         while expected and not expected(json.loads(data)['s']) and time.monotonic() < deadline:
@@ -173,7 +190,11 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
         png = get('/g', raw=1)
         (work / (label + '.png')).write_bytes(png)
         widgets = json.loads(data)['s']
-        brand = next(w for w in widgets if w.get('ty') == 'Label' and w.get('t') == 'cfaw-news')
+        # The tracking page hides the editorial brand header by design; those
+        # snapshots anchor the painted-pixel check on their own page heading.
+        brand = next((w for w in widgets if w.get('ty') == 'Label' and w.get('t') == anchor), None)
+        if brand is None:
+            raise SystemExit(f'Painted anchor {anchor} missing during {label}; inspect {work}')
         if not region_has_ink(png, brand['r'], tuple(map(int, logical_size.split('x')))):
             raise SystemExit(f'Painted header missing during {label}; inspect {work}')
         return widgets
@@ -184,10 +205,18 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
         time.sleep(.15)
 
     def menu_action(label):
-        widgets = json.loads(get('/snap'))['s']
-        click(next(w for w in widgets if w.get('i') == 'menu_button'))
-        widgets = json.loads(get('/snap'))['s']
-        click(next(w for w in widgets if w.get('t') == label and w.get('ty') == 'Button'))
+        # Overflow-menu destinations after its removal: bookmarks live behind
+        # the account tab, interest management behind the tracking tab.
+        if label == '我的收藏':
+            click(next(w for w in json.loads(get('/snap'))['s'] if w.get('i') == 'account_tab'))
+            click(next(w for w in json.loads(get('/snap'))['s'] if w.get('t') == '查看收藏' and w.get('ty') == 'Button'))
+        elif label == '管理关注':
+            click(next(w for w in json.loads(get('/snap'))['s'] if w.get('i') == 'tracking_tab'))
+            click(next(w for w in json.loads(get('/snap'))['s'] if w.get('t') == '检查设置' and w.get('ty') == 'Button'))
+        elif label == '关注动态':
+            click(next(w for w in json.loads(get('/snap'))['s'] if w.get('i') == 'tracking_tab'))
+        else:
+            raise SystemExit('Unknown navigation destination: ' + label)
 
     time.sleep(.3)
     widgets = snapshot('feed-after-refresh')
@@ -253,12 +282,15 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
         raise SystemExit('Deferred rendering lost the saved news row')
     click(next(w for w in bookmarks if w.get('t') == '首页' and w.get('ty') == 'Button'))
     menu_action('管理关注')
-    managed = snapshot('feed-managed-interests')
+    managed = snapshot('feed-managed-interests', anchor='管理关注')
     if any(w.get('i') == 'keyword_input' or '规则匹配' in w.get('t', '') or '（预设）' in w.get('t', '') for w in managed if w.get('ty') != 'Splash'):
         raise SystemExit('Removed rule editor or starter records remain visible')
     if not any(w.get('t') == '表达关注 / 继续草稿' and w.get('ty') == 'Button' for w in managed):
         raise SystemExit('Interest management lost the intent entry')
     click(next(w for w in managed if w.get('t') == '‹ 返回' and w.get('ty') == 'Button'))
+    # Interest management opens over the tracking tab now; return to the feed
+    # before exercising feed-row actions.
+    click(next(w for w in json.loads(get('/snap'))['s'] if w.get('i') == 'feed_tab'))
     widgets = snapshot('feed-managed-returned')
     click(next(w for w in widgets if w.get('t') == '关注话题' and w.get('ty') == 'Button'))
     time.sleep(.65)
@@ -273,7 +305,7 @@ def inspect_feed_ui(work, port, logical_size='430x860'):
     click(next(w for w in draft_widgets if w.get('t') == '取消并保留草稿' and w.get('ty') == 'Button'))
     time.sleep(.65)
     menu_action('关注动态')
-    followed = snapshot('feed-followed')
+    followed = snapshot('feed-followed', anchor='我的关注')
     if not any('我的关注' in w.get('t', '') for w in followed):
         raise SystemExit('The menu cannot open the followed news')
     click(next(w for w in followed if w.get('t') == '首页' and w.get('ty') == 'Button'))
@@ -326,17 +358,17 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
             return response.read()
     def snapshot(label):
         time.sleep(.12)
-        # Wait for the bounded orb reveal/contraction, then inspect the page
+        # Wait for the bounded intent reveal/contraction, then inspect the page
         # where controls are actually interactive, rather than a halfway frame.
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline:
             current = json.loads(get('/snap'))['s']
-            wants_intent = label in ('tracking-orb-opened', 'tracking-follow-scope', 'tracking-new-intent', 'tracking-draft-reopened')
-            wants_closed = label in ('tracking-home', 'tracking-orb-returned', 'tracking-follow-confirmed', 'tracking-draft-return', 'tracking-goal-saved', 'tracking-schedule-saved')
+            wants_intent = label in ('tracking-intent-opened', 'tracking-follow-scope', 'tracking-new-intent', 'tracking-draft-reopened')
+            wants_closed = label in ('tracking-home', 'tracking-nav-returned', 'tracking-follow-confirmed', 'tracking-draft-return', 'tracking-goal-saved', 'tracking-schedule-saved')
             if wants_intent:
                 ready = any(w.get('i') == 'intent_input' for w in current)
             elif wants_closed:
-                ready = any(w.get('i') == 'ai_orb' for w in current)
+                ready = any(w.get('i') == 'intent_add' for w in current)
             else:
                 ready = any(w.get('t') == 'cfaw-news' or w.get('i') == 'intent_input' for w in current if w.get('ty') != 'Splash')
             if ready:
@@ -377,14 +409,14 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
             widgets = json.loads(get('/snap'))['s']
         raise SystemExit(f'Native tracking button missing: {text}; inspect {work}')
     home = snapshot('tracking-home')
-    orb = find(home, ident='ai_orb')
-    x, y, width, height = orb['r']
+    entry = find(home, ident='intent_add')
+    x, y, width, height = entry['r']
     get('/click', x=x + width / 2, y=y + height / 2, wait=1)
     if not rinx:
-        (work / 'intent-orb-expanding.png').write_bytes(get('/g', raw=1))
+        (work / 'intent-add-expanding.png').write_bytes(get('/g', raw=1))
         time.sleep(.1)
-        (work / 'intent-orb-expanding-mid.png').write_bytes(get('/g', raw=1))
-    expanded = snapshot('tracking-orb-opened')
+        (work / 'intent-add-expanding-mid.png').write_bytes(get('/g', raw=1))
+    expanded = snapshot('tracking-intent-opened')
     if any(w.get('t') == 'cfaw-news' for w in expanded if w.get('ty') == 'Label'):
         raise SystemExit('Intent scene did not occupy the full application viewport')
     if not all(any(w.get('t') == t and w.get('ty') == 'Button' for w in expanded) for t in ('我想做…', '关注新闻', '安排日程')):
@@ -394,8 +426,8 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
     if not any('保存为目标关注' in w.get('t', '') for w in goal if w.get('ty') == 'Label'):
         raise SystemExit('Goal mode did not explain its tracking boundary')
     click(find(goal, ident='intent_close'))
-    home = snapshot('tracking-orb-returned')
-    checks.append('floating orb expands into full-screen intent modes; closing preserves news context')
+    home = snapshot('tracking-nav-returned')
+    checks.append('center navigation add opens full-screen intent modes; closing preserves news context')
     titles = [w for w in home if w.get('ty') == 'Label' and w.get('t', '').startswith('固定测试：')]
     if len(titles) < 3:
         raise SystemExit('Tracking home no longer has a compact multi-item feed')
@@ -419,8 +451,8 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
     ready = snapshot('tracking-intent-understood')
     button('确认关注并保存')
     returned = snapshot('tracking-follow-confirmed')
-    if any(w.get('i') == 'intent_input' for w in returned) or not any(w.get('i') == 'ai_orb' for w in returned):
-        raise SystemExit('Confirmed interest did not contract into the floating orb')
+    if any(w.get('i') == 'intent_input' for w in returned) or not any(w.get('i') == 'intent_add' for w in returned):
+        raise SystemExit('Confirmed interest did not close the intent space and restore bottom navigation')
     back = next((w for w in returned if w.get('t') == '‹ 返回' and w.get('ty') == 'Button'), None)
     if back:
         click(back)
@@ -433,8 +465,8 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
         raise SystemExit('Handled reminder still visible after confirmation')
     checks.append('home reminder updates after decision')
     # Menu -> draft input -> submit -> ready -> cancel -> resume existing draft.
-    click(find(returned, ident='menu_button'))
-    button('表达关注 / 继续草稿')
+    # The menu's intent entry moved to the centered bottom-navigation button.
+    click(find(returned, ident='intent_add'))
     edit = snapshot('tracking-new-intent')
     click(find(edit, ident='intent_input'))
     get('/t', t='关注开源 Agent 离线部署，融资少一点')
@@ -449,15 +481,14 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
     if record['draft'] is None or record['draft']['state'] != 'ready':
         raise SystemExit('Cancel did not preserve the understood draft')
     checks.append('native input, submit, cancel and persisted draft')
-    click(find(resumed_home, ident='menu_button'))
-    button('表达关注 / 继续草稿')
+    click(find(resumed_home, ident='intent_add'))
     resumed = snapshot('tracking-draft-reopened')
     if not any(w.get('ty') == 'Label' and w.get('t') == '待确认的理解' for w in resumed):
         raise SystemExit('Reopening draft lost understanding')
     button('取消并保留草稿')
     checks.append('reopened draft retains understanding and return context')
     home = snapshot('tracking-draft-return')
-    click(find(home, ident='ai_orb'))
+    click(find(home, ident='intent_add'))
     edit = snapshot('tracking-new-intent')
     click(find(edit, text='我想做…'))
     edit = snapshot('tracking-goal-input')
@@ -473,8 +504,8 @@ def inspect_tracking_ui(work, port, logical_size, rinx=False):
         raise SystemExit('Goal confirmation did not persist its explicit kind and clear the draft')
     if any(w.get('i') == 'intent_input' for w in home) or not any(w.get('t', '').startswith('目标 · ') for w in home if w.get('ty') == 'Label'):
         raise SystemExit('Goal save did not close the panel and refresh the home context')
-    checks.append('goal confirmation contracts the orb and immediately updates home context')
-    click(find(home, ident='ai_orb'))
+    checks.append('goal confirmation closes the intent space and immediately updates home context')
+    click(find(home, ident='intent_add'))
     edit = snapshot('tracking-new-intent')
     click(find(edit, text='安排日程'))
     edit = snapshot('tracking-schedule-input')

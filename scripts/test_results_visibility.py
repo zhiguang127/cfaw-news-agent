@@ -96,7 +96,7 @@ start_timeout(0.1, || {
     def widgets(): return json.loads(get('/snap'))['s']
     def texts(): return [w.get('t','') for w in widgets() if w.get('ty')!='Splash']
     def find(label=None, ident=None):
-        items=widgets(); nav_ids=('feed_tab','tracking_tab','schedule_tab','account_tab')
+        items=widgets(); nav_ids=('feed_tab','tracking_tab','intent_add','schedule_tab','account_tab')
         limit=860 if ident in nav_ids else min((w['r'][1] for w in items if w.get('i') in nav_ids),default=840)
         return next(w for w in items if w.get('ty')!='Splash' and (label is None or w.get('t')==label) and (ident is None or w.get('i')==ident)
                     and w['r'][3]>0 and 0<=w['r'][1] and w['r'][1]+w['r'][3]<=limit)
@@ -110,16 +110,19 @@ start_timeout(0.1, || {
     def top(): get('/m',k='scroll',x=200,y=650,dy=-10000,wait=1)
     def nav_state():
         return json.loads((data/'dev.cfaw.runtime-tests/navigation-state.json').read_text(encoding='utf-8'))
-    def no_orb():
-        assert not any(w.get('ty')!='Splash' and w.get('t')=='AI' for w in widgets()), 'floating orb covers advice or detail content'
+    def no_floating_orb():
+        assert not any(w.get('i')=='ai_orb' for w in widgets()), 'removed floating orb returned'
     def bottom_navigation():
         tabs=[find(ident=ident) for ident in ('feed_tab','tracking_tab','schedule_tab','account_tab')]
         assert [w.get('t','').split(' ·')[0] for w in tabs]==['首页','关注','日程','我的'],tabs
         assert len({round(w['r'][1]) for w in tabs})==1,tabs
         return tabs
-    def orb_above_navigation():
-        tabs=bottom_navigation(); orb=find('AI')
-        assert orb['r'][1]+orb['r'][3]<=min(w['r'][1] for w in tabs), (orb,tabs)
+    def intent_entry_in_navigation():
+        tabs=bottom_navigation(); add=find(ident='intent_add')
+        outer_center=(tabs[0]['r'][0]+tabs[-1]['r'][0]+tabs[-1]['r'][2])/2
+        assert abs(add['r'][0]+add['r'][2]/2-outer_center)<=2,(add,tabs)
+        assert tabs[1]['r'][0] < add['r'][0] < tabs[2]['r'][0],(add,tabs)
+        no_floating_orb()
     def no_archives():
         labels=texts()
         assert not any('历史' in text or 'Synthetic archived' in text or text in ('最近分析','旧版建议记录') for text in labels),labels
@@ -138,7 +141,7 @@ start_timeout(0.1, || {
             assert '中文' not in texts()
             assert not any('部分来源暂时不可用' in text for text in texts())
             find('Synthetic retained Chinese news')
-            bottom_navigation(); orb_above_navigation()
+            intent_entry_in_navigation()
             (work/'feed.png').write_bytes(get('/g',raw=1))
             checks.append('failed-source refresh completes without partial-source banner; Chinese category absent, article retained')
             click(ident='schedule_tab'); assert nav_state()['page']=='schedule',nav_state()
@@ -153,7 +156,7 @@ start_timeout(0.1, || {
             assert nav_state()['page']=='tracking' and nav_state()['section']=='dynamic',nav_state()
             bottom_navigation(); click(ident='suggestions_button')
             assert nav_state()=={'page':'tracking','section':'suggestions','detail':''},nav_state()
-            bottom_navigation(); no_orb(); top()
+            intent_entry_in_navigation(); top()
             seek('相关新闻'); seek('漫步者 Lolli Spark 通过 OpenHarmony 认证'); seek('当前情况')
             seek('漫步者 Lolli Spark 已通过 OpenHarmony 认证。目前获得的是认证进展，上市时间与最终售价仍未确认。'); no_archives()
             assert 'Estimating suicide risk from text' not in texts(), texts()
@@ -169,14 +172,14 @@ start_timeout(0.1, || {
             seek('上次已知：漫步者 Lolli Spark 正在推进认证，上市日期未确认。')
             (work/'tracking-results.png').write_bytes(get('/g',raw=1))
             seek('查看来源与引用段落'); click('查看来源与引用段落')
-            find('新闻详情'); no_orb()
+            find('新闻详情'); no_floating_orb()
             assert nav_state()=={'page':'tracking','section':'suggestions','detail':'story'},nav_state()
             find('漫步者 Lolli Spark 通过 OpenHarmony 认证')
             (work/'advice-news-detail.png').write_bytes(get('/g',raw=1))
-            click('‹ 返回'); no_orb(); bottom_navigation()
+            click('‹ 返回'); intent_entry_in_navigation()
             assert nav_state()=={'page':'tracking','section':'suggestions','detail':''},nav_state()
             top(); seek('当前情况')
-            checks.append('advice opens its referenced news detail and returning preserves the suggestions section while keeping the orb hidden')
+            checks.append('advice opens its referenced news detail and returning preserves the suggestions section and bottom navigation')
             seek('Synthetic withdrawn interpretation')
             (work/'withdrawn.png').write_bytes(get('/g',raw=1))
             seek('Synthetic pending suggestion'); no_archives(); top()
@@ -200,16 +203,16 @@ start_timeout(0.1, || {
             assert blocked['schedules']==0,blocked
             seek('取消并保留草稿'); click('取消并保留草稿'); time.sleep(.6)
             checks.append('next check becomes an unsaved schedule draft; existing draft is preserved on repeat entry')
-            click(ident='feed_tab'); orb_above_navigation()
+            click(ident='feed_tab'); intent_entry_in_navigation()
             click(ident='tracking_tab'); click(ident='tracking_dynamic_button')
             assert nav_state()['section']=='dynamic',nav_state()
-            click(ident='suggestions_button'); no_orb(); bottom_navigation()
+            click(ident='suggestions_button'); intent_entry_in_navigation()
             seek('继续跟踪正式发布或上架信息，确认上市时间。'); no_archives()
             get('/m',k='scroll',x=200,y=650,dy=550,wait=1); no_archives()
             (work/'bottom-nav-results.png').write_bytes(get('/g',raw=1))
             counts=json.loads((data/'dev.cfaw.runtime-tests/record-counts.json').read_text())
             assert counts=={'analyses':1,'suggestions':2,'runs':2,'actions':1,'bookmarks':1},counts
-            checks.append('returning home restores orb above navigation; dynamic and suggestions switch inline; archives remain excluded and record counts are unchanged')
+            checks.append('center add stays in navigation; dynamic and suggestions switch inline; archives remain excluded and record counts are unchanged')
             (data/'dev.cfaw.runtime-tests/show-empty-news.txt').write_text('fixture',encoding='utf-8')
             time.sleep(.5); top()
             seek('本期未找到与此目标有关的报道，不代表没有产品进展。')
