@@ -32,6 +32,11 @@ fn boot_load_step(index){
     }
     agent_progress_handler = agent_progress
     foreground_tracking_arm()
+    start_timeout(0.01, || boot_demo_initialize())
+}
+fn boot_demo_initialize(){
+    boot_status("准备新闻来源")
+    demo_news_initialize()
     start_timeout(0.01, || boot_loaded())
 }
 fn boot_loaded(){

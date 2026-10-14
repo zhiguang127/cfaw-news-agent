@@ -11,6 +11,7 @@ fn tracking_prepare_release(work){
     work.snapshot = nil work.payload = nil work.rows = nil work.targets = nil
     work.decisions = nil work.units = nil work.history = nil work.seen = nil
     work.previous_slots = nil work.decision_slots = nil work.payload_decision_slots = nil
+    work.lookup_index = nil work.feed_rows = nil
     work.prompt = nil work.key = nil work.decision_key = nil
     work.retry_task = nil work.prefix = nil
 }
@@ -19,7 +20,8 @@ fn tracking_prepare_candidates(candidates, targets, verification){
         evidence: [] previous_result: nil decisions: [] omitted_targets: targets.omitted_targets
         omitted_candidates: candidates.omitted_candidates omitted_decisions: 0 context_key: tracking_context_key()
         prompt_revision: tracking_prompt_revision previous_by_target: []
-        check_scope: if verification {"targeted_verification"} else {"recalled_candidates"}}
+        check_scope: if verification {"targeted_verification"} else {"recalled_candidates"}
+        schedule_weather: schedule_weather_rows(targets.schedules)}
     let work = {generation: tracking_recall_generation snapshot: snapshot rows: candidates.rows targets: targets
         decisions: topic_records.decisions decision_count: topic_records.decisions.len() decision_key: nil
         units: insight_targets(snapshot) history: tracking_cache.runs index: 0
@@ -193,9 +195,66 @@ fn tracking_prepare_step(work){
                 work.index = work.index + 1
             } else { work.phase = "dispatch" }
         } else if work.phase == "dispatch" {
-            if !tracking_snapshot_current(work.snapshot) { failure = "目标或新闻依据已变化，请重新检查" }
-            else { work.phase = "handoff" }
+            if !tracking_snapshot_targets_current_in(work.snapshot, tracking_context_key()) { failure = "目标或新闻依据已变化，请重新检查" }
+            else {
+                work.feed_revision = feed_data_revision work.feed_rows = app_feed_rows work.body_revision = analysis_articles_revision
+                work.phase = "dispatch_source_index" work.source_index = 0 work.index = 0 work.lookup_index = {}
+            }
+        } else if work.phase == "dispatch_source_index" {
+            if work.feed_revision != feed_data_revision || work.feed_rows != app_feed_rows {
+                work.phase = "dispatch"
+            } else if analysis_source_index_revision == work.feed_revision {
+                work.phase = "dispatch_merged_index" work.index = 0 work.lookup_index = {}
+            } else if work.source_index < news_sources.len() {
+                let rows = feed_rows_by_source[news_sources[work.source_index].id]
+                if rows == nil { work.source_index = work.source_index + 1 work.index = 0 }
+                else if work.index >= rows.len() { work.source_index = work.source_index + 1 work.index = 0 }
+                else {
+                    // Build a cold source index incrementally, not inside the
+                    // first evidence lookup. Commit the cursor after each row.
+                    let limit = min(rows.len(), work.index + 16)
+                    while work.index < limit {
+                        let row = rows[work.index] let old = work.lookup_index[row.news_id]
+                        if old == nil || row.retrieved_at > old.retrieved_at { work.lookup_index[row.news_id] = row }
+                        work.index = work.index + 1
+                    }
+                    nil
+                }
+            } else {
+                analysis_source_index = work.lookup_index analysis_source_index_revision = work.feed_revision
+                work.lookup_index = {} work.index = 0 work.phase = "dispatch_merged_index"
+            }
+        } else if work.phase == "dispatch_merged_index" {
+            if work.feed_revision != feed_data_revision || work.feed_rows != app_feed_rows {
+                work.phase = "dispatch"
+            } else if tracking_merged_index_rows == work.feed_rows {
+                work.phase = "dispatch_evidence" work.index = 0
+            } else if work.index < work.feed_rows.len() {
+                let limit = min(work.feed_rows.len(), work.index + 16)
+                while work.index < limit {
+                    let row = work.feed_rows[work.index]
+                    work.lookup_index[row.news_id] = row work.index = work.index + 1
+                }
+                nil
+            } else {
+                tracking_merged_index = work.lookup_index tracking_merged_index_rows = work.feed_rows
+                work.lookup_index = nil work.index = 0 work.phase = "dispatch_evidence"
+            }
+        } else if work.phase == "dispatch_evidence" {
+            // One evidence gate per entry. A changed source/body owner restarts
+            // the whole pass so an earlier validated item cannot go stale while
+            // later items are being checked. Pre-queued continuation retries
+            // the same index after a single native budget interruption.
+            if work.feed_revision != feed_data_revision || work.feed_rows != app_feed_rows || work.body_revision != analysis_articles_revision {
+                work.phase = "dispatch"
+            } else if work.index < work.snapshot.evidence.len() {
+                if !tracking_snapshot_evidence_current(work.snapshot.evidence[work.index]) { failure = "目标或新闻依据已变化，请重新检查" }
+                else { work.index = work.index + 1 }
+            } else { work.phase = "handoff" }
         } else if work.phase == "handoff" {
+            if work.feed_revision != feed_data_revision || work.feed_rows != app_feed_rows || work.body_revision != analysis_articles_revision {
+                work.phase = "dispatch" return
+            }
             if work.retry_task != nil {
                 let task = work.retry_task let snapshot = work.snapshot let prompt = work.prompt
                 task.snapshot = snapshot task.prompt = prompt task.input_bytes = task.input_bytes + prompt.to_bytes().len()
@@ -220,10 +279,15 @@ fn tracking_prepare_step(work){
                 return
             }
             else {
-                let snapshot = work.snapshot let payload = work.payload let key = work.key let decision_key = work.decision_key let prompt = work.prompt
-                tracking_prompt_work = payload
-                tracking_dispatch_snapshot(snapshot, payload, key, decision_key, prompt)
-                return
+                // Changes after the sliced pass still fail at the handoff and
+                // Agent reply/publication gates. Parsed keys keep these cheap.
+                if !tracking_snapshot_current(work.snapshot) { failure = "目标或新闻依据已变化，请重新检查" }
+                else {
+                    let snapshot = work.snapshot let payload = work.payload let key = work.key let decision_key = work.decision_key let prompt = work.prompt
+                    tracking_prompt_work = payload
+                    tracking_dispatch_snapshot(snapshot, payload, key, decision_key, prompt)
+                    return
+                }
             }
         }
     } { failure = "整理分析材料失败（" + work.phase + "），已结束本次检查；请重试" }

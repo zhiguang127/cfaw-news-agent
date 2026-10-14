@@ -67,7 +67,7 @@ fn tracking_judgment_validate(value, snapshot){
             if e.summary.trim() != "" || e.paragraphs.len() > 0 { title_only = false }
         }
         let target = insight_target(snapshot, insight.target_type, insight.target_id)
-        if target.mode == "goal" && title_only && (snapshot["prompt_revision"] != "tracking-v2.11" || insight.evidence_ids.len() > 0) {
+        if target.mode == "goal" && title_only && (!record_contains(["tracking-v2.11" "tracking-v2.12" "tracking-v2.13-final"], snapshot["prompt_revision"]) || insight.evidence_ids.len() > 0) {
             missing = true
             if insight.decision_effect != "unknown" || insight.uncertainties.len() == 0 || insight["next_step"] == nil {
                 let error = tracking_invalid("invalid_schema", "相关报道仍只有标题，暂不能判断是否值得尝试；请补充正文或摘要后重新检查")
@@ -75,7 +75,7 @@ fn tracking_judgment_validate(value, snapshot){
             }
         } else { other = true }
     }
-    if snapshot["prompt_revision"] == "tracking-v2.11" && cited == 0 && value.outcome != "insufficient_evidence" {
+    if record_contains(["tracking-v2.11" "tracking-v2.12" "tracking-v2.13-final"], snapshot["prompt_revision"]) && cited == 0 && !(record_array(value["weather_advice"]) && value.weather_advice.len() > 0) && value.outcome != "insufficient_evidence" {
         let error = tracking_invalid("invalid_schema", "本轮没有形成相关报道依据，暂不能报告实质变化；保留已有决定")
         error.reason_code = "no_related_policy" return error
     }
@@ -90,7 +90,7 @@ fn tracking_judgment_validate(value, snapshot){
 // A separate, deterministic availability notice, never acceptance of the
 // model's unsupported advice. Caller must first validate all IDs/quotes/versions.
 fn tracking_title_gap_notice(value, snapshot){
-    if !record_contains(["tracking-v2.9" "tracking-v2.10" "tracking-v2.11"], snapshot["prompt_revision"]) || snapshot.topics.len() != 1 || snapshot.schedules.len() + snapshot.legacy_interests.len() != 0 { return nil }
+    if !record_contains(["tracking-v2.9" "tracking-v2.10" "tracking-v2.11" "tracking-v2.12" "tracking-v2.13-final"], snapshot["prompt_revision"]) || snapshot.topics.len() != 1 || snapshot.schedules.len() + snapshot.legacy_interests.len() != 0 { return nil }
     let topic = snapshot.topics[0]
     if topic["intent_kind"] != "goal" { return nil }
     let items = [] let selected = 0
@@ -141,7 +141,7 @@ fn tracking_title_gap_notice(value, snapshot){
 // Entirely missing content is known locally. Do not spend a model turn asking
 // for a decision the application must reject; publish an explicit gap notice.
 fn tracking_preflight_notice(snapshot){
-    if !record_object(snapshot) || !record_contains(["tracking-v2.10" "tracking-v2.11"], snapshot["prompt_revision"]) { return nil }
+    if !record_object(snapshot) || !record_contains(["tracking-v2.10" "tracking-v2.11" "tracking-v2.12" "tracking-v2.13-final"], snapshot["prompt_revision"]) { return nil }
     if !record_array(snapshot["topics"]) || !record_array(snapshot["schedules"]) || !record_array(snapshot["legacy_interests"]) || !record_array(snapshot["evidence"]) { return nil }
     if snapshot.topics.len() != 1 || snapshot.schedules.len() + snapshot.legacy_interests.len() != 0 || snapshot.evidence.len() == 0 { return nil }
     let topic = snapshot.topics[0]
@@ -166,8 +166,10 @@ fn tracking_preflight_notice(snapshot){
 }
 fn insights_validate(value, snapshot){
     if !record_array(value["insights"]) || value.insights.len() > 6 { return tracking_invalid("invalid_schema", "每个目标最多3项变化") }
+    let weather_error = schedule_weather_advice_error(value, snapshot)
+    if weather_error != nil { return weather_error }
     // Preserve validation of historical records under their original contract.
-    let situation_contract = record_contains(["tracking-v2.5" "tracking-v2.6" "tracking-v2.7" "tracking-v2.8" "tracking-v2.9" "tracking-v2.10" "tracking-v2.11"], snapshot["prompt_revision"])
+    let situation_contract = record_contains(["tracking-v2.5" "tracking-v2.6" "tracking-v2.7" "tracking-v2.8" "tracking-v2.9" "tracking-v2.10" "tracking-v2.11" "tracking-v2.12" "tracking-v2.13-final"], snapshot["prompt_revision"])
     let counts = {} let seen = {} let policy_error = nil
     for insight in value.insights {
         if !record_object(insight) { return tracking_invalid("invalid_schema", "目标变化必须为对象") }
@@ -192,9 +194,9 @@ fn insights_validate(value, snapshot){
             if insight.evidence_ids.len() == 0 {
                 for item in value.items { if insight_item_matches(item, insight) { return tracking_invalid("invalid_reference", "已有本目标相关或待核实报道，须明确引用支持本项判断的来源") } }
                 if insight.decision_effect != "unknown" || insight.material_change.trim() != "" || insight["reschedule"] != nil ||
-                    (snapshot["prompt_revision"] != "tracking-v2.11" && value.outcome != "insufficient_evidence") {
+                    (!record_contains(["tracking-v2.11" "tracking-v2.12" "tracking-v2.13-final"], snapshot["prompt_revision"]) && value.outcome != "insufficient_evidence") {
                     let error = tracking_invalid("invalid_schema", "本话题没有关联报道，暂不能作出行动判断；应保留已有决定")
-                    if snapshot["prompt_revision"] != "tracking-v2.11" { return error }
+                    if !record_contains(["tracking-v2.11" "tracking-v2.12" "tracking-v2.13-final"], snapshot["prompt_revision"]) { return error }
                     // Check every remaining reference, quote, version and
                     // history relation before offering a neutral notice.
                     error.reason_code = "no_related_policy" policy_error = error
@@ -224,15 +226,19 @@ fn insights_validate(value, snapshot){
         seen[key + ":" + insight.issue_key] = true
     }
     for target in insight_targets(snapshot) {
-        if counts[target.target_type + ":" + target.target_id] == nil { return tracking_invalid("invalid_schema", "每个目标需明确报告变化或证据不足") }
+        if counts[target.target_type + ":" + target.target_id] == nil {
+            if target.target_type != "schedule" || !schedule_weather_covers(value, target.target_id) { return tracking_invalid("invalid_schema", "每个目标需明确报告变化或证据不足") }
+        }
     }
     if policy_error != nil { return policy_error }
+    let plan_error = goal_plans_error(value, snapshot)
+    if plan_error != nil { return plan_error }
     {valid: true result: value error: "" message: ""}
 }
 // The model associated no current article with any topic. Keep that limited
 // classification, discard its unsupported action verdict, and say so explicitly.
 fn tracking_no_related_notice(value, snapshot){
-    if snapshot["prompt_revision"] != "tracking-v2.11" || snapshot.topics.len() == 0 || snapshot.schedules.len() + snapshot.legacy_interests.len() != 0 { return nil }
+    if !record_contains(["tracking-v2.11" "tracking-v2.12" "tracking-v2.13-final"], snapshot["prompt_revision"]) || snapshot.topics.len() == 0 || snapshot.schedules.len() + snapshot.legacy_interests.len() != 0 { return nil }
     for insight in value.insights {
         if insight.evidence_ids.len() > 0 { return nil }
         for item in value.items { if insight_item_matches(item, insight) { return nil } }

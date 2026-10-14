@@ -1,0 +1,22 @@
+// Opening a suggested verification plan must preserve any existing draft.
+fn intent_empty_draft_available(){
+    intent_draft != nil && !analysis_busy && intent_draft.target_topic_id == nil && intent_draft.origin_reminder_id == nil &&
+        intent_draft.original_input.trim() == "" && intent_draft.supplement.trim() == "" && intent_draft.state != "ready"
+}
+fn insight_plan_check(value){
+    if !tracking_run_current(value.run) { notice("依据或目标已变化，请重新检查") return false }
+    if !record_string(value.insight["next_step"]) || value.insight.next_step.trim() == "" { return false }
+    if analysis_busy { notice("请等待当前分析完成，再安排核实") return false }
+    intent_begin(nil)
+    if !intent_empty_draft_available() {
+        intent_error = "已有草稿已保留；请先完成或丢弃这份草稿，再安排下一步核实。"
+        intent_render()
+        return false
+    }
+    intent_draft.intent_kind = "schedule"
+    intent_draft.original_input = "安排一次核实：" + value.insight.next_step
+    intent_invalidate()
+    intent_guidance = "请补充日期、开始和结束时间；整理后预览确认，才会保存日程。"
+    intent_render()
+    true
+}

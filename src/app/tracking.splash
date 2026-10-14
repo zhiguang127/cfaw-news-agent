@@ -8,6 +8,8 @@ let tracking_started_at = 0 let tracking_enrichment_seconds = 0
 let tracking_status = "idle"
 let tracking_message = "确认你的意图后，检查相关变化与日程影响"
 let tracking_auto_timer = nil
+let tracking_auto_requested_topics = []
+let tracking_auto_requested_schedules = []
 let tracking_check_pending = false
 let tracking_pending_run = nil
 let tracking_preparation_timer = nil
@@ -58,9 +60,31 @@ fn tracking_article_key(row){
     {title: row.title summary: row.summary source_url: row.source_url published_at: row.published_at
         timestamp_kind: row.timestamp_kind evidence_kind: row.evidence_kind}.to_json()
 }
+fn tracking_article_matches(row, facts){
+    row.title == facts.title && row.summary == facts.summary && row.source_url == facts.source_url &&
+        row.published_at == facts.published_at && row.timestamp_kind == facts.timestamp_kind && row.evidence_kind == facts.evidence_kind
+}
+// Keep parsed immutable fingerprints outside persisted snapshots. Repeated
+// freshness gates compare fields, without serializing eight full summaries.
+let tracking_fact_cache = []
+fn tracking_content_fields(key){
+    // JSON content keys can be several KB. Missing-property suggestions in
+    // the host's object map compare long keys quadratically, so use a bounded
+    // array of exact string comparisons instead of dictionary property lookup.
+    for entry in tracking_fact_cache { if entry.key == key { return entry.facts } }
+    let facts = nil
+    try { facts = key.parse_json() } { return nil }
+    if !record_object(facts) { return nil }
+    if record_array(facts["references"]) { facts.reference_key = facts.references.to_json() }
+    if tracking_fact_cache.len() >= 128 { tracking_fact_cache.remove(0) }
+    tracking_fact_cache.push({key: key facts: facts})
+    facts
+}
 let tracking_merged_index_rows = nil
 let tracking_merged_index = {}
 fn tracking_current_row(id){
+    let archived = demo_current_row(id)
+    if archived != nil { return archived }
     let newest = analysis_current_row(id)
     if tracking_merged_index_rows != app_feed_rows {
         tracking_merged_index_rows = app_feed_rows
@@ -70,14 +94,20 @@ fn tracking_current_row(id){
     let row = tracking_merged_index[id]
     if row != nil {
         // Source callbacks may precede the asynchronous merged-feed build.
-        if newest != nil { if tracking_article_key(newest) != tracking_article_key(row) { return newest } }
+        if newest != nil { if !tracking_article_matches(newest, row) { return newest } }
         return row
     }
     newest
 }
 fn tracking_snapshot_current(snapshot){ tracking_snapshot_current_in(snapshot, tracking_context_key()) }
 fn tracking_snapshot_current_in(snapshot, context_key){
+    if !tracking_snapshot_targets_current_in(snapshot, context_key) { return false }
+    for evidence in snapshot.evidence { if !tracking_snapshot_evidence_current(evidence) { return false } }
+    true
+}
+fn tracking_snapshot_targets_current_in(snapshot, context_key){
     if snapshot.context_key != context_key { return false }
+    if !schedule_weather_snapshot_current(snapshot) { return false }
     for topic in snapshot.topics {
         let current = topic_find(topic.topic_id)
         if current == nil { return false }
@@ -88,17 +118,21 @@ fn tracking_snapshot_current_in(snapshot, context_key){
         if current == nil { return false }
         if current.to_json() != schedule.to_json() { return false }
     }
-    for evidence in snapshot.evidence {
-        let row = tracking_current_row(evidence.news_id)
-        if row == nil { return false }
-        if tracking_evidence_key(row) != evidence.content_key || row.retrieved_at <= 0 || time_now() - row.retrieved_at > news_config.cache_stale_seconds { return false }
-        if evidence["body_key"] != nil && evidence["body_key"] != "" {
-            if record_number(evidence["body_retrieved_at"]) { if time_now() - evidence.body_retrieved_at > news_config.cache_stale_seconds { return false } }
-            let article = analysis_article_find(row)
-            // Eviction does not erase persisted evidence, but a newly fetched
-            // different body invalidates old advice before confirmation.
-            if article != nil { if article.body_key != evidence.body_key { return false } }
-        }
+    true
+}
+fn tracking_snapshot_evidence_current(evidence){
+    let row = tracking_current_row(evidence.news_id)
+    if row == nil { return false }
+    let facts = tracking_content_fields(evidence.content_key)
+    if facts == nil || row.news_id != facts.news_id || !tracking_article_matches(row, facts) { return false }
+    if row.references.to_json() != facts["reference_key"] { return false }
+    if row.retrieved_at <= 0 || time_now() - row.retrieved_at > news_config.cache_stale_seconds { return false }
+    if evidence["body_key"] != nil && evidence["body_key"] != "" {
+        if record_number(evidence["body_retrieved_at"]) { if time_now() - evidence.body_retrieved_at > news_config.cache_stale_seconds { return false } }
+        let article = analysis_article_find(row)
+        // Eviction does not erase persisted evidence, but a newly fetched
+        // different body invalidates old advice before confirmation.
+        if article != nil { if article.body_key != evidence.body_key { return false } }
     }
     true
 }
@@ -172,7 +206,7 @@ let tracking_display_values_cache = nil
 let tracking_display_work = nil
 fn tracking_display_key(){
     let runs = [] for run in tracking_cache.runs { runs.push(run["task_id"]) }
-    tracking_context_key() + ":" + feed_data_revision + ":" + topic_records.revision + ":" + tracking_cache.revision + ":" + analysis_articles_revision + ":" + runs.to_json()
+    tracking_context_key() + ":" + feed_data_revision + ":" + topic_records.revision + ":" + tracking_cache.revision + ":" + analysis_articles_revision + ":" + schedule_weather_revision + ":" + runs.to_json()
 }
 fn tracking_current_values(){
     if tracking_cache.runs.len() == 0 { tracking_display_work = nil return {} }
@@ -406,8 +440,9 @@ fn tracking_publication_apply(run, error, acknowledged){
     start_timeout(0.01, || {
         if generation != tracking_save_generation { return }
         check_states_record_reason(run.snapshot, if saved {"checked"} else {"failed"}, if saved {""} else {"storage_error"}, saved, message)
+        // Render in a later slice after the terminal check state is installed.
+        start_timeout(0.01, || tracking_ui_update())
     })
-    start_timeout(0.01, || tracking_ui_update())
 }
 fn tracking_prompt_base(snapshot){
     // Copy only context the model uses, without cloning bodies, fingerprints,
@@ -416,9 +451,10 @@ fn tracking_prompt_base(snapshot){
         legacy_interests: snapshot.legacy_interests evidence: [] previous_result: nil decisions: []
         omitted_targets: snapshot.omitted_targets omitted_candidates: snapshot.omitted_candidates
         omitted_decisions: snapshot.omitted_decisions context_key: nil prompt_revision: snapshot.prompt_revision
-        previous_by_target: [] check_scope: snapshot["check_scope"]}
+        previous_by_target: [] check_scope: snapshot["check_scope"] schedule_weather: snapshot["schedule_weather"]}
     let payload = base.to_json().parse_json()
-    for topic in payload.topics {
+    for index topic in payload.topics {
+        topic.trial_requested = goal_requests_trial(snapshot.topics[index])
         topic.original_input = nil topic.supplement = nil topic.recall_rules = nil
         topic.created_at = nil topic.updated_at = nil
     }
@@ -442,7 +478,7 @@ fn tracking_prompt_evidence(evidence, index, revision){
         source_url: evidence.source_url published_at: evidence.published_at timestamp_kind: evidence.timestamp_kind
         summary_truncated: evidence.summary_truncated paragraphs: paragraphs allowed_paragraph_ids: ids
         can_quote_body: ids.len() > 0 available_evidence: if ids.len() > 0 {"body_excerpt"} else {if evidence.summary.trim() != "" {"title_summary"} else {"title_only"}}
-        body_error: evidence["body_error"] body_truncated: evidence["body_truncated"]}
+        body_error: evidence["body_error"] body_truncated: evidence["body_truncated"] provenance: evidence["archive_provenance"]}
 }
 fn tracking_prompt_previous(previous){
     let projected = previous.to_json().parse_json()
@@ -493,6 +529,7 @@ fn tracking_start(row, verification = nil, target_override = nil){
         targets = {topics: verification.run.snapshot.topics schedules: verification.run.snapshot.schedules
             legacy_interests: verification.run.snapshot.legacy_interests omitted_targets: verification.run.snapshot.omitted_targets}
     }
+    schedule_weather_fetch(targets.schedules)
     tracking_recall_targets = targets
     if targets.topics.len() + targets.schedules.len() + targets.legacy_interests.len() == 0 { tracking_status = "no_targets" tracking_message = "先保存关注或有效日程" tracking_ui_update() return }
     let rows = app_feed_rows if row != nil { rows = [row] }
@@ -547,7 +584,7 @@ fn tracking_start_candidates(candidates, targets, verification = false){
         check_states_record_reason(targets, "failed", "service_unavailable", false, tracking_message)
         tracking_ui_update() return
     }
-    if candidates.rows.len() == 0 {
+    if candidates.rows.len() == 0 && schedule_weather_rows(targets.schedules).len() == 0 {
         tracking_preparation_clear()
         tracking_status = "no_candidates" tracking_message = "无候选新闻，本次未调用助手"
         if targets.topics.len() > 0 { tracking_message = "本轮标题未发现匹配候选，未调用助手；可刷新新闻或调整关注关键词，不能据此断言没有新动态" }
@@ -610,20 +647,40 @@ fn tracking_dispatch_snapshot(snapshot, payload, key, decision_key, prompt){
     }
     tracking_ui_update()
 }
-fn tracking_schedule_check(){
-    if follow_check_running { return }
+fn tracking_schedule_check(requested_topic_id = nil, requested_schedule_id = nil){
     if agent_preferences.paused { return }
+    if requested_topic_id != nil && !record_contains(tracking_auto_requested_topics, requested_topic_id) {
+        tracking_auto_requested_topics.push(requested_topic_id)
+    }
+    if requested_schedule_id != nil && !record_contains(tracking_auto_requested_schedules, requested_schedule_id) { tracking_auto_requested_schedules.push(requested_schedule_id) }
     tracking_check_pending = true
+    if follow_check_running { return }
     if tracking_auto_timer != nil { stop_timer(tracking_auto_timer) }
     tracking_auto_timer = start_timeout(tracking_config.auto_check_delay_seconds, || {
         tracking_auto_timer = nil
         if follow_check_running || busy || tracking_in_progress() || octos_testing || analysis_needs_reopen || intent_open || reader_summary.state == "running" { return }
-        tracking_check_pending = false
-        tracking_start(nil)
+        let targets = nil
+        while tracking_auto_requested_topics.len() > 0 && targets == nil {
+            let topic = topic_find(tracking_auto_requested_topics.remove(0))
+            if topic != nil && topic.status == "active" {
+                targets = {topics: [topic] schedules: [] legacy_interests: [] omitted_targets: 0}
+            }
+        }
+        while tracking_auto_requested_schedules.len() > 0 && targets == nil {
+            let schedule = schedule_find(tracking_auto_requested_schedules.remove(0))
+            if schedule != nil && schedule_active(schedule) && schedule_instant(schedule.end) > time_now() {
+                targets = {topics: [] schedules: [schedule] legacy_interests: [] omitted_targets: 0}
+            }
+        }
+        // An updated forecast prioritizes its exact active schedule.
+        if targets == nil { targets = tracking_targets() }
+        tracking_check_pending = tracking_auto_requested_topics.len() + tracking_auto_requested_schedules.len() > 0
+        tracking_start(nil, nil, targets)
     })
 }
 fn tracking_ui_update(){
     render_feed() render_analysis_controls()
+    if page == "schedule" { ui.schedule_list.render() }
     if detail_kind == "story" { ui.story_content.render() }
     if page == "tracking" && tracking_section == "suggestions" && detail_kind == "" { ui.results_content.render() }
     if page == "tracking" && tracking_section == "topics" && detail_kind == "" { follow_render() }

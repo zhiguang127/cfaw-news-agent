@@ -68,8 +68,11 @@ with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
     for path in files:
         if path.is_file():
             archive.write(path, Path('bundle') / path.relative_to(bundle))
-    for name in ['LICENSE', 'NOTICE']:
+    for name in ['LICENSE', 'NOTICE', 'PRIVACY.md']:
         archive.write(root / name, name)
+    for path in sorted((root / 'LICENSES').glob('*')):
+        if path.is_file():
+            archive.write(path, path.relative_to(root))
 print(output)
 try:
     recorded_hub = os.path.relpath(hub, root)

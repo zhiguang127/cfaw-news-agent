@@ -1,0 +1,71 @@
+let schedule_weather_revision = 0
+let schedule_weather_requested_keys = {}
+fn schedule_weather_fetch(items){
+    if !weather_app_ready { return }
+    let seen = {}
+    for item in items {
+        if !schedule_active(item) || schedule_instant(item.end) <= time_now() { continue }
+        if schedule_instant(item.start) - time_now() > weather_days * 86400 { continue }
+        let city = schedule_weather_city(item) if city == nil || seen[city.cid] == true { continue }
+        seen[city.cid] = true
+        if weather_status_by_city[city.cid].state == "not_loaded" { weather_read_cache(city) }
+        weather_fetch_cities([city.cid], weather_generation)
+    }
+}
+fn schedule_weather_updated(){
+    schedule_weather_revision = schedule_weather_revision + 1
+    let active = []
+    for item in user_schedules {
+        if schedule_active(item) && schedule_instant(item.end) > time_now() { active.push(item) }
+        if active.len() >= tracking_config.max_schedules { break }
+    }
+    for item in active {
+        let forecasts = schedule_weather_rows([item])
+        if forecasts.len() == 0 { continue }
+        let key = forecasts.to_json()
+        if schedule_weather_requested_keys[item.schedule_id] != key {
+            schedule_weather_requested_keys[item.schedule_id] = key
+            tracking_schedule_check(nil, item.schedule_id)
+        }
+    }
+    if page == "schedule" { ui.schedule_list.render() }
+}
+fn schedule_weather_model_advice(item, source){
+    for i in tracking_cache.runs.len() {
+        let run = tracking_cache.runs[tracking_cache.runs.len() - 1 - i]
+        if run.snapshot.prompt_revision != tracking_prompt_revision || !record_array(run.result["weather_advice"]) { continue }
+        let saved = run.snapshot["schedule_weather"] if saved == nil { continue }
+        let old = schedule_weather_find(saved, item.schedule_id, source.forecast.forecast_id)
+        if old == nil || old.to_json() != source.to_json() { continue }
+        for advice in run.result.weather_advice {
+            if advice.schedule_id == item.schedule_id && advice.schedule_version == item.version && advice.forecast_id == source.forecast.forecast_id { return advice.next_step }
+        }
+    }
+    nil
+}
+fn schedule_weather_reminders(item){
+    let out = []
+    for source in schedule_weather_rows([item]) {
+        let row = source.forecast
+        let advice = schedule_weather_model_advice(item, source)
+        let origin = "Agent 建议"
+        if advice == nil {
+            origin = "出行提示"
+            if row.code >= 95 { advice = "出门带雨具；出发前核对当地预警和逐小时天气，注意通勤安全。" }
+            else if schedule_weather_wet(row) { advice = "外出建议携带雨伞，电脑和资料注意防水；出发前再核对天气。" }
+            else if record_contains([71 73 75 77 85 86], row.code) { advice = "注意路面湿滑，出发前核对天气与交通情况。" }
+            else { continue }
+        }
+        out.push({facts: row.city_name + " " + row.day + " " + row.condition + " · 日降水 " + row.precipitation_mm + " mm"
+            advice: advice origin: origin source_url: source.source_url fetched_at: row.fetched_at
+            retrieved_label: schedule_display_time(analysis_epoch_rfc3339(floor(row.fetched_at)), "Asia/Shanghai")
+            limitation: "按城市日预报判断，会议时段的降雨与实际通勤情况仍需临近出发时核对。"})
+    }
+    out
+}
+fn schedule_check_messages(id){
+    let item = schedule_find(id)
+    if item == nil || !schedule_active(item) { return }
+    schedule_weather_fetch([item])
+    tracking_start(nil, nil, {topics: [] schedules: [item] legacy_interests: [] omitted_targets: 0})
+}

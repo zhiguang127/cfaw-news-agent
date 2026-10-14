@@ -3,3 +3,5 @@ Required field types and limits: title is a nonempty string of at most 120 Unico
 INPUT:
 
 For title-first screening, recall keyword rules should name the concrete subject or task visible in headlines, such as a named company, meeting transcription or presentation generation. When the title names a company, include its literal name as a keyword; for practical goals include the user's specific tasks rather than only AI, products, technology or a category. Preserve useful explicit aliases within the six-rule limit.
+
+An ordinary request for a limited trial is a complete goal without an exact date or time. Preserve the explicit trial request and weekly learning budget in the understanding; do not create a schedule while parsing the goal. A later evidence-backed trial proposal displays an editable time slot and requires explicit user approval.

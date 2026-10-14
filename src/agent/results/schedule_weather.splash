@@ -1,0 +1,54 @@
+fn schedule_weather_snapshot_valid(snapshot){
+    if snapshot["schedule_weather"] == nil { return true }
+    if !record_array(snapshot.schedule_weather) || snapshot.schedule_weather.len() > tracking_config.max_schedules * weather_days { return false }
+    let seen = {}
+    for value in snapshot.schedule_weather {
+        if !record_object(value) || !forecast_valid(value["forecast"]) { return false }
+        let schedule = tracking_find(snapshot.schedules, "schedule_id", value["schedule_id"])
+        if schedule == nil || schedule.version != value["schedule_version"] || !schedule_active(schedule) { return false }
+        let city = schedule_weather_city(schedule)
+        if city == nil || value.forecast.city_id != city.cid || value.forecast.city_name != city.name { return false }
+        let day = weather_time_stamp(value.forecast.day)
+        if day < weather_time_stamp(weather_day_stamp(schedule_instant(schedule.start))) || day > weather_time_stamp(weather_day_stamp(schedule_instant(schedule.end) - 0.001)) { return false }
+        if value["source_url"] != weather_url(city) || value["temporal_scope"] != "daily" || value["timezone"] != "Asia/Shanghai" { return false }
+        let key = value.schedule_id + ":" + value.forecast.forecast_id
+        if seen[key] == true { return false } seen[key] = true
+    }
+    true
+}
+fn schedule_weather_unsupported_action(text){
+    // Remove only explicit negations, leaving another positive claim intact.
+    let claims = text.replace(regex("(无需|不用|不必|不需要|不要|不能|勿).{0,3}(取消|改期|推迟)|不(取消|改期|推迟)|(不|不是|不能|未必).{0,3}(保证|一定)", "g"), "")
+    regex("取消.{0,8}(日程|会议|安排)|改期|推迟.{0,8}(会议|日程)|已[经]?修改|一定下雨|保证.{0,8}(安全|不下雨)").test(claims)
+}
+fn schedule_weather_advice_error(value, snapshot){
+    let facts = snapshot["schedule_weather"] if facts == nil { facts = [] }
+    let advice = value["weather_advice"]
+    if advice == nil && facts.len() == 0 { return nil }
+    if !record_array(advice) || advice.len() != facts.len() { return tracking_invalid("invalid_schema", "请逐条返回本轮日程预报的天气建议；没有预报时返回weather_advice空数组。") }
+    let seen = {}
+    for item in advice {
+        if !record_object(item) { return tracking_invalid("invalid_schema", "天气建议结构无效") }
+        let source = schedule_weather_find(facts, item["schedule_id"], item["forecast_id"])
+        if source == nil || source.schedule_version != item["schedule_version"] {
+            let error = tracking_invalid("invalid_reference", "天气建议须引用本轮日程版本与对应城市日期的预报。")
+            let allowed = [] for fact in facts { allowed.push({schedule_id: fact.schedule_id schedule_version: fact.schedule_version forecast_id: fact.forecast.forecast_id}) }
+            error.repair_hint = {error: "invalid_weather_reference" allowed_weather: allowed}.to_json() return error
+        }
+        let key = item.schedule_id + ":" + item.forecast_id
+        if seen[key] == true { return tracking_invalid("invalid_reference", "同一日程预报不能重复提醒") } seen[key] = true
+        if !record_string(item["next_step"]) || item.next_step.trim() == "" || item.next_step.to_chars().len() > tracking_config.weather_next_step_chars {
+            return tracking_invalid("invalid_schema", "weather_advice.next_step须为1至100字符的具体出行准备建议。")
+        }
+        if item["proposed_action"] != nil || item["reschedule"] != nil || schedule_weather_unsupported_action(item.next_step) {
+            return tracking_invalid("invalid_schema", "日预报只能支持出行准备和复核，不能据此断言会议时段必定下雨或取消、改期。")
+        }
+        if schedule_weather_wet(source.forecast) && (!regex("(带|备|准备|配备).{0,8}(伞|雨具)|(伞|雨具).{0,6}(带上|备好)").test(item.next_step) || regex("(无需|不用|不必|不需要|不要).{0,8}(伞|雨具)|不(携带|带|备|准备).{0,8}(伞|雨具)").test(item.next_step)) { return tracking_invalid("invalid_schema", "对应日预报有降雨，请明确建议携带雨伞或雨具用于通勤；室内会议不意味着通勤无需雨具。不要把日预报扩写为会议时段实况。") }
+    }
+    nil
+}
+fn schedule_weather_covers(value, schedule_id){
+    if !record_array(value["weather_advice"]) { return false }
+    for advice in value.weather_advice { if advice.schedule_id == schedule_id { return true } }
+    false
+}

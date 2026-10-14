@@ -122,6 +122,8 @@ fn analysis_input_key(row){
 let analysis_source_index_revision = -1
 let analysis_source_index = {}
 fn analysis_current_row(id){
+    let archived = demo_current_row(id)
+    if archived != nil { return archived }
     // A render validates up to twelve runs. Repeated full-source scans for
     // every evidence reference can exceed the native callback's time budget.
     if analysis_source_index_revision != feed_data_revision {

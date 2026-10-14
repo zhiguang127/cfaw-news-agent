@@ -389,6 +389,7 @@ fn schedule_save_draft(){
     analysis_check_message = ""
     tracking_schedule_check()
     notice("日程已保存")
+    start_timeout(0.01, || { schedule_weather_fetch([result.item]) tracking_schedule_check(nil, result.item.schedule_id) })
     schedule_edit_id = result.item.schedule_id schedule_edit_version = result.item.version
     schedule_saved_view = true schedule_original = result.item.to_json().parse_json()
     ui.schedule_list.render() ui.schedule_editor.render()

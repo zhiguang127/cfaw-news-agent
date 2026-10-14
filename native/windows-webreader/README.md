@@ -8,4 +8,4 @@ Website cookies live in `webreader-v1` under `RINX_DATA_DIR` (or the host's norm
 
 Dependencies are pinned to `webview2-com 0.39.1` and `windows 0.62.2`; the standalone Cargo.lock is included. The wrapper follows the [maintainer's callback API](https://github.com/wravery/webview2-rs) and Microsoft's [WebView2 initialization model](https://learn.microsoft.com/en-us/microsoft-edge/webview2/get-started/win32).
 
-`CFAW_WEBREADER_PROBE_DIR` enables developer PNG captures after a successful native navigation. It is unset during normal use and creates no JavaScript bridge. `examples/page_probe.rs` loads one explicit public URL in an isolated window; `scripts/test_webreader_ui.py` exercises the application route and the actual Rinx native backend.
+Build and integrate this crate through `scripts/build_news_refresh_host.ps1`, which applies the reader, WebReader and news-memory host adaptations together. See [the runtime and build guide](../../docs/development.md). `CFAW_WEBREADER_PROBE_DIR` enables optional developer PNG captures; it is unset during normal use and creates no JavaScript bridge.

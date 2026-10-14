@@ -1,5 +1,5 @@
 // Short model-facing labels are scoped to one immutable candidate snapshot.
-fn tracking_uses_quote_choices(revision){ record_contains(["tracking-v2.7" "tracking-v2.8" "tracking-v2.9" "tracking-v2.10" "tracking-v2.11"], revision) }
+fn tracking_uses_quote_choices(revision){ record_contains(["tracking-v2.7" "tracking-v2.8" "tracking-v2.9" "tracking-v2.10" "tracking-v2.11" "tracking-v2.13-final"], revision) }
 // Unknown labels stay unknown and are rejected by the existing validators.
 fn tracking_evidence_label(id, snapshot){
     for i evidence in snapshot.evidence { if evidence.news_id == id { return "E" + (i + 1) } }

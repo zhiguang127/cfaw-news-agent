@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "README_and_gallery_local_links": 107,
+  "missing_links": [],
+  "gallery_images": 33,
+  "real_final_import_proof_matches_bundle": true,
+  "calendar_created_count": 1,
+  "date_or_time_reentry_required": false,
+  "image_dimensions_preserved": true,
+  "bundle_zip_matches": true,
+  "bundle_blake3": "6f5bbb70b70d44c66762fc81fd2593eceae324052b4fb64330f0ce0b93957b15"
+}

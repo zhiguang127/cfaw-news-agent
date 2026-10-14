@@ -53,6 +53,10 @@ fn follow_card_evidence(card){
 fn follow_card_steps(card){
     let steps = []
     if !card.current { return steps }
+    let trial = goal_schedule_reference(card)
+    if trial != nil && goal_schedule_saved(trial) == nil {
+        steps.push(trial.plan.title + "（" + trial.plan.duration_minutes + "分钟）：" + insight_prose(trial.run, trial.plan.content))
+    }
     // A compact card shows its first recommendation, so put withdrawals and
     // unresolved decisions before ordinary observation without rewriting text.
     for tier in ["withdrawn" "verify" "ordinary"] {
@@ -95,8 +99,7 @@ fn follow_topic_projection(topic){
         card.next_steps = follow_card_steps(card)
         card.news_count = follow_card_evidence(card).len()
         card.status = "steady" card.status_label = "暂无新增依据"
-        card.note = "本轮仅检查选中的 " + run.snapshot.evidence.len() + " 篇候选报道；实际判断依据 " + card.news_count + " 篇。"
-        if run.snapshot.omitted_candidates > 0 { card.note = card.note + " 另有 " + run.snapshot.omitted_candidates + " 篇候选未纳入本轮。" }
+        card.note = ""
         let has_new = false let needs_verify = false
         for value in card.values {
             if record_contains(["handled" "dismissed"], value.state) { continue }

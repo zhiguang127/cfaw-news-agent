@@ -36,8 +36,11 @@ ORDER = [
     'src/data/ingestion/http.splash',
     'src/data/ingestion/articles.splash',
     'src/data/ingestion/analysis_evidence.splash',
+    'src/data/ingestion/demo_news.json',
+    'src/data/ingestion/demo_news.splash',
     'src/data/ingestion/feeds.splash',
     'src/data/ingestion/weather.splash',
+    'src/data/retrieval/schedule_weather.splash',
     'src/data/ingestion/holidays.splash',
     'src/data/ingestion/fx.splash',
     'src/agent/context.splash',
@@ -48,8 +51,10 @@ ORDER = [
     'src/agent/results/change.splash',
     'src/agent/runtime/connectivity.splash',
     'src/agent/results/references.splash',
+    'src/agent/results/goal_plans.splash',
     'src/agent/results/tracking.splash',
     'src/agent/results/insights.splash',
+    'src/agent/results/schedule_weather.splash',
     'src/agent/runtime/tracking.splash',
     'src/agent/runtime/article_summary.splash',
     'src/app/controller.splash',
@@ -66,9 +71,11 @@ ORDER = [
     'src/app/intent_motion.splash',
     'src/app/intents.splash',
     'src/app/intent_preview.splash',
-    'src/app/life_scenarios.splash',
+    'src/app/insight_plan.splash',
+    'src/app/goal_schedule.splash',
     'src/app/feed_presentation.splash',
     'src/app/weather.splash',
+    'src/app/schedule_weather.splash',
     'src/frontend/styles.splash',
     'src/frontend/components/news_list.splash',
     'src/frontend/components/weather_widget.splash',
@@ -126,7 +133,7 @@ def city_catalog(root=ROOT):
         ids.add(city['cid'])
         if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', city['cid']):
             # Splash map keys must be ASCII identifiers; see
-            # docs/splash-runtime-notes.md.
+            # The host requires ASCII identifiers for these map keys.
             raise ValueError(f"City id is not an ASCII identifier: {city['cid']}")
         for axis, limit in (('lat', 90.0), ('lon', 180.0)):
             if not -limit <= float(city[axis]) <= limit:
@@ -204,6 +211,11 @@ def assemble(root=ROOT, paths=None):
             content = cities_script(city_catalog(root))
         elif relative == 'src/agent/prompts/catalog.json':
             content = prompts_script(root)
+        elif relative == 'src/data/ingestion/demo_news.json':
+            catalog = json.loads((root / relative).read_text(encoding='utf-8'))
+            if catalog.get('schema_version') != 1:
+                raise ValueError('Invalid fixed real-news archive schema')
+            content = 'let demo_catalog = ' + json.dumps(json.dumps(catalog, ensure_ascii=False), ensure_ascii=False) + '.parse_json()\n'
         else:
             content = (root / relative).read_text(encoding='utf-8').replace('\r\n', '\n')
         chunk = f'\n// BEGIN {relative}\n{content.rstrip()}\n// END {relative}\n'

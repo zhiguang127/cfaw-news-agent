@@ -1,7 +1,7 @@
 {
   "revisions": {
-    "tracking_prompt_revision": "tracking-v2.11",
-    "intent_prompt_revision": "intent-v1.2",
+    "tracking_prompt_revision": "tracking-v2.13-final",
+    "intent_prompt_revision": "intent-v1.3-final",
     "schedule_intent_prompt_revision": "schedule-intent-v1"
   },
   "templates": {

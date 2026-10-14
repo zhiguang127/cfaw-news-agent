@@ -73,6 +73,7 @@ fn weather_choose_name(){
 fn weather_render(){
     ui.weather_header_content.render()
     if detail_kind == "weather" { ui.weather_content.render() }
+    if page == "schedule" { ui.schedule_list.render() }
 }
 fn weather_app_restore(index, generation){
     if generation != weather_generation { return }
@@ -80,6 +81,9 @@ fn weather_app_restore(index, generation){
         weather_app_ready = true
         weather_render()
         weather_fetch_cities(weather_tracked, generation)
+        let items = [] for item in user_schedules { if items.len() < tracking_config.max_schedules && schedule_active(item) { items.push(item) } }
+        schedule_weather_fetch(items)
+        schedule_weather_updated()
         weather_render()
         return
     }
@@ -90,7 +94,7 @@ fn weather_app_restore(index, generation){
 fn weather_app_boot(){
     weather_initialize()
     weather_selection_read()
-    weather_on_update = || weather_render()
+    weather_on_update = || { weather_render() schedule_weather_updated() }
     start_timeout(0.01, || weather_app_restore(0, weather_generation))
 }
 fn show_weather(){

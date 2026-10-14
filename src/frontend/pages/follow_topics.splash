@@ -84,6 +84,32 @@ let FollowTopicPage = View{visible: false width: Fill height: Fill flow: Down
                 Heading{text: card.topic.title}
                 Small{text: card.status_label + " · " + follow_card_time(card) draw_text.color: accent}
                 if card.note != "" { Small{text: card.note} }
+                let trial = goal_schedule_reference(card)
+                if trial != nil {
+                    EditorialCard{
+                        Section{text: "简单试用计划" draw_text.color: accent}
+                        let saved = goal_schedule_saved(trial)
+                        if saved != nil {
+                            Text{text: saved.title}
+                            Text{text: saved.content}
+                            Small{text: "已导入我的日程 · " + schedule_display_time(saved.start, saved.timezone)}
+                        } else {
+                            Text{text: trial.plan.title + " · " + trial.plan.duration_minutes + " 分钟"}
+                            Text{text: insight_prose(trial.run, trial.plan.content)}
+                            let proposal = goal_schedule_proposal(trial)
+                            if proposal.state == "ready" {
+                                Small{text: "建议时段：" + schedule_display_time(proposal.plan.start, proposal.plan.timezone) + " → " + schedule_display_time(proposal.plan.end, proposal.plan.timezone)}
+                                Small{text: "北京时间；待你确认，可修改。点击导入后保存到我的日程。"}
+                                Primary{width: Fill text: "确认并导入日程" on_click: || goal_schedule_import(proposal)}
+                                LinkButton{text: "修改时间" on_click: || goal_schedule_edit(proposal)}
+                            } else if proposal.state == "preparing" { Small{text: "正在准备建议时段…"} }
+                            else {
+                                Small{text: proposal.error}
+                                LinkButton{text: "修改时间" on_click: || goal_schedule_edit(proposal)}
+                            }
+                        }
+                    }
+                }
                 if card.values.len() == 0 {
                     EditorialCard{
                         Section{text: "目前情况"}

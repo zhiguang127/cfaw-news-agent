@@ -1,0 +1,63 @@
+fn goal_requests_trial(topic){
+    let request = topic.original_input + " " + topic.supplement
+    regex("(安排|计划).{0,30}(试用|尝试|测试)").test(request) && !regex("(不要|不用|不必|无需|暂不).{0,12}(安排|计划)").test(request)
+}
+fn goal_plan_sources(topic, value, snapshot){
+    let ids = []
+    for insight in value.insights {
+        if insight.target_type != "topic" || insight.target_id != topic.topic_id || insight.target_version != topic.version || insight.change_kind == "withdrawn" { continue }
+        let declined = false
+        for decision in snapshot.decisions {
+            if decision["kind"] == "insight" && decision.target_type == "topic" && decision.target_id == topic.topic_id && decision.target_version == topic.version && decision.issue_key == insight.issue_key && record_contains(["watch" "handled" "dismissed"], decision.state) && insight.material_change.trim() == "" { declined = true }
+        }
+        if declined { continue }
+        for id in insight.evidence_ids {
+            let source = tracking_find(snapshot.evidence, "news_id", id)
+            if source != nil && (source.summary.trim() != "" || source.paragraphs.len() > 0) && !record_contains(ids, id) { ids.push(id) }
+        }
+    }
+    ids
+}
+fn goal_plan_find(value, topic_id){
+    if !record_array(value["goal_plans"]) { return nil }
+    for plan in value.goal_plans { if plan.topic_id == topic_id { return plan } }
+    nil
+}
+fn goal_plans_expand(value, snapshot){
+    if !record_array(value["goal_plans"]) { return "" }
+    for plan in value.goal_plans {
+        if !record_object(plan) { return "试用计划结构无效" }
+        if record_array(plan["evidence_ids"]) { plan.evidence_ids = tracking_expand_ids(plan.evidence_ids, snapshot) }
+    }
+    ""
+}
+fn goal_plans_error(value, snapshot){
+    if snapshot["prompt_revision"] != "tracking-v2.13-final" { return nil }
+    let plans = value["goal_plans"] if plans == nil { plans = [] }
+    if !record_array(plans) || plans.len() > snapshot.topics.len() { return tracking_invalid("invalid_schema", "goal_plans须为数组，每个明确请求试用的关注最多一份计划。") }
+    let seen = {}
+    for plan in plans {
+        if !record_object(plan) { return tracking_invalid("invalid_schema", "试用计划结构无效") }
+        let topic = tracking_find(snapshot.topics, "topic_id", plan["topic_id"])
+        if topic == nil || topic.version != plan["topic_version"] || !goal_requests_trial(topic) || seen[topic.topic_id] == true { return tracking_invalid("invalid_reference", "试用计划须对应明确请求安排试用的本轮关注版本，且不能重复。") }
+        seen[topic.topic_id] = true
+        if !tracking_text(plan["title"], 60) || plan.title.trim() == "" || !tracking_text(plan["content"], 200) || plan.content.trim() == "" { return tracking_invalid("invalid_schema", "试用标题须为1至60字符，步骤须为1至200字符。") }
+        if !record_number(plan["duration_minutes"]) || floor(plan.duration_minutes) != plan.duration_minutes || plan.duration_minutes < 10 || plan.duration_minutes > 60 { return tracking_invalid("invalid_schema", "简单试用时长须为10至60分钟的整数，并尊重用户学习预算。") }
+        if !regex("试用|尝试|测试").test(plan.title + " " + plan.content) { return tracking_invalid("invalid_schema", "请给出一次有界试用及核对条件的步骤，不要只有等待或背景介绍。") }
+        if plan["start"] != nil || plan["end"] != nil || plan["proposed_action"] != nil { return tracking_invalid("invalid_schema", "Agent只提议试用任务与时长，具体建议时段由应用预览并经用户确认；不能宣称已保存。") }
+        if !tracking_refs(plan["evidence_ids"], snapshot.evidence, "news_id", false) { return tracking_invalid("invalid_reference", "试用计划必须引用支持该关注判断的已有来源，且不能重复引用。") }
+        let available = goal_plan_sources(topic, value, snapshot)
+        for id in plan.evidence_ids { if !record_contains(available, id) { return tracking_invalid("invalid_reference", "试用计划不能借用无关、仅标题或其他目标的来源。") } }
+    }
+    for topic in snapshot.topics {
+        if !goal_requests_trial(topic) || goal_plan_sources(topic, value, snapshot).len() == 0 { continue }
+        if seen[topic.topic_id] != true {
+            let error = tracking_invalid("invalid_schema", "用户已明确请求安排一次简单试用，请基于已有来源补充具体试用计划，不要仅让用户等待。")
+            error.repair_hint = {error: "missing_requested_trial_plan" topic_id: topic.topic_id topic_version: topic.version
+                supported_sources: goal_plan_sources(topic, value, snapshot)
+                instruction: "完整返回JSON，增加一份goal_plans，包含topic_id/topic_version/title/content/duration_minutes/evidence_ids。建议约30分钟：先核对条件，再用非敏感小样例试一次并记录结果；条件不满足就记录阻碍停止，不强行安装。不预设日期，不保证节省时间。"}.to_json()
+            return error
+        }
+    }
+    nil
+}
